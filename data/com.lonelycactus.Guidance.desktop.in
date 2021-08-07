@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=guidance
+Exec=guidance
+Icon=com.lonelycactus.Guidance
+Terminal=false
+Type=Application
+Categories=GTK;
+StartupNotify=true
