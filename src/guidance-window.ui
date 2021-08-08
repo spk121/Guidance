@@ -1,25 +1,494 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-  <requires lib="gtk+" version="3.24"/>
-    <template class="GuidanceWindow" parent="GtkApplicationWindow">
-      <property name="default-width">600</property>
+  <requires lib="gtk+" version="4.2.1"/>
+  <template class="GuidanceWindow" parent="GtkApplicationWindow">
+    <property name="default-width">600</property>
     <property name="default-height">300</property>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="header_bar">
         <property name="visible">True</property>
-        <property name="show-close-button">True</property>
-        <property name="title">Hello, World!</property>
+        <!--property name="title-widget">
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">YJ Debug</property>
+            <property name="single-line-mode">True</property>
+            <property name="ellipsize">end</property>
+            <property name="width-chars">5</property>
+            <style>
+              <class name="title"/>
+            </style>
+          </object>
+          </property-->
+        <child type="title">
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Guidance</property>
+            <property name="single-line-mode">True</property>
+            <property name="ellipsize">end</property>
+            <property name="width-chars">5</property>
+            <style>
+              <class name="title"/>
+            </style>
+          </object>
+        </child>
       </object>
     </child>
     <child>
-      <object class="GtkLabel" id="label">
-        <property name="label">Hello, World!</property>
-        <property name="visible">True</property>
-        <attributes>
-          <attribute name="weight" value="bold"/>
-          <attribute name="scale" value="2"/>
-        </attributes>
+      <object class="GtkBox" id="left-right">
+        <child>
+          <object class="GtkBox" id="left">
+            <property name="orientation">vertical</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkStackSidebar">
+                <property name="stack">frame-stack</property>
+                <property name="vexpand">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkFrame">
+            <child>
+              <object class="GtkBox" id="right">
+                <property name="orientation">vertical</property>
+                <child>
+                  <object class="GtkBox" id="toolbar">
+                    <property name="halign">end</property>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">document-open-symbolic</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkSeparator">
+                        <property name="margin-start">10</property>
+                        <property name="margin-end">10</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">process-stop-symbolic</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-restart</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-run</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-step-instruction</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="sensitive">False</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-step</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-next-instruction</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-next</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-step-out</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkSeparator">
+                        <property name="margin-start">10</property>
+                        <property name="margin-end">10</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">open-menu-symbolic</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSeparator">
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="main-frame">
+                    <child>
+                      <object class="GtkStack" id="frame-stack">
+                        <property name="hexpand">True</property>
+                        <property name="vexpand">True</property>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">settings</property>
+                            <property name="title">Settings</property>
+                            <property name="child">
+                              <object class="GtkGrid">
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Choose an action</property>
+                                    <property name="xalign">0</property>
+                                    <layout>
+                                      <property name="row">0</property>
+                                      <property name="column">0</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkCheckButton">
+                                    <property name="label">Start a REPL</property>
+                                    <layout>
+                                      <property name="row">0</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkCheckButton">
+                                    <property name="label">Use Command-Line Arguments</property>
+                                    <layout>
+                                      <property name="row">1</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">deez args</property>
+                                    <property name="xalign">0</property>
+                                    <layout>
+                                      <property name="row">2</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkCheckButton">
+                                    <property name="label">Use Arguments</property>
+                                    <layout>
+                                      <property name="row">3</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkEntry">
+                                    <property name="placeholder-text">Enter command-line arguments</property>
+                                    <layout>
+                                      <property name="row">4</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <layout>
+                                      <property name="row">4</property>
+                                      <property name="column">3</property>
+                                    </layout>
+                                    <child>
+                                      <object class="GtkButton">
+                                        <property name="icon-name">document-open</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Start in paused state</property>
+                                    <layout>
+                                      <property name="row">7</property>
+                                      <property name="column">0</property>
+                                    </layout>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <layout>
+                                      <property name="row">7</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                    <child>
+                                      <object class="GtkSwitch">
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Execute</property>
+                                    <property name="xalign">0</property>
+                                    <layout>
+                                      <property name="row">8</property>
+                                      <property name="column">0</property>
+                                    </layout>
+                                  </object>
+                                </child>
+
+                                <child>
+                                  <object class="GtkBox">
+                                    <layout>
+                                      <property name="row">8</property>
+                                      <property name="column">1</property>
+                                    </layout>
+                                    <child>
+                                      <object class="GtkButton">
+                                        <property name="icon-name">launch</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">terminal</property>
+                            <property name="title">Terminal</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkTextView">
+                                    <property name="hexpand">True</property>
+                                    <property name="vexpand">True</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">prompt&gt;</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkEntry">
+                                        <property name="hexpand">True</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkMenuButton">
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">source</property>
+                            <property name="title">Source</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkStackSwitcher">
+                                    <property name="stack">source-stack</property>
+
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkStack" id="source-stack">
+                                    <child>
+                                      <object class="GtkStackPage">
+                                        <property name="name">tmptxt</property>
+                                        <property name="title">tmp.txt</property>
+                                        <property name="child">
+                                          <object class="GtkLabel">
+                                            <property name="label">some source code</property>
+                                          </object>
+                                        </property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkStackPage">
+                                        <property name="name">tmptxt2</property>
+                                        <property name="title">tmp2.txt</property>
+                                        <property name="child">
+                                          <object class="GtkLabel">
+                                            <property name="label">some source code #2</property>
+                                          </object>
+                                        </property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">traps</property>
+                            <property name="title">Breakpoints</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <child>
+                                  <object class="GtkColumnView">
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">backtrace</property>
+                            <property name="title">Backtrace</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <child>
+                                  <object class="GtkColumnView">
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">threads</property>
+                            <property name="title">Threads</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <child>
+                                  <object class="GtkColumnView">
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">modules</property>
+                            <property name="title">Modules</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <child>
+                                  <object class="GtkColumnView">
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">environment</property>
+                            <property name="title">Environment</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <child>
+                                  <object class="GtkColumnView">
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkFrame">
+                    <child>
+                      <object class="GtkBox">
+                        <child>
+                          <object class="GtkLabel" id="label">
+                            <property name="label"></property>
+                            <property name="hexpand">True</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkImage" id="sweep-image">
+                            <property name="icon-name">edit-shred</property>
+                            <property name="visible">False</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkImage" id="gc-image">
+                            <property name="icon-name">edit-trash</property>
+                            <property name="visible">False</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
       </object>
     </child>
-    </template>
-  </interface>
+  </template>
+</interface>
