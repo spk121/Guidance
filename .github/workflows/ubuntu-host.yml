@@ -1,0 +1,45 @@
+name: Ubuntu
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: env
+      run: export LANG=C.UTF-8 TERM=dumb VERBOSE=true DEBIAN_FRONTEND=noninteractive TZ=America/Los_Angeles
+    - name: install packages
+      run: sudo apt-get install -y gtk+-3.0-dev gettext desktop-file-utils meson
+    - name: make build directory
+      run: mkdir `pwd`/build
+    - name: bootstrap
+      run: cd build && meson ..
+    - name: make dist directory
+      run: mkdir `pwd`/dist && meson configure build -Dprefix=`pwd`/dist
+    - name: make
+      run: cd build && ninja
+    - name: test
+      run: cd build && ninja test
+    - name: install
+      run: cd build && ninja install
+    - name: dist
+      run: cd build && ninja dist
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: dist
+        path: dist
+    - name: Uncompress tarballs
+      run: cd build && unxz meson-dist/guidance*.xz
+    - name: Archive tarball
+      uses: actions/upload-artifact@v2
+      with:
+        name: tarball
+        path: build/meson-dist/guidance*tar
