@@ -1,0 +1,7 @@
+.flatpak-builder
+
+# Generated sources
+data/com.lonelycactus.Guidance.desktop
+
+# Temp files
+*~
