@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component type="desktop">
-	<id>com.lonelycactus.Guidance.desktop</id>
-	<metadata_license>CC0-1.0</metadata_license>
-	<project_license>GPL-3.0-or-later</project_license>
-	<description>
-	</description>
+<component type="desktop-application">
+  <id>com.lonelycactus.Guidance.desktop</id>
+  <name>Guidance</name>
+  <summary>This is a graphical debugging application for the GNU Guile interpreter of the Scheme programming language</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>Guidance is a graphical debugging environment for GNU Guile.
+    It provides a graphical representation of breakpoints, traps,
+    stack infomation, threads, and environment variables</p>
+  </description>
 </component>
