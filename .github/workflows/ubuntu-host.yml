@@ -16,7 +16,7 @@ jobs:
     - name: env
       run: export LANG=C.UTF-8 TERM=dumb VERBOSE=true DEBIAN_FRONTEND=noninteractive TZ=America/Los_Angeles
     - name: install packages
-      run: sudo apt-get install -y gtk+-3.0-dev gettext desktop-file-utils meson
+      run: sudo apt-get install -y libgtk-4-dev gtk-4-examples guile-3.0.dev gettext desktop-file-utils meson
     - name: make build directory
       run: mkdir `pwd`/build
     - name: bootstrap

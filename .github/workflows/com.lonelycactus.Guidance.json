@@ -23,6 +23,30 @@
     ],
     "modules" : [
         {
+            "name" : "gc",
+            "builddir" : true,
+            "buildsystem" : "autotools",
+            "sources" : [
+                {
+                    "type" : "archive",
+                    "url" : "https://www.hboehm.info/gc/gc_source/gc-8.0.4.tar.gz",
+                    "sha256" : "436a0ddc67b1ac0b0405b61a9675bca9e075c8156f4debd1d06f3a56c7cd289d"
+                }
+            ]
+        },
+        {
+            "name" : "guile",
+            "builddir" : true,
+            "buildsystem" : "autotools",
+            "sources" : [
+                {
+                    "type" : "archive",
+                    "url" : "http://ftpmirror.gnu.org/gnu/guile/guile-3.0.7.tar.xz",
+                    "sha256" : "f57d86c70620271bfceb7a9be0c81744a033f08adc7ceba832c9917ab3e691b7"
+                }
+            ]
+        },
+        {
             "name" : "guidance",
             "builddir" : true,
             "buildsystem" : "meson",
