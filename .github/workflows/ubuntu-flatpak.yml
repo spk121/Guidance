@@ -1,0 +1,33 @@
+name: Ubuntu Flatpak
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: env
+      run: export LANG=C.UTF-8 TERM=dumb VERBOSE=true DEBIAN_FRONTEND=noninteractive TZ=America/Los_Angeles
+    - name: install packages
+      run: sudo apt-get install -y gtk+-3.0-dev gettext desktop-file-utils meson flatpak flatpak-builder appstream-util
+    - name: make cache directory
+      run: mkdir `pwd`/cache
+    - name: make ccache directory
+      run: mkdir `pwd`/ccache
+    - name: make build directory
+      run: mkdir `pwd`/build
+    - name: flatpak remote-add
+      run: flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    - name: flatpak install sdk
+      run: flatpak install flathub --assumeyes --runtime --user --arch=x86_64 org.gnome.Sdk 40
+    - name: flatpak install platform
+      run: flatpak install flathub --assumeyes --runtime --user --arch=x86_64 org.gnome.Platform 40
+    - name: flatpak-builder
+      run: flatpak-builder -v --keep-build-dirs `pwd`/build `pwd`/.github/workflows/com.lonelycactus.Guidance.json
