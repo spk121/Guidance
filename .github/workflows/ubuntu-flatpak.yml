@@ -30,4 +30,4 @@ jobs:
     - name: flatpak install platform
       run: flatpak install flathub --assumeyes --runtime --user --arch=x86_64 org.gnome.Platform 40
     - name: flatpak-builder
-      run: flatpak-builder -v --keep-build-dirs `pwd`/build `pwd`/.github/workflows/com.lonelycactus.Guidance.json
+      run: flatpak-builder -v `pwd`/_build `pwd`/.github/workflows/com.lonelycactus.Guidance.json
