@@ -16,16 +16,16 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "guidance-config.h"
 #include "guidance-window.h"
+#include "guidance-config.h"
 
 struct _GuidanceWindow
 {
-  GtkApplicationWindow  parent_instance;
+  GtkApplicationWindow parent_instance;
 
   /* Template widgets */
-  GtkHeaderBar        *header_bar;
-  GtkLabel            *label;
+  GtkHeaderBar *header_bar;
+  GtkLabel *    label;
 };
 
 G_DEFINE_TYPE (GuidanceWindow, guidance_window, GTK_TYPE_APPLICATION_WINDOW)

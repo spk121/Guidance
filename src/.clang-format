@@ -1,0 +1,13 @@
+# See https://wiki.apertis.org/Guidelines/Coding_conventions#Code_formatting
+BasedOnStyle: GNU
+AlignConsecutiveDeclarations: true
+AlignTrailingComments: true
+AlwaysBreakAfterDefinitionReturnType: All
+BreakBeforeBinaryOperators: None
+BinPackParameters: false
+# PointerAlignment won't be implemented until LLVM 13
+PointerAlignment: Right
+ReflowComments: true
+SpaceAfterCStyleCast: true
+UseTab: Never
+ColumnLimit: 0
