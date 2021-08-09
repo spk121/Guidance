@@ -1,4 +1,4 @@
-/* main.c
+/* guidance-application-window.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -16,32 +16,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <glib/gi18n.h>
-#include <libguile.h>
+#pragma once
 
-#include "guidance-application.h"
-#include "guidance-config.h"
-#include "guidance-window.h"
+#include <gtk/gtk.h>
 
-static void
-inner_main (void *data, int argc, char **argv)
-{
-  GdnApplication *app = NULL;
-  int ret;
+G_BEGIN_DECLS
 
-  /* Set up gettext translations */
-  bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
-  bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
-  textdomain (GETTEXT_PACKAGE);
+#define GDN_TYPE_APPLICTION_WINDOW (gdn_application_window_get_type ())
 
-  app = gdn_application_new ();
-  ret = g_application_run (G_APPLICATION (app), argc, argv);
-  scm_primitive_exit (scm_from_int (ret));
-}
+G_DECLARE_FINAL_TYPE (GdnApplicationWindow, gdn_application_window, GUIDANCE, APPLICATION_WINDOW, GtkApplicationWindow)
 
-int
-main (int argc, char **argv)
-{
-  scm_boot_guile (argc, argv, inner_main, NULL);
-  return 0;
-}
+G_END_DECLS

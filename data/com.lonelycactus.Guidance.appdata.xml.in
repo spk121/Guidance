@@ -9,6 +9,5 @@
     <p>Guidance is a graphical debugging environment for GNU Guile.
     It provides a graphical representation of breakpoints, traps,
     stack infomation, threads, and environment variables</p>
-    <launchable type="desktop-id">com.lonelycactus.Guildance.desktop</launchable>
   </description>
 </component>

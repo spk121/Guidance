@@ -1,6 +1,7 @@
 guidance_sources = [
   'main.c',
-  'guidance-window.c',
+  'guidance-application.c',
+  'guidance-application-window.c'
 ]
 
 guidance_deps = [

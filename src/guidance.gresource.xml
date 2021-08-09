@@ -2,5 +2,7 @@
 <gresources>
   <gresource prefix="/com/lonelycactus/Guidance">
     <file>guidance-window.ui</file>
+    <file>gtk/menus.ui</file>
+    <file>gtk/help-overlay.ui</file>
   </gresource>
 </gresources>
