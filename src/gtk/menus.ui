@@ -1,1 +1,29 @@
-
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <menu id="menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Load...</attribute>
+        <attribute name="action">win.repl-load</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Next Command</attribute>
+        <attribute name="action">win.repl-history-next</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Previous Command</attribute>
+        <attribute name="action">win.repl-history-prev</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Restart REPL</attribute>
+        <attribute name="action">win.previous-command</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Quit</attribute>
+        <attribute name="action">app.quit</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>
