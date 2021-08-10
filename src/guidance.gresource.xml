@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <gresource prefix="/com/lonelycactus/Guidance">
-    <file>guidance-window.ui</file>
+    <file>gtk/guidance-window.ui</file>
+    <file>gtk/guidance-window.css</file>
     <file>gtk/menus.ui</file>
     <file>gtk/help-overlay.ui</file>
+    <file>scm/lib.scm</file>
+    <file>scm/guidance.scm</file>
   </gresource>
 </gresources>

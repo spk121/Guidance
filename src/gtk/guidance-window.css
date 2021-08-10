@@ -1,0 +1,23 @@
+.repl_output_text_buffer {
+    padding: 10px;
+}
+.repl_prompt {
+    padding-left: 10px;
+}
+.ExplorerTitle {
+    font-family: sans-serif;
+    background-color: antiquewhite;
+}
+.ExplorerTab {
+    font-family: sans-serif;
+    background-color: antiquewhite;
+    padding: 0;
+    margin: 0;
+    border: 1px black;
+}
+notebook stack {
+    font-family: serif;
+    background-color: blue;
+    padding: 0;
+    margin: 0;
+}
