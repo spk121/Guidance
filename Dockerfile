@@ -1,4 +1,4 @@
-FROM spk121:gtk4-guild-sdk
+FROM spk121:gtk4-guile-sdk
 
 WORKDIR /usr/local/src/Guidance
 COPY . /usr/local/src/Guidance
