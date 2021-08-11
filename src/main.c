@@ -24,7 +24,7 @@
 #include "guidance-window.h"
 
 static void
-inner_main (void *data, int argc, char **argv)
+inner_main (G_GNUC_UNUSED void *data, int argc, char **argv)
 {
   GdnApplication *app = NULL;
   int ret;
@@ -42,6 +42,7 @@ inner_main (void *data, int argc, char **argv)
 int
 main (int argc, char **argv)
 {
+  scm_c_set_default_vm_engine_x (1);
   scm_boot_guile (argc, argv, inner_main, NULL);
   return 0;
 }
