@@ -18,6 +18,8 @@ or
 podman pull docker.io/spk121/guidance
 ```
 
+In the container, the executable is at `/app/bin/guidance`.
+
 Running a Docker container that contains a GUI requires an invocation like the following
 ```
 docker run -v /tmp/.X11-unix:/tmp/.X11-unix \
