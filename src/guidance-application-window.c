@@ -35,7 +35,7 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
 
-  gtk_widget_class_set_template_from_resource (widget_class, "/com/lonelycactus/Guidance/guidance-window.ui");
+  gtk_widget_class_set_template_from_resource (widget_class, "/com/lonelycactus/Guidance/gtk/guidance-window.ui");
   gtk_widget_class_bind_template_child (widget_class, GdnApplicationWindow, header_bar);
   gtk_widget_class_bind_template_child (widget_class, GdnApplicationWindow, label);
 }
