@@ -20,9 +20,15 @@
 
 (set! %load-hook gdn-load-hook)
 
-(define (gdn-module-defined-hook module)
+(define (gdn-module-defined-hook directory)
   "Inform Guidance every time a module is loaded"
-  (gdn-module-defined-handler module gdn-self))
+  (let* ((name (module-name directory))
+         ;; NAME is a list of symbols, e.g. '(srfi srfi-1)
+         (name-str (format #f "~a" name))
+         (filename ((record-accessor module-type 'filename) directory))
+         (abs-filename (%search-load-path filename)))
+    
+  (gdn-module-defined-handler name-str filename abs-filename gdn-self))
 
 (add-hook! module-defined-hook gdn-module-defined-hook)
 
@@ -70,18 +76,14 @@
 ;; - returns to continue execution
 
 (define* (gdn-trap-and-break-handler frame #:optional (trap-idx #f) (trap-name "break"))
-  "A trap and break handler. To indicate a break, TRAP-IDX should be #f and TRAP-NAME should be 'break'.
-Otherwise the trap-idx and trap-name indicate the current trap."
-  (gdn-update-threads-info (gdn-get-threads))
-  (gdn-update-environment-info (gdn-get-environment))
-  (gdn-update-traps-info (gdn-get-traps))
-  (if trap-idx
-      (gdn-update-current-trap trap-idx trap-name)
-      ;; else
-      (gdn-clear-current-trap))
+  "A trap and break handler. To indicate a break, TRAP-IDX should be
+#f and TRAP-NAME should be 'break'.  Otherwise the trap-idx and
+trap-name indicate the current trap."
+  (gdn-update-thread-info gdn-self)
+  (gdn-update-environment-info gdn-self (gdn-get-environment))
+  (gdn-update-trap-info gdn-self trap-idx)
   (gdn-update-backtrace-info (gdn-get-backtrace frame))
 
-  (gdn-enable-debug-toolbar)
   (display (current-prompt-port) "debug>")
   
   ;; This is a blocking operation, awaiting a response from the
@@ -114,10 +116,6 @@ Otherwise the trap-idx and trap-name indicate the current trap."
       (loop)
       #f))))
   (gdn-disable-debug-toolbar))
-
-  
-  
-  
   
 ;;
 ;; I suppose we hook the step and return buttons to

@@ -92,17 +92,13 @@
   (funk (1+ y)))
 |#
 
-(define (gdn-get-threads)
-  (list
-   (current-thread)
-   (map (lambda (thrd)
-          (list thrd (not (thread-exited? thrd))))
-        (all-threads))))
-
+#|
 (define (gdn-get-traps)
+  (list->vector
    (map (lambda (trap-id)
           (list trap-id (trap-name trap-id) (trap-enabled? trap-id)))
-        (list-traps)))
+        (list-traps))))
+|#
 
 (define (gdn-get-locale-information)
   (list
@@ -257,15 +253,19 @@
           )))
 
 (define (gdn-get-environment)
-  (list (cons 'system (gdn-get-system-information))
-        (cons 'gc (gdn-get-gc-stats))
-        (cons 'locale (gdn-get-locale-information))
-        ;; (get-tty-information)
-        (cons 'process (gdn-get-process-information))
-        (cons 'time (gdn-get-time-entries))
-        (cons 'user (get-user-information-entries))
-        (cons 'environment (get-environment-variables))
-        ))
+  (define (vectorize category lst)
+    (list->vector
+     (map (lambda (x)
+            (cons category x))
+          lst)))
+  (vector-append
+   (vectorize "system" (gdn-get-system-information))
+   (vectorize "memory" (gdn-get-gc-stats))
+   (vectorize "locale" (gdn-get-locale-information))
+   (vectorize "process" (gdn-get-process-information))
+   (vectorize "time" (gdn-get-time-entries))
+   (vectorize "user" (get-user-information-entries))
+   (vectorize "environment" (get-environment-variables))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Entry points
