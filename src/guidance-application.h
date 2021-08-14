@@ -23,9 +23,10 @@
 G_BEGIN_DECLS
 
 #define GDN_TYPE_APPLICATION (gdn_application_get_type ())
-
 G_DECLARE_FINAL_TYPE (GdnApplication, gdn_application, GDN, APPLICATION, GtkApplication)
 
 GdnApplication *gdn_application_new (void);
+int             gdn_application_get_argc (GdnApplication *app);
+const char *    gdn_application_get_args (GdnApplication *app);
 
 G_END_DECLS

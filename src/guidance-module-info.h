@@ -1,4 +1,4 @@
-/* main.c
+/* guidance-module-info.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -16,33 +16,28 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#pragma once
+
 #include <gtk/gtk.h>
 #include <libguile.h>
-#include <libintl.h>
 
-#include "guidance-application.h"
-#include "guidance-config.h"
+G_BEGIN_DECLS
 
-static void
-inner_main (G_GNUC_UNUSED void *data, int argc, char **argv)
+typedef enum gdn_module_category_t
 {
-  GdnApplication *app = NULL;
-  int             ret;
+  GDN_MODULE_CATEGORY_UNKNOWN = 0,
+  GDN_MODULE_CATEGORY_LIBRARY,
+  GDN_MODULE_CATEGORY_SITE,
+  GDN_MODULE_CATEGORY_GLOBAL_SITE,
+  GDN_MODULE_CATEGORY_PACKAGE_DATA,
+  GDN_MODULE_CATEGORY_OTHER
+} GdnModuleCategory;
 
-  /* Set up gettext translations */
-  bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
-  bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
-  textdomain (GETTEXT_PACKAGE);
+#define GDN_MODULE_CATEGORY_TYPE (gdn_module_category_get_type ())
 
-  app = gdn_application_new ();
-  ret = g_application_run (G_APPLICATION (app), argc, argv);
-  scm_primitive_exit (scm_from_int (ret));
-}
+#define GDN_MODULE_INFO_TYPE (gdn_module_info_get_type ())
+G_DECLARE_FINAL_TYPE (GdnModuleInfo, gdn_module_info, GDN, MODULE_INFO, GObject)
 
-int
-main (int argc, char **argv)
-{
-  scm_c_set_default_vm_engine_x (1);
-  scm_boot_guile (argc, argv, inner_main, NULL);
-  return 0;
-}
+void gdn_module_info_store_append (GListStore *store, SCM entry);
+
+G_END_DECLS

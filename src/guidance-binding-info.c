@@ -1,4 +1,4 @@
-/* guidance-binding-info.h
+/* guidance-binding-info.c
  *
  * Copyright 2021 Michael Gran
  *
@@ -30,7 +30,7 @@ struct _GdnBindingInfo
   char *   extra;
 };
 
-G_DEFINE_TYPE (GdnBindingInfo, gdn_binding_info, G_TYPE_OBJECT);
+G_DEFINE_TYPE (GdnBindingInfo, gdn_binding_info, G_TYPE_OBJECT)
 
 enum
 {
@@ -85,7 +85,7 @@ static void
 gdn_binding_info_finalize (GObject *object)
 {
   GdnBindingInfo *self = GDN_BINDING_INFO (object);
-  self->binding = 0;
+  self->pack = 0;
   g_free (self->name);
   self->name = NULL;
   self->argument = FALSE;
@@ -128,7 +128,7 @@ gdn_binding_info_class_init (GdnBindingInfoClass *klass)
 }
 
 static void
-gdn_binding_info_init (GdnBindingInfo *self)
+gdn_binding_info_init (G_GNUC_UNUSED GdnBindingInfo *self)
 {
 }
 
@@ -137,14 +137,15 @@ gdn_binding_info_new_from_scm (SCM binding, int n_args)
 {
   guint64 pack;
   int     index;
-  SCM     var;
   SCM     name;
   SCM     representation;
   SCM     ref;
   SCM     format_string;
   SCM     extra;
 
-  pack = SCM_PACK (binding);
+  GdnBindingInfo *self = g_object_new (GDN_BINDING_INFO_TYPE, NULL);
+
+  pack = SCM_UNPACK (binding);
   self->pack = pack;
 
   name = scm_call_1 (binding_name_func, binding);
@@ -163,7 +164,8 @@ gdn_binding_info_new_from_scm (SCM binding, int n_args)
 
   ref = scm_call_1 (binding_ref_func, binding);
   format_string = scm_from_utf8_string ("~A");
-  self->value = scm_simple_format (SCM_BOOL_F, format_string, scm_list_1 (ref));
+  self->value = scm_to_utf8_string (
+      scm_simple_format (SCM_BOOL_F, format_string, scm_list_1 (ref)));
 
   // FIXME: should these strings be truncated in case they're too big?
 
@@ -174,28 +176,30 @@ gdn_binding_info_new_from_scm (SCM binding, int n_args)
     {
       extra = scm_procedure_name (ref);
       if (scm_is_true (extra))
-        self->extra = scm_simple_format (SCM_BOOL_F, format_string, extra);
+        self->extra = scm_to_utf8_string (
+            scm_simple_format (SCM_BOOL_F, format_string, extra));
       else
         self->extra = g_strdup ("λ");
     }
   else if (scm_is_true (scm_variable_p (ref)))
     {
       extra = scm_variable_ref (ref);
-      self->extra = scm_simple_format (SCM_BOOL_F, format_string, extra);
+      self->extra = scm_to_utf8_string (
+          scm_simple_format (SCM_BOOL_F, format_string, extra));
     }
 
   return self;
 }
 
-SCM
+void
 gdn_binding_info_store_update (GListStore *store, SCM bindings_vec, int n_args)
 {
   g_list_store_remove_all (store);
 
-  for (i = 0; i < scm_c_vector_length (bindings_vec); i++)
+  for (size_t i = 0; i < scm_c_vector_length (bindings_vec); i++)
     {
-      SCM entry = scm_c_vector_ref (bindings_vec, i);
-      info = gdn_binding_info_new_from_scm (entry, n_args);
+      SCM             entry = scm_c_vector_ref (bindings_vec, i);
+      GdnBindingInfo *info = gdn_binding_info_new_from_scm (entry, n_args);
       g_list_store_append (store, info);
     }
 }

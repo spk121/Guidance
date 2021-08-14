@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "guidance-trap-info.c"
+#include "guidance-trap-info.h"
 
 struct _GdnTrapInfo
 {
@@ -28,7 +28,7 @@ struct _GdnTrapInfo
   gboolean current;
 };
 
-G_DEFINE_TYPE (GdnTrapInfo, gdn_trap_info, G_TYPE_OBJECT);
+G_DEFINE_TYPE (GdnTrapInfo, gdn_trap_info, G_TYPE_OBJECT)
 
 enum
 {
@@ -100,7 +100,7 @@ gdn_trap_info_finalize (GObject *object)
   self->current = FALSE;
 
   /* Don't forget to chain up. */
-  G_OBJECT_CLASS (yjd_trap_info_parent_class)->finalize (object);
+  G_OBJECT_CLASS (gdn_trap_info_parent_class)->finalize (object);
 }
 
 static void
@@ -127,17 +127,17 @@ gdn_trap_info_class_init (GdnTrapInfoClass *klass)
 }
 
 static void
-gdn_trap_info_init (GdnTrapInfo *self)
+gdn_trap_info_init (G_GNUC_UNUSED GdnTrapInfo *self)
 {
 }
 
 static GdnTrapInfo *
-trap_info_new_from_scm (SCM trap, int current);
+trap_info_new_from_scm (SCM trap, int current)
 {
   GdnTrapInfo *self = g_object_new (GDN_TRAP_INFO_TYPE, NULL);
 
   self->index = scm_to_int (trap);
-  self->name = scm_from_utf8_string (scm_call_1 (trap_name_func, trap));
+  self->name = scm_to_utf8_string (scm_call_1 (trap_name_func, trap));
   self->enabled = scm_is_true (scm_call_1 (trap_enabled_func, trap));
   self->current = current;
 
@@ -148,18 +148,17 @@ void
 gdn_trap_info_store_update (GListStore *store, SCM trap_cur)
 {
   SCM all_traps = scm_vector (scm_call_0 (list_traps_func));
-  int i;
 
   g_list_store_remove_all (store);
 
-  for (i = 0; i < scm_c_vector_length (all_traps); i++)
+  for (size_t i = 0; i < scm_c_vector_length (all_traps); i++)
     {
-      SCM            trap;
-      GdnThreadInfo *info;
-      int            current;
+      SCM          trap;
+      GdnTrapInfo *info;
+      int          current;
 
       trap = scm_c_vector_ref (all_traps, i);
-      current = scm_is_true (scm_eqv (trap, trap_cur));
+      current = scm_is_true (scm_eqv_p (trap, trap_cur));
       info = trap_info_new_from_scm (trap, current);
       g_list_store_append (store, info);
     }

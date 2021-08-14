@@ -27,7 +27,7 @@ struct _GdnEnvironmentInfo
   char *val;
 };
 
-G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT);
+G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT)
 
 enum
 {
@@ -48,10 +48,10 @@ gdn_environment_info_get_property (GObject *object, unsigned int property_id, GV
 
   switch (property_id)
     {
-    case PROP_CATEGORY
-        g_value_set_string (value, self->category);
-        break;
-        case PROP_KEY:
+    case PROP_CATEGORY:
+      g_value_set_string (value, self->category);
+      break;
+    case PROP_KEY:
       g_value_set_string (value, self->key);
       break;
     case PROP_VAL:
@@ -94,28 +94,30 @@ gdn_environment_info_class_init (GdnEnvironmentInfoClass *klass)
 }
 
 static void
-gdn_environment_info_init (GdnEnvironmentInfo *self)
+gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
 {
 }
 
 GdnEnvironmentInfo *
 gdn_environment_info_new_from_scm (SCM info)
 {
+  GdnEnvironmentInfo *self = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+
   self->category = scm_to_utf8_string (scm_list_ref (info, scm_from_int (0)));
   self->key = scm_to_utf8_string (scm_list_ref (info, scm_from_int (1)));
   self->val = scm_to_utf8_string (scm_list_ref (info, scm_from_int (2)));
   return self;
 }
 
-SCM
+void
 gdn_environment_info_store_update (GListStore *store, SCM all_info)
 {
   g_list_store_remove_all (store);
 
-  for (i = 0; i < scm_c_vector_length (all_info); i++)
+  for (size_t i = 0; i < scm_c_vector_length (all_info); i++)
     {
-      SCM entry = scm_c_vector_ref (all_info, i);
-      info = gdn_environment_info_new_from_scm (entry);
+      SCM                 entry = scm_c_vector_ref (all_info, i);
+      GdnEnvironmentInfo *info = gdn_environment_info_new_from_scm (entry);
       g_list_store_append (store, info);
     }
 }

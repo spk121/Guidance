@@ -24,9 +24,8 @@
 G_BEGIN_DECLS
 
 #define GDN_TRAP_INFO_TYPE (gdn_trap_info_get_type ())
-G_DECLARE_FINAL_TYPE (GdnTrapInfo, gdn_trap_info, GDN, TRAP_INFO, GObject);
+G_DECLARE_FINAL_TYPE (GdnTrapInfo, gdn_trap_info, GDN, TRAP_INFO, GObject)
 
-SCM gdn_trap_info_store_update (GListStore *store, SCM trap_cur);
+void gdn_trap_info_store_update (GListStore *store, SCM trap_cur);
 
 G_END_DECLS
-#endif

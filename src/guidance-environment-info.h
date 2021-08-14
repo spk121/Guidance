@@ -23,8 +23,9 @@
 G_BEGIN_DECLS
 
 #define GDN_ENVIRONMENT_INFO_TYPE (gdn_environment_info_get_type ())
-G_DECLARE_FINAL_TYPE (GdnEnvironmentInfo, gdn_environment_info, GDN, ENVIRONMENT_INFO, GObject);
+G_DECLARE_FINAL_TYPE (
+    GdnEnvironmentInfo, gdn_environment_info, GDN, ENVIRONMENT_INFO, GObject)
 
-SCM gdn_environment_info_store_update (GListStore *store);
+void gdn_environment_info_store_update (GListStore *store, SCM all_info);
 
 G_END_DECLS

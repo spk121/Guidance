@@ -18,20 +18,23 @@
 
 #define _GNU_SOURCE
 #include "guidance-lisp.h"
-#include "gdn-environment-info.h"
-#include "gdn-frame-info.h"
-#include "gdn-module-info.h"
-#include "gdn-trap-info.h"
+#include "guidance-environment-info.h"
+#include "guidance-frame-info.h"
+#include "guidance-module-info.h"
 #include "guidance-resources.h"
 #include "guidance-thread-info.h"
+#include "guidance-trap-info.h"
 #include <fcntl.h>
 #include <gio/gio.h>
+#include <gio/gunixinputstream.h>
+#include <gio/gunixoutputstream.h>
 #include <glib.h>
 #include <libguile.h>
 #include <stdlib.h>
 
 static SCM   update_thread_info (SCM self_var);
 static SCM   update_trap_info (SCM self_var, SCM trap_cur);
+static SCM   update_frame_info (SCM self_var, SCM frame);
 static SCM   update_environment_info (SCM self_var, SCM env_vec);
 static void *after_gc_handler (void *hook_data, void *fn_data, void *data);
 static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
@@ -45,23 +48,28 @@ struct _GdnLisp
   SCM     self_var; /* aka `gdn-self`. The Guile variable that holds
                  * a pointer to this struct */
 
-  SCM                original_input_port;  /* Stores Guile's default `current-input-port` */
-  SCM                original_output_port; /* Stores Guile's default `current-output-port` */
-  SCM                original_error_port;  /* Stores Guile's default `current-error-port` */
-  GUnixInputStream * input_stream;         /* Receives data from Guile's output port */
-  SCM                output_port;          /* A substitute `current-output-port` */
-  SCM                output_port_val;      /* A Guile variable that holds output_port */
-  GUnixInputStream * input_error_stream;   /* Receives data from Guile's error ports */
-  SCM                error_port;           /* A substitute `current-error-port` */
-  SCM                error_port_var;       /* A Guile variable that hold the error port */
-  GUnixInputStream * input_prompt_stream;  /* Receives data from the Guile prompt port */
-  SCM                prompt_port;          /* A new port for use with REPL prompts */
-  SCM                prompt_port_var;      /* aka `gdn-prompt-port`.  A Guile variable that holds the REPL promp port. */
-  GUnixOutputStream *output_stream;        /* Sends data to Guile input port */
-  SCM                input_port;           /* A substitute `current-input-port` */
-  SCM                input_port_var;       /* A Guile variable that hold the input port */
+  SCM original_input_port;  /* Stores Guile's default `current-input-port` */
+  SCM original_output_port; /* Stores Guile's default `current-output-port` */
+  SCM original_error_port;  /* Stores Guile's default `current-error-port` */
+  GPollableInputStream
+      *input_stream;    /* Receives data from Guile's output port */
+  SCM  output_port;     /* A substitute `current-output-port` */
+  SCM  output_port_var; /* A Guile variable that holds output_port */
+  GPollableInputStream
+      *input_error_stream; /* Receives data from Guile's error ports */
+  SCM  error_port;         /* A substitute `current-error-port` */
+  SCM  error_port_var;     /* A Guile variable that hold the error port */
+  GPollableInputStream
+      *input_prompt_stream; /* Receives data from the Guile prompt port */
+  SCM  prompt_port;         /* A new port for use with REPL prompts */
+  SCM  prompt_port_var; /* aka `gdn-prompt-port`.  A Guile variable that holds
+                           the REPL promp port. */
+  GPollableOutputStream *output_stream; /* Sends data to Guile input port */
+  SCM                    input_port;    /* A substitute `current-input-port` */
+  SCM input_port_var; /* A Guile variable that hold the input port */
 
-  int    response;           /* Actually an enum of type `GdnReplCommand` */
+  int    response; /* Actually an enum of type `GdnReplCommand` */
+  void * response_data;
   GCond  response_condition; /* Used in signalling operator responses */
   GMutex response_mutex;     /* Used in signalling operator responses */
 
@@ -74,7 +82,7 @@ struct _GdnLisp
   SCM         default_thread; /* The Guile representation of this interpreter's main thread */
 };
 
-G_DEFINE_TYPE (GdnLisp, gdn_lisp, G_TYPE_OBJECT);
+G_DEFINE_TYPE (GdnLisp, gdn_lisp, G_TYPE_OBJECT)
 
 enum
 {
@@ -93,12 +101,13 @@ static SCM      run_trap_enable_func;
 static SCM      run_trap_disable_func;
 
 ////////////////////////////////////////////////////////////////
-static GUnixInputStream * unix_pty_input_stream_new (void);
-static GUnixOutputStream *unix_pty_output_stream_new (void);
-static SCM                port_from_unix_output_stream (GUnixOutputStream *steam);
-static SCM                port_from_unix_input_stream (GUnixInputStream *steam);
-static SCM                guile_interpreter (void *data);
-static GEnumValue *       categorize_file (GFile *file);
+static GPollableInputStream * unix_pty_input_stream_new (void);
+static GPollableOutputStream *unix_pty_output_stream_new (void);
+static SCM         port_from_unix_output_stream (GUnixOutputStream *steam);
+static SCM         port_from_unix_input_stream (GUnixInputStream *steam);
+static SCM         guile_interpreter (void *data);
+static GEnumValue *categorize_file (GFile *file);
+static SCM         get_trap_response (SCM self_ptr);
 
 static SCM exit_handler (SCM self);
 static SCM load_handler (SCM filename, SCM self);
@@ -138,13 +147,19 @@ gdn_lisp_class_init (GdnLispClass *klass)
    * but, use these special C procedures. These 'inner' functions
    * will receive the `gdn-self` pointer as their first argument. */
 
+/* ISO C forbids converting a function to non-function pointer. That's a
+ * bug in Guile. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
   scm_c_define_gsubr ("gdn-update-thread-info", 1, 0, 0, update_thread_info);
   scm_c_define_gsubr ("gdn-update-trap-info", 2, 0, 0, update_trap_info);
+  scm_c_define_gsubr ("gdn-update-frame-info", 2, 0, 0, update_frame_info);
   scm_c_define_gsubr ("gdn-update-environment-info", 2, 0, 0, update_environment_info);
   scm_c_define_gsubr ("gdn-exit-handler", 1, 0, 0, exit_handler);
   scm_c_define_gsubr ("gdn-load-handler", 2, 0, 0, load_handler);
   scm_c_define_gsubr ("gdn-module-defined-handler", 2, 0, 0, module_defined_handler);
-  scm_c_define_gsubr ("gdn-trap-handler-inner", 4, 0, 0, trap_handler);
+  scm_c_define_gsubr ("gdn-get-trap-response", 1, 0, 0, get_trap_response);
+#pragma GCC diagnostic pop
   scm_c_export ("gdn-update-thread-info",
                 "gdn-update-environment-info",
                 "gdn-exit-handler",
@@ -155,14 +170,14 @@ gdn_lisp_class_init (GdnLispClass *klass)
   gui_thread = scm_current_thread ();
 
   // Loading this library sets up the GTK->Guile port mapping and defines our spawn functions.
-  contents = g_resource_lookup_data (gdnebug_get_resource (),
+  contents = g_resource_lookup_data (guidance_get_resource (),
                                      "/com/lonelycactus/Guidance/scm/lib.scm",
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   scm_c_eval_string (g_bytes_get_data (contents, NULL));
   g_bytes_unref (contents);
-  contents = g_resource_lookup_data (gdnebug_get_resource (),
-                                     "/com/lonelycactus/Guidance/scm/guidance.scm",
-                                     G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+  contents = g_resource_lookup_data (
+      guidance_get_resource (), "/com/lonelycactus/Guidance/scm/guidance.scm",
+      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   scm_c_eval_string (g_bytes_get_data (contents, NULL));
   g_bytes_unref (contents);
 
@@ -184,20 +199,23 @@ gdn_lisp_init (GdnLisp *self)
   /* Create all the ports that bridge the worlds of GTK and Guile */
   self->original_input_port = scm_current_input_port ();
   self->output_stream = unix_pty_output_stream_new ();
-  self->input_port = port_from_unix_output_stream (self->output_stream);
-  self->input_port_var = scm_c_define ("gdn-input-port");
+  self->input_port =
+      port_from_unix_output_stream (G_UNIX_OUTPUT_STREAM (self->output_stream));
+  self->input_port_var = scm_c_define ("gdn-input-port", self->input_port);
   scm_set_current_input_port (self->input_port);
 
   self->original_output_port = scm_current_output_port ();
   self->input_stream = unix_pty_input_stream_new ();
-  self->output_port = port_from_unix_input_stream (self->input_stream);
-  self->output_port_var = scm_c_define ("gdn-output-port");
+  self->output_port =
+      port_from_unix_input_stream (G_UNIX_INPUT_STREAM (self->input_stream));
+  self->output_port_var = scm_c_define ("gdn-output-port", self->output_port);
   scm_set_current_output_port (self->output_port);
 
   self->original_error_port = scm_current_error_port ();
   self->input_error_stream = unix_pty_input_stream_new ();
-  self->error_port = port_from_unix_input_stream (self->input_error_stream);
-  self->error_port_var = scm_c_define ("gdn-error-port");
+  self->error_port = port_from_unix_input_stream (
+      G_UNIX_INPUT_STREAM (self->input_error_stream));
+  self->error_port_var = scm_c_define ("gdn-error-port", self->error_port);
   scm_set_current_error_port (self->error_port);
 
   /* Note that we are combining Guile's error and warning ports. */
@@ -206,7 +224,8 @@ gdn_lisp_init (GdnLisp *self)
   /* This is special port just to receive strings such as
    * `scheme@(guile-user)>` from the REPL. */
   self->input_prompt_stream = unix_pty_input_stream_new ();
-  self->prompt_port = port_from_unix_input_stream (self->input_prompt_stream);
+  self->prompt_port = port_from_unix_input_stream (
+      G_UNIX_INPUT_STREAM (self->input_prompt_stream));
   self->prompt_port_var = scm_c_define ("gdn-prompt-port", self->prompt_port);
 
   /* To transmit and receive operator command asynchronously, we use
@@ -248,7 +267,7 @@ gdn_lisp_new (void)
 }
 
 static SCM
-spawn_repl (void *data)
+spawn_repl (G_GNUC_UNUSED void *data)
 {
   scm_call_0 (run_repl_func);
   return SCM_UNSPECIFIED;
@@ -265,7 +284,7 @@ gdn_lisp_spawn_repl_thread (GdnLisp *self)
 static SCM
 spawn_argv (void *data)
 {
-  SCM args = SCM_PACK_POINTER (data);
+  SCM args = GPOINTER_TO_SCM (data);
   scm_call_1 (run_argv_func, args);
   return SCM_UNSPECIFIED;
 }
@@ -279,13 +298,29 @@ gdn_lisp_spawn_argv_thread (GdnLisp *self, char **argv, gboolean break_on_entry)
       args = scm_cons (scm_from_locale_string (*argv), args);
       argv++;
     }
-  args = scm_reverse_x (args);
+  args = scm_reverse (args);
 
   if (break_on_entry)
     scm_call_0 (run_trap_enable_func);
   else
     scm_call_0 (run_trap_disable_func);
-  SCM thrd = scm_spawn_thread (spawn_argv, SCM_UNPACK_POINTER (args), NULL, NULL);
+  SCM thrd = scm_spawn_thread (spawn_argv, SCM_TO_GPOINTER (args), NULL, NULL);
+  /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread.
+   */
+  self->default_thread = thrd;
+}
+
+void
+gdn_lisp_spawn_args_thread (GdnLisp *   self,
+                            const char *args,
+                            gboolean    break_on_entry)
+{
+  if (break_on_entry)
+    scm_call_0 (run_trap_enable_func);
+  else
+    scm_call_0 (run_trap_disable_func);
+
+  SCM thrd = scm_spawn_thread (spawn_argv, GPOINTER_TO_SCM (args), NULL, NULL);
   /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread. */
   self->default_thread = thrd;
 }
@@ -303,10 +338,10 @@ gdn_lisp_exit (GdnLisp *self)
 }
 
 void
-gdn_lisp_break (GdnLisp *self)
+gdn_lisp_break (G_GNUC_UNUSED GdnLisp *self)
 {
   // This enqueues the trap handler in the current thread.
-  scm_system_async_mark_for_thread ();
+  // scm_system_async_mark_for_thread ();
 }
 
 ////////////////////////////////////////////////////////////////
@@ -314,7 +349,7 @@ gdn_lisp_break (GdnLisp *self)
 /*
  * This procedure creates a new input stream backed by a unlocked PTY file descriptor.
  */
-static GUnixInputStream *
+static GPollableInputStream *
 unix_pty_input_stream_new (void)
 {
   int fd = getpt ();
@@ -322,14 +357,14 @@ unix_pty_input_stream_new (void)
     g_error ("Could not create pseudoterminal device");
   if (grantpt (fd) < 0 || unlockpt (fd) < 0)
     g_error ("Could not unlock pseudoterminal FD #%d", fd);
-  return g_unix_input_stream_new (fd, TRUE);
+  return G_POLLABLE_INPUT_STREAM (g_unix_input_stream_new (fd, TRUE));
 }
 
 /*
  * This procedure creates a new output stream backed by a unlocked PTY file descriptor.
  */
 
-static GUnixOutputStream *
+static GPollableOutputStream *
 unix_pty_output_stream_new (void)
 {
   int fd = getpt ();
@@ -337,7 +372,7 @@ unix_pty_output_stream_new (void)
     g_error ("Could not create pseudoterminal device");
   if (grantpt (fd) < 0 || unlockpt (fd) < 0)
     g_error ("Could not unlock pseudoterminal FD #%d", fd);
-  return g_unix_output_stream_new (fd, TRUE);
+  return G_POLLABLE_OUTPUT_STREAM (g_unix_output_stream_new (fd, TRUE));
 }
 
 /*
@@ -349,7 +384,7 @@ port_from_unix_input_stream (GUnixInputStream *stream)
   char *name;
   int   master_fd;
   int   slave_fd;
-  char *mode;
+  SCM   mode;
 
   master_fd = g_unix_input_stream_get_fd (stream);
   name = ptsname (master_fd);
@@ -357,7 +392,7 @@ port_from_unix_input_stream (GUnixInputStream *stream)
     g_error ("Could not acquire slave pseudoterminal device for FD #%d", master_fd);
   slave_fd = open (name, O_WRONLY);
   mode = scm_from_utf8_string ("w0");
-  return scm_fdopen (slave_fd, mode);
+  return scm_fdopen (scm_from_int (slave_fd), mode);
 }
 
 /*
@@ -369,7 +404,7 @@ port_from_unix_output_stream (GUnixOutputStream *stream)
   char *name;
   int   master_fd;
   int   slave_fd;
-  char *mode;
+  SCM   mode;
 
   master_fd = g_unix_output_stream_get_fd (stream);
   name = ptsname (master_fd);
@@ -379,7 +414,7 @@ port_from_unix_output_stream (GUnixOutputStream *stream)
    * If I do, it is the slave file descriptor that needs to be adjusted. */
   slave_fd = open (name, O_RDONLY);
   mode = scm_from_utf8_string ("r0");
-  return scm_fdopen (slave_fd, mode);
+  return scm_fdopen (scm_from_int (slave_fd), mode);
 }
 
 #if 0
@@ -457,42 +492,12 @@ load_handler (SCM filename, SCM self_ptr)
  * called on each new module by the module-defined-hook.
  */
 static SCM
-module_defined_handler (SCM module_name, SCM filename, SCM abs_filename, SCM self_ptr)
+module_defined_handler (SCM module_info, SCM self_ptr)
 {
   GdnLisp *self;
-  char *   name;
-  char *   fname;
-  char *   path;
-  // GFile *     file;
-  // GListStore *store;
-  // GEnumValue *category;
 
   self = GDN_LISP (scm_to_pointer (self_ptr));
-
-  name = scm_to_utf8_string (module_name);
-  fname = scm_to_utf8_string (filename);
-  if (scm_is_false (abs_filename))
-    path = NULL;
-  else
-    path = scm_to_utf8_string (abs_filename);
-
-  g_debug ("module loaded %s", name);
-
-  category = categorize_file (path);
-
-  gtk_list_store_append (self->modules, &iter);
-  gtk_list_store_set (self->modules, &iter,
-                      0, name,
-                      1, fname,
-                      2, path,
-                      3, category);
-
-  g_free (name);
-  g_free (fname);
-  g_free (path);
-  // FIXME: is it worth creating a "load" signal, or should we just rely on
-  // the signals that occur when the list store is updated?
-  // g_object_unref (category);
+  gdn_module_info_store_append (self->modules, module_info);
   return SCM_UNSPECIFIED;
 }
 
@@ -500,7 +505,9 @@ module_defined_handler (SCM module_name, SCM filename, SCM abs_filename, SCM sel
  * A scm_t_c_hook function that emits an "after-gc" signal
  */
 static void *
-after_gc_handler (void *hook_data, void *fn_data, void *data)
+after_gc_handler (G_GNUC_UNUSED void *hook_data,
+                  void *              fn_data,
+                  G_GNUC_UNUSED void *data)
 {
   g_signal_emit (fn_data, signals[SIGNAL_AFTER_GC], 0);
 
@@ -511,7 +518,9 @@ after_gc_handler (void *hook_data, void *fn_data, void *data)
  * A scm_t_c_hook function that emits an "after-sweep" signal
  */
 static void *
-after_sweep_handler (void *hook_data, void *fn_data, void *data)
+after_sweep_handler (G_GNUC_UNUSED void *hook_data,
+                     void *              fn_data,
+                     G_GNUC_UNUSED void *data)
 {
   g_signal_emit (fn_data, signals[SIGNAL_AFTER_SWEEP], 0);
 
@@ -522,7 +531,7 @@ static SCM
 exit_handler (SCM self_var)
 {
   GdnLisp *self;
-  self = GDN_LISP (scm_to_pointer (self_ptr));
+  self = GDN_LISP (scm_to_pointer (self_var));
   g_signal_emit (self, signals[SIGNAL_EXIT], 0);
   return SCM_UNSPECIFIED;
 }
@@ -544,16 +553,19 @@ update_trap_info (SCM self_var, SCM trap_cur)
 }
 
 static SCM
+update_frame_info (SCM self_var, SCM frames)
+{
+  GdnLisp *self = scm_to_pointer (self_var);
+  gdn_frame_info_store_update (self->traps, frames);
+  return SCM_UNSPECIFIED;
+}
+
+static SCM
 update_environment_info (SCM self_var, SCM env_vec)
 {
   GdnLisp *self = scm_to_pointer (self_var);
   gdn_environment_info_store_update (self->environment, env_vec);
   return SCM_UNSPECIFIED;
-}
-
-static SCM
-update_backtrace_info (SCM backtrace)
-{
 }
 
 static void
@@ -578,32 +590,35 @@ set_response_data (GdnLisp *self, GdnLispCommand cmd, void *data)
 static SCM
 response_data_to_scm (GdnLisp *self)
 {
-  static SCM step_into_instruction_sym = scm_from_utf8_symbol ("step-into-instruction");
-  static SCM step_into_sym = scm_from_utf8_symbol ("step-into");
-  static SCM step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
-  static SCM step_sym = scm_from_utf8_symbol ("step");
-  static SCM step_out_sym = scm_from_utf8_symbol ("step-out");
-  static SCM continue_sym = scm_from_utf8_symbol ("continue");
-  static SCM eval_sym = scm_from_utf8_symbol ("eval");
+  SCM step_into_instruction_sym =
+      scm_from_utf8_symbol ("step-into-instruction");
+  SCM step_into_sym = scm_from_utf8_symbol ("step-into");
+  SCM step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
+  SCM step_sym = scm_from_utf8_symbol ("step");
+  SCM step_out_sym = scm_from_utf8_symbol ("step-out");
+  SCM continue_sym = scm_from_utf8_symbol ("continue");
+  SCM eval_sym = scm_from_utf8_symbol ("eval");
 
   SCM response;
   SCM response_data;
 
   response_data = SCM_UNSPECIFIED;
 
-  if (self->response = GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION)
+  if (self->response == GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION)
     response = step_into_instruction_sym;
-  else if (self->response = GDN_LISP_COMMAND_STEP_INTO)
+  else if (self->response == GDN_LISP_COMMAND_STEP_INTO)
     response = step_into_sym;
-  else if (self->response = GDN_LISP_COMMAND_STEP_INSTRUCTION)
+  else if (self->response == GDN_LISP_COMMAND_STEP_INSTRUCTION)
     response = step_into_sym;
-  else if (self->response = GDN_LISP_COMMAND_STEP)
+  else if (self->response == GDN_LISP_COMMAND_STEP)
     response = step_sym;
-  else if (self->response = GDN_LISP_COMMAND_STEP_OUT)
+  else if (self->response == GDN_LISP_COMMAND_STEP_INSTRUCTION)
+    response = step_instruction_sym;
+  else if (self->response == GDN_LISP_COMMAND_STEP_OUT)
     response = step_out_sym;
-  else if (self->response = GDN_LISP_COMMAND_CONTINUE)
+  else if (self->response == GDN_LISP_COMMAND_CONTINUE)
     response = continue_sym;
-  else if (self->response = GDN_LISP_COMMAND_EVAL)
+  else if (self->response == GDN_LISP_COMMAND_EVAL)
     {
       response = eval_sym;
       response_data = scm_from_utf8_string (self->response_data);
@@ -617,7 +632,7 @@ response_data_to_scm (GdnLisp *self)
 void
 gdn_lisp_trap_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data)
 {
-  g_mutex_lock (self->response_mutex);
+  g_mutex_lock (&(self->response_mutex));
 
   // If an old command didn't get processed, clear out the
   // associated data. */
@@ -627,8 +642,8 @@ gdn_lisp_trap_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data)
       clear_response_data (self);
     }
   set_response_data (self, cmd, data);
-  g_cond_signal (self->response_condition);
-  g_mutex_unlock (self->response_mutex);
+  g_cond_signal (&(self->response_condition));
+  g_mutex_unlock (&(self->response_mutex));
 }
 
 /* This function, which is running the Guile thread, is a blocking
@@ -639,28 +654,41 @@ get_trap_response (SCM self_ptr)
   GdnLisp *self = GDN_LISP (scm_to_pointer (self_ptr));
   SCM      response;
 
-  g_mutex_lock (self->response_mutex);
+  g_mutex_lock (&(self->response_mutex));
   while (self->response != GDN_LISP_COMMAND_UNKNOWN)
-    g_cond_wait (self->response_condition, self->response_mutex);
+    g_cond_wait (&(self->response_condition), &(self->response_mutex));
 
   response = response_data_to_scm (self);
   clear_response_data (self);
-  g_mutex_unlock (self->response_mutex);
+  g_mutex_unlock (&(self->response_mutex));
 
   return response;
 }
 
-static SCM
-guile_repl (GdnLisp *self)
+GPollableInputStream *
+gdn_lisp_get_input_stream (GdnLisp *lisp)
 {
-  GBytes *contents;
-  contents =
-      g_resource_lookup_data (gdnebug_get_resource (), "/com/lonelycactus/gdnebug/scm/guidance.scm",
-                              G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
-  scm_c_eval_string (g_bytes_get_data (contents, NULL));
-  g_bytes_unref (contents);
-  return SCM_UNDEFINED;
+  return lisp->input_stream;
 }
+
+GPollableInputStream *
+gdn_lisp_get_input_error_stream (GdnLisp *lisp)
+{
+  return lisp->input_error_stream;
+}
+
+GPollableInputStream *
+gdn_lisp_get_input_prompt_stream (GdnLisp *lisp)
+{
+  return lisp->input_prompt_stream;
+}
+
+GOutputStream *
+gdn_lisp_get_output_stream (GdnLisp *lisp)
+{
+  return lisp->output_stream;
+}
+
 #if 0
 
 struct _GdnAppWindow
@@ -690,8 +718,6 @@ struct _GdnAppWindow
 };
 
 
-extern SCM gdn_app_win_scm_load_hook(SCM filename);
-
 /*
  * A thunk that launches a Guile REPL using the prompt port
  */
@@ -699,7 +725,7 @@ static SCM
 guile_interpreter(void *data)
 {
     GBytes *contents;
-    SCM repl_prompt_port = SCM_PACK_POINTER(data);
+    SCM repl_prompt_port = GPOINTER_TO_SCM(data);
 
     /* Needed by the REPL. */
     scm_c_define("%gdn-prompt-port", repl_prompt_port);
@@ -710,8 +736,8 @@ guile_interpreter(void *data)
     scm_c_eval_string("(define (%gdn-load-hook fname)"
                       "  (%gdn-load-hook-inner fname %file-list-store))");
 
-    contents = g_resource_lookup_data(gdnebug_get_resource(),
-                                      "/com/lonelycactus/gdnebug/gdn-repl.scm",
+    contents = g_resource_lookup_data(guidance_get_resource(),
+                                      "/com/lonelycactus/guidance/gdn-repl.scm",
                                       G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
     scm_c_eval_string(g_bytes_get_data(contents, NULL));
     g_bytes_unref(contents);
@@ -721,7 +747,7 @@ guile_interpreter(void *data)
 SCM
 gdn_repl_spawn_thread(SCM prompt_port)
 {
-    SCM thrd = scm_spawn_thread(guile_interpreter, SCM_UNPACK_POINTER(prompt_port), NULL, NULL);
+    SCM thrd = scm_spawn_thread(guile_interpreter, SCM_TO_GPOINTER(prompt_port), NULL, NULL);
     /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread. */
     return thrd;
 }

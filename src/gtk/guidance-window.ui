@@ -1,6 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk+" version="4.2.1"/>
+  <object class="GtkTextTagTable" id="terminal_text_tag_table">
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">input</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="family">monospace</property>
+      </object>
+    </child>
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">error</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="foreground">saddlebrown</property>
+      </object>
+    </child>
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">warning</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="background">rosybrown</property>
+      </object>
+    </child>
+  </object>
+  <object class="GtkTextBuffer" id="terminal_text_buffer">
+    <property name="tag-table">terminal_text_tag_table</property>
+    <property name="text" translatable="yes">Hello</property>
+  </object>
   <template class="GdnApplicationWindow" parent="GtkApplicationWindow">
     <property name="default-width">600</property>
     <property name="default-height">300</property>
@@ -185,7 +215,7 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkCheckButton">
+                                  <object class="GtkCheckButton" id="settings_start_repl_radio">
                                     <property name="label">Start a REPL</property>
                                     <layout>
                                       <property name="row">0</property>
@@ -194,27 +224,8 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkCheckButton">
-                                    <property name="label">Use Command-Line Arguments</property>
-                                    <layout>
-                                      <property name="row">1</property>
-                                      <property name="column">1</property>
-                                    </layout>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="label">deez args</property>
-                                    <property name="xalign">0</property>
-                                    <layout>
-                                      <property name="row">2</property>
-                                      <property name="column">1</property>
-                                    </layout>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkCheckButton">
-                                    <property name="label">Use Arguments</property>
+                                  <object class="GtkCheckButton" id="settings_use_args_radio">
+                                    <property name="label">Run command-line arguments</property>
                                     <layout>
                                       <property name="row">3</property>
                                       <property name="column">1</property>
@@ -222,8 +233,7 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkEntry">
-                                    <property name="placeholder-text">Enter command-line arguments</property>
+                                  <object class="GtkEntry" id="settings_args_entry">
                                     <layout>
                                       <property name="row">4</property>
                                       <property name="column">1</property>
@@ -260,7 +270,7 @@
                                       <property name="column">1</property>
                                     </layout>
                                     <child>
-                                      <object class="GtkSwitch">
+                                      <object class="GtkSwitch" id="settings_pause_switch">
                                       </object>
                                     </child>
                                   </object>
@@ -285,6 +295,7 @@
                                     <child>
                                       <object class="GtkButton">
                                         <property name="icon-name">launch</property>
+                                        <property name="action-name">win.launch</property>
                                       </object>
                                     </child>
                                   </object>
@@ -302,21 +313,34 @@
                               <object class="GtkBox">
                                 <property name="orientation">vertical</property>
                                 <child>
-                                  <object class="GtkTextView">
-                                    <property name="hexpand">True</property>
-                                    <property name="vexpand">True</property>
+                                  <object class="GtkScrolledWindow">
+                                    <child>
+                                      <object class="GtkTextView" id="terminal_text_view">
+                                        <property name="hexpand">True</property>
+                                        <property name="vexpand">True</property>
+                                        <property name="wrap-mode">char</property>
+                                        <property name="buffer">terminal_text_buffer</property>
+                                        <style>
+                                          <class name="terminal_text_buffer" />
+                                        </style>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                                 <child>
                                   <object class="GtkBox">
                                     <child>
-                                      <object class="GtkLabel">
+                                      <object class="GtkLabel" id="terminal_prompt_label">
                                         <property name="label">prompt&gt;</property>
+                                        <style>
+                                          <class name="terminal_prompt" />
+                                        </style>
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkEntry">
+                                      <object class="GtkEntry" id="terminal_input_entry">
                                         <property name="hexpand">True</property>
+                                        <property name="placeholder-text">Enter Guile commands here</property>
                                       </object>
                                     </child>
                                     <child>

@@ -23,9 +23,10 @@
 G_BEGIN_DECLS
 
 #define GDN_BINDING_INFO_TYPE (gdn_binding_info_get_type ())
-G_DECLARE_FINAL_TYPE (GdnBindingInfo, gdn_binding_info, GDN, BINDING_INFO, GObject);
+G_DECLARE_FINAL_TYPE (
+    GdnBindingInfo, gdn_binding_info, GDN, BINDING_INFO, GObject)
 
-SCM
-gdn_binding_info_store_update (GListStore *store, SCM bindings_vec, int n_args)
+void
+gdn_binding_info_store_update (GListStore *store, SCM bindings_vec, int n_args);
 
-    G_END_DECLS
+G_END_DECLS

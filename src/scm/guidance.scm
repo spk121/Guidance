@@ -26,9 +26,22 @@
          ;; NAME is a list of symbols, e.g. '(srfi srfi-1)
          (name-str (format #f "~a" name))
          (filename ((record-accessor module-type 'filename) directory))
-         (abs-filename (%search-load-path filename)))
-    
-  (gdn-module-defined-handler name-str filename abs-filename gdn-self))
+         (abs-filename (%search-load-path filename))
+         (category
+          (cond
+           ((gdn-string-starts-with (%library-dir) abs-filename)
+            'library)
+           ((gdn-string-starts-with (%site-dir) abs-filename)
+            'site)
+           ((gdn-string-starts-with (%global-site-dir) abs-filename)
+            'global-site)
+           ((gdn-string-starts-with (%package-data-dir) abs_filename)
+            'package-data)
+           (else
+            'other))))
+    (gdn-module-defined-handler
+     (list name-str filename abs-filename category)
+     gdn-self)))
 
 (add-hook! module-defined-hook gdn-module-defined-hook)
 
@@ -107,7 +120,6 @@ trap-name indicate the current trap."
      ((eq? type 'restart)
       #f)
      ((eq? type 'eval)
-      (let 
       (display data (current-output-port))
       (newline (current-output-port))
       (display "=> " (current-output-port))
@@ -115,8 +127,9 @@ trap-name indicate the current trap."
       (newline (current-output-port))
       (loop)
       #f))))
-  (gdn-disable-debug-toolbar))
-  
+
+(define (gdn-break)
+  (gdn-trap-and-break-handler))
 ;;
 ;; I suppose we hook the step and return buttons to
 ;;  add-ephemeral-trap-at-frame-finish! and
@@ -130,7 +143,7 @@ trap-name indicate the current trap."
 ;; (delete-trap! idx)
 
 
-(install-trap-handler! yjd-trap-handler)
+(install-trap-handler! gdn-trap-and-break-handler)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

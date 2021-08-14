@@ -28,8 +28,8 @@
 G_BEGIN_DECLS
 
 #define GDN_THREAD_INFO_TYPE (gdn_thread_info_get_type ())
-G_DECLARE_FINAL_TYPE (GdnThreadInfo, gdn_thread_info, GDN, THREAD_INFO, GObject);
+G_DECLARE_FINAL_TYPE (GdnThreadInfo, gdn_thread_info, GDN, THREAD_INFO, GObject)
 
-SCM gdn_thread_info_store_update (GListStore *store);
+void gdn_thread_info_store_update (GListStore *store);
 
 G_END_DECLS

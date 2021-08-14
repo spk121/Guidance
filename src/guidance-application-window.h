@@ -24,6 +24,10 @@ G_BEGIN_DECLS
 
 #define GDN_TYPE_APPLICTION_WINDOW (gdn_application_window_get_type ())
 
-G_DECLARE_FINAL_TYPE (GdnApplicationWindow, gdn_application_window, GUIDANCE, APPLICATION_WINDOW, GtkApplicationWindow)
+G_DECLARE_FINAL_TYPE (GdnApplicationWindow,
+                      gdn_application_window,
+                      GDN,
+                      APPLICATION_WINDOW,
+                      GtkApplicationWindow)
 
 G_END_DECLS

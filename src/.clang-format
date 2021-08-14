@@ -10,4 +10,4 @@ PointerAlignment: Right
 ReflowComments: true
 SpaceAfterCStyleCast: true
 UseTab: Never
-ColumnLimit: 0
+ColumnLimit: 80

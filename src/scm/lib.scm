@@ -38,6 +38,14 @@
    (else
     (format #f "~a" x))))
 
+(define (gdn-string-starts-with prefix str)
+  (let ((len (string-length prefix)))
+    (cond
+     ((< (string-length str) len)
+      #f)
+     (else
+      (string= prefix str 0 len 0 len)))))
+
 (define (gdn-unpack-frame-bindings bindings max-index)
   (if (null? bindings)
       '()
@@ -76,6 +84,7 @@
                                               'λ))
                                     (frame-arguments frame))
                             (list file line col)
+                            (length (frame-arguments frame))
                             (gdn-unpack-frame-bindings (frame-bindings frame)
                                                        (length (frame-arguments frame)))
                             )
@@ -271,6 +280,7 @@
 ;; Entry points
 
 (define (gdn-run-repl)
+  (display "BLAMMO")
   (top-repl))
 
 (define (gdn-run-argv argv)
@@ -285,3 +295,4 @@ interpreter."
 
 (define (gdn-run-trap-disable)
   (disable-trap! run-trap))
+

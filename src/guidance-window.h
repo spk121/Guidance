@@ -22,7 +22,7 @@
 
 G_BEGIN_DECLS
 
-#define GUIDANCE_TYPE_WINDOW (guidance_window_get_type())
+#define GUIDANCE_TYPE_WINDOW (guidance_window_get_type ())
 
 G_DECLARE_FINAL_TYPE (GuidanceWindow, guidance_window, GUIDANCE, WINDOW, GtkApplicationWindow)
 
