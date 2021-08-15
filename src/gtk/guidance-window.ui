@@ -69,7 +69,7 @@
             <property name="vexpand">True</property>
             <child>
               <object class="GtkStackSidebar">
-                <property name="stack">frame-stack</property>
+                <property name="stack">main_stack</property>
                 <property name="vexpand">True</property>
               </object>
             </child>
@@ -195,7 +195,7 @@
                 <child>
                   <object class="GtkBox" id="main-frame">
                     <child>
-                      <object class="GtkStack" id="frame-stack">
+                      <object class="GtkStack" id="main_stack">
                         <property name="hexpand">True</property>
                         <property name="vexpand">True</property>
                         <child>
@@ -417,13 +417,9 @@
                             <property name="name">backtrace</property>
                             <property name="title">Backtrace</property>
                             <property name="child">
-                              <object class="GtkScrolledWindow">
+                              <object class="GtkScrolledWindow" id="backtrace_window">
                                 <property name="hexpand">True</property>
                                 <property name="vexpand">True</property>
-                                <child>
-                                  <object class="GtkColumnView">
-                                  </object>
-                                </child>
                               </object>
                             </property>
                           </object>
@@ -433,13 +429,9 @@
                             <property name="name">threads</property>
                             <property name="title">Threads</property>
                             <property name="child">
-                              <object class="GtkScrolledWindow">
+                              <object class="GtkScrolledWindow" id="thread_window">
                                 <property name="hexpand">True</property>
                                 <property name="vexpand">True</property>
-                                <child>
-                                  <object class="GtkColumnView">
-                                  </object>
-                                </child>
                               </object>
                             </property>
                           </object>
@@ -449,7 +441,7 @@
                             <property name="name">modules</property>
                             <property name="title">Modules</property>
                             <property name="child">
-                              <object class="GtkScrolledWindow">
+                              <object class="GtkScrolledWindow" id="module_window">
                                 <property name="hexpand">True</property>
                                 <property name="vexpand">True</property>
                                 <child>
@@ -465,13 +457,9 @@
                             <property name="name">environment</property>
                             <property name="title">Environment</property>
                             <property name="child">
-                              <object class="GtkScrolledWindow">
+                              <object class="GtkScrolledWindow" id="environment_window">
                                 <property name="hexpand">True</property>
                                 <property name="vexpand">True</property>
-                                <child>
-                                  <object class="GtkColumnView">
-                                  </object>
-                                </child>
                               </object>
                             </property>
                           </object>

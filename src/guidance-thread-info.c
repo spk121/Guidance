@@ -154,3 +154,9 @@ gdn_thread_info_store_update (GListStore *store)
       g_list_store_append (store, info);
     }
 }
+
+const char *
+gdn_thread_info_get_name (GdnThreadInfo *info)
+{
+  return (const char *) (info->name);
+}

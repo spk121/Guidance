@@ -143,7 +143,7 @@ frame_info_new (const char *name, const char *filename, int line, int column, in
 #endif
 
 static GdnFrameInfo *
-frame_info_new_from_scm (SCM lst)
+frame_info_new_from_scm (SCM frame)
 {
   GdnFrameInfo *self = g_object_new (GDN_FRAME_INFO_TYPE, NULL);
   SCM           s_name;
@@ -153,12 +153,12 @@ frame_info_new_from_scm (SCM lst)
   SCM           s_n_args;
   SCM           s_bindings;
 
-  s_name = scm_list_ref (lst, scm_from_int (0));
-  s_filename = scm_list_ref (lst, scm_from_int (1));
-  s_line = scm_list_ref (lst, scm_from_int (2));
-  s_column = scm_list_ref (lst, scm_from_int (3));
-  s_n_args = scm_list_ref (lst, scm_from_int (4));
-  s_bindings = scm_list_ref (lst, scm_from_int (5));
+  s_name = scm_c_vector_ref (frame, 0);
+  s_filename = scm_c_vector_ref (frame, 1);
+  s_line = scm_c_vector_ref (frame, 2);
+  s_column = scm_c_vector_ref (frame, 3);
+  s_n_args = scm_c_vector_ref (frame, 4);
+  s_bindings = scm_c_vector_ref (frame, 5);
 
   self->name = scm_to_utf8_string (s_name);
   self->filename = scm_to_utf8_string (s_filename);
@@ -173,6 +173,10 @@ frame_info_new_from_scm (SCM lst)
 void
 gdn_frame_info_store_update (GListStore *store, SCM frames)
 {
+  g_assert_nonnull (store);
+  g_assert_nonnull (frames);
+  g_assert (scm_is_vector (frames));
+
   g_list_store_remove_all (store);
 
   for (size_t i = 0; i < scm_c_vector_length (frames); i++)
@@ -181,4 +185,10 @@ gdn_frame_info_store_update (GListStore *store, SCM frames)
       GdnFrameInfo *info = frame_info_new_from_scm (entry);
       g_list_store_append (store, info);
     }
+}
+
+const char *
+gdn_frame_info_get_name (GdnFrameInfo *self)
+{
+  return (const char *) self->name;
 }

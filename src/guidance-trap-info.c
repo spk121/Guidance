@@ -132,20 +132,21 @@ gdn_trap_info_init (G_GNUC_UNUSED GdnTrapInfo *self)
 }
 
 static GdnTrapInfo *
-trap_info_new_from_scm (SCM trap, int current)
+trap_info_new_from_trap_id (int trap, int current)
 {
   GdnTrapInfo *self = g_object_new (GDN_TRAP_INFO_TYPE, NULL);
+  SCM          s_id = scm_from_int (trap);
 
-  self->index = scm_to_int (trap);
-  self->name = scm_to_utf8_string (scm_call_1 (trap_name_func, trap));
-  self->enabled = scm_is_true (scm_call_1 (trap_enabled_func, trap));
+  self->index = trap;
+  self->name = scm_to_utf8_string (scm_call_1 (trap_name_func, s_id));
+  self->enabled = scm_is_true (scm_call_1 (trap_enabled_func, s_id));
   self->current = current;
 
   return self;
 }
 
 void
-gdn_trap_info_store_update (GListStore *store, SCM trap_cur)
+gdn_trap_info_store_update (GListStore *store, int trap_cur)
 {
   SCM all_traps = scm_vector (scm_call_0 (list_traps_func));
 
@@ -153,13 +154,16 @@ gdn_trap_info_store_update (GListStore *store, SCM trap_cur)
 
   for (size_t i = 0; i < scm_c_vector_length (all_traps); i++)
     {
-      SCM          trap;
+      int          trap;
       GdnTrapInfo *info;
       int          current;
 
-      trap = scm_c_vector_ref (all_traps, i);
-      current = scm_is_true (scm_eqv_p (trap, trap_cur));
-      info = trap_info_new_from_scm (trap, current);
+      trap = scm_to_int (scm_c_vector_ref (all_traps, i));
+      if (trap == trap_cur)
+        current = TRUE;
+      else
+        current = FALSE;
+      info = trap_info_new_from_trap_id (trap, current);
       g_list_store_append (store, info);
     }
 }

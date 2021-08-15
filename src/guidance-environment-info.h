@@ -26,6 +26,9 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE (
     GdnEnvironmentInfo, gdn_environment_info, GDN, ENVIRONMENT_INFO, GObject)
 
-void gdn_environment_info_store_update (GListStore *store, SCM all_info);
+void              gdn_environment_info_update (SCM all_info);
+GtkTreeListModel *gdn_environment_info_get_tree_model (void);
 
+const char *gdn_environment_info_get_key (GdnEnvironmentInfo *info);
+const char *gdn_environment_info_get_value (GdnEnvironmentInfo *info);
 G_END_DECLS

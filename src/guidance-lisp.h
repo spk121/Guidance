@@ -62,15 +62,18 @@ gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
 void                  gdn_lisp_exit (GdnLisp *lisp);
 void                  gdn_lisp_break (GdnLisp *lisp);
 void                  gdn_lisp_continue (GdnLisp *lisp, GdnLispCommand command);
-GPollableInputStream *gdn_lisp_get_input_stream (GdnLisp *lisp);
-GPollableInputStream *gdn_lisp_get_input_error_stream (GdnLisp *lisp);
-GPollableInputStream *gdn_lisp_get_input_prompt_stream (GdnLisp *lisp);
-GOutputStream *       gdn_lisp_get_output_stream (GdnLisp *lisp);
+int                   gdn_lisp_get_input_fd (GdnLisp *lisp);
+int                   gdn_lisp_get_input_error_fd (GdnLisp *lisp);
+int                   gdn_lisp_get_input_prompt_fd (GdnLisp *lisp);
+int                   gdn_lisp_get_output_fd (GdnLisp *lisp);
 int                   gdn_lisp_set_input_callback (GdnLisp *            lisp,
                                                    GMainContext *       ctx,
                                                    GPollableSourceFunc *func,
                                                    gpointer             data);
 GListStore *          gdn_lisp_get_environment (GdnLisp *lisp);
+GListStore *          gdn_lisp_get_threads (GdnLisp *lisp);
+GListStore *          gdn_lisp_get_modules (GdnLisp *lisp);
+GListStore *          gdn_lisp_get_backtrace (GdnLisp *lisp);
 
 /*
  * Requests an update of the environment info store.

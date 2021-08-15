@@ -55,7 +55,9 @@
 ;; Reader
 
 ;; Like a regular REPL reader, except that the prompt is printed to
-;; gdn-prompt-port. Does not handle readline-like commands
+;; gdn-prompt-port. Does not handle readline-like commands.  Each
+;; iteration, it runs the help functions that update the information
+;; GtkStack pages.
 (define gdn-repl-reader
   (lambda* (prompt #:optional (reader (fluid-ref current-reader)))
     (unless (char-ready?)
@@ -63,6 +65,14 @@
                gdn-prompt-port))
     (force-output)
     (run-hook before-read-hook)
+    (gdn-update-thread-info gdn-self)
+    (gdn-update-environment-info (gdn-get-environment))
+    ;; (gdn-update-trap-info gdn-self trap-idx)
+    (gdn-update-frame-info gdn-self
+     (gdn-get-backtrace
+      (vector-ref (stack->vector (make-stack #t
+                                             5 ; five layers to get out of repl-reader
+                                             )) 0)))
     ((or reader read) (current-input-port))))
 
 (set! repl-reader gdn-repl-reader)
@@ -88,12 +98,12 @@
 ;;   - if it is a step, adds the appropriate emphemeral trap, if necessary
 ;; - returns to continue execution
 
-(define* (gdn-trap-and-break-handler frame #:optional (trap-idx #f) (trap-name "break"))
+(define* (gdn-trap-handler frame trap-idx trap-name)
   "A trap and break handler. To indicate a break, TRAP-IDX should be
 #f and TRAP-NAME should be 'break'.  Otherwise the trap-idx and
 trap-name indicate the current trap."
   (gdn-update-thread-info gdn-self)
-  (gdn-update-environment-info gdn-self (gdn-get-environment))
+  (gdn-update-environment-info (gdn-get-environment))
   (gdn-update-trap-info gdn-self trap-idx)
   (gdn-update-backtrace-info (gdn-get-backtrace frame))
 
@@ -128,8 +138,6 @@ trap-name indicate the current trap."
       (loop)
       #f))))
 
-(define (gdn-break)
-  (gdn-trap-and-break-handler))
 ;;
 ;; I suppose we hook the step and return buttons to
 ;;  add-ephemeral-trap-at-frame-finish! and
@@ -143,7 +151,7 @@ trap-name indicate the current trap."
 ;; (delete-trap! idx)
 
 
-(install-trap-handler! gdn-trap-and-break-handler)
+(install-trap-handler! gdn-trap-handler)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

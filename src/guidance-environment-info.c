@@ -18,60 +18,39 @@
 
 #include "guidance-environment-info.h"
 
+////////////////////////////////////////////////////////////////
+// GDN_ENVIRONMENT_CATEGORY
+
 struct _GdnEnvironmentInfo
 {
   GObject parent;
 
-  char *category;
   char *key;
-  char *val;
+  char *      value;
+  GHashTable *hash_table;
 };
 
 G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT)
 
-enum
-{
-  PROP_0,
-  PROP_CATEGORY,
-  PROP_KEY,
-  PROP_VAL,
-  N_PROPS
-};
-static GParamSpec *properties[N_PROPS] = {
-  NULL,
-};
-
-static void
-gdn_environment_info_get_property (GObject *object, unsigned int property_id, GValue *value, GParamSpec *pspec)
-{
-  GdnEnvironmentInfo *self = GDN_ENVIRONMENT_INFO (object);
-
-  switch (property_id)
-    {
-    case PROP_CATEGORY:
-      g_value_set_string (value, self->category);
-      break;
-    case PROP_KEY:
-      g_value_set_string (value, self->key);
-      break;
-    case PROP_VAL:
-      g_value_set_string (value, self->val);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-    }
-}
+GtkTreeListModel *_model = NULL;
+GListStore *      _store = NULL;
 
 static void
 gdn_environment_info_finalize (GObject *object)
 {
   GdnEnvironmentInfo *self = GDN_ENVIRONMENT_INFO (object);
-  g_free (self->category);
-  self->category = NULL;
   g_free (self->key);
   self->key = NULL;
-  g_free (self->val);
-  self->val = NULL;
+  if (self->value)
+    {
+      g_free (self->value);
+      self->value = NULL;
+    }
+  if (self->hash_table)
+    {
+      g_hash_table_destroy (self->hash_table);
+      self->hash_table = NULL;
+    }
 
   /* Don't forget to chain up. */
   G_OBJECT_CLASS (gdn_environment_info_parent_class)->finalize (object);
@@ -83,14 +62,6 @@ gdn_environment_info_class_init (GdnEnvironmentInfoClass *klass)
   GObjectClass *gobj_class = G_OBJECT_CLASS (klass);
 
   gobj_class->finalize = gdn_environment_info_finalize;
-  gobj_class->get_property = gdn_environment_info_get_property;
-
-  properties[PROP_CATEGORY] = g_param_spec_string ("category", "category", "category",
-                                                   NULL, G_PARAM_READABLE);
-  properties[PROP_KEY] = g_param_spec_string ("key", "key", "A name of some environment variable",
-                                              NULL, G_PARAM_READABLE);
-  properties[PROP_VAL] = g_param_spec_string (
-      "val", "val", "The string value of an environment variable", NULL, G_PARAM_READABLE);
 }
 
 static void
@@ -98,26 +69,110 @@ gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
 {
 }
 
-GdnEnvironmentInfo *
-gdn_environment_info_new_from_scm (SCM info)
+////////////////////////////////////////////////////////////////
+// POPULATE THE G_LIST_MODEL
+
+static GdnEnvironmentInfo *
+info_new_from_scm (SCM info)
 {
   GdnEnvironmentInfo *self = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+  SCM                 entries;
+  size_t              i;
 
-  self->category = scm_to_utf8_string (scm_list_ref (info, scm_from_int (0)));
-  self->key = scm_to_utf8_string (scm_list_ref (info, scm_from_int (1)));
-  self->val = scm_to_utf8_string (scm_list_ref (info, scm_from_int (2)));
+  /* The top-level category keys don't have values. They're just
+     category names.
+   */
+  self->key = scm_to_utf8_string (scm_c_vector_ref (info, 0));
+  self->value = NULL;
+  self->hash_table =
+      g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+
+  entries = scm_c_vector_ref (info, 1);
+  g_assert (scm_c_vector_length (entries) > 0);
+
+  // Note that we only handle one level of children, not an arbitrary
+  // level of nesting.
+
+  for (i = 0; i < scm_c_vector_length (entries); i++)
+    {
+      SCM   child = scm_c_vector_ref (entries, i);
+      char *key;
+      char *val;
+      key = scm_to_utf8_string (scm_c_vector_ref (child, 0));
+      val = scm_to_utf8_string (scm_c_vector_ref (child, 1));
+      g_hash_table_insert (self->hash_table, key, val);
+    }
   return self;
 }
 
-void
-gdn_environment_info_store_update (GListStore *store, SCM all_info)
+// A GHFunc
+// Pushes each entry of a GdnEnvironmentCategories's entry hash
+// into a list store of type GDN_ENVIRONMENT_ENTRY_TYPE
+static void
+pack_entries (gpointer key, gpointer value, gpointer user_data)
 {
-  g_list_store_remove_all (store);
+  GListStore *        store = G_LIST_STORE (user_data);
+  GdnEnvironmentInfo *entry = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+  entry->key = g_strdup (key);
+  entry->value = g_strdup (value);
+  entry->hash_table = NULL;
+  g_list_store_append (store, entry);
+}
 
-  for (size_t i = 0; i < scm_c_vector_length (all_info); i++)
+// A GtkTreeListModelCreateModelFunc
+// Creates the 1st level children of an GdnEnvironmentCategory
+static GListModel *
+get_child_model (GObject *item, gpointer user_data)
+{
+  GdnEnvironmentInfo *info;
+  GListModel *        entries;
+
+  info = GDN_ENVIRONMENT_INFO (item);
+  if (info->hash_table)
     {
-      SCM                 entry = scm_c_vector_ref (all_info, i);
-      GdnEnvironmentInfo *info = gdn_environment_info_new_from_scm (entry);
-      g_list_store_append (store, info);
+      entries = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
+      g_hash_table_foreach (info->hash_table, pack_entries, entries);
+      return entries;
     }
+
+  return NULL;
+}
+
+void
+gdn_environment_info_update (SCM all_info)
+{
+  SCM                 entry;
+  GdnEnvironmentInfo *info;
+  size_t              i;
+
+  g_list_store_remove_all (_store);
+
+  for (i = 0; i < scm_c_vector_length (all_info); i++)
+    {
+      entry = scm_c_vector_ref (all_info, i);
+      info = info_new_from_scm (entry);
+      g_list_store_append (_store, info);
+    }
+}
+
+GtkTreeListModel *
+gdn_environment_info_get_tree_model (void)
+{
+  if (_store == NULL)
+    _store = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
+  if (_model == NULL)
+    _model = gtk_tree_list_model_new (_store, FALSE, FALSE, get_child_model,
+                                      NULL, NULL);
+  return _model;
+}
+
+const char *
+gdn_environment_info_get_key (GdnEnvironmentInfo *info)
+{
+  return info->key;
+}
+const char *
+gdn_environment_info_get_value (GdnEnvironmentInfo *info)
+{
+  return info->value;
 }
