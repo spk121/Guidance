@@ -97,14 +97,14 @@
 |#
 
 (define (gdn-get-locale-information)
-  (list
-   (list "LC_ALL" (setlocale LC_ALL))
-   (list "LC_COLLATE" (setlocale LC_COLLATE))
-   (list "LC_CTYPE" (setlocale LC_CTYPE))
-   (list "LC_MESSAGES" (setlocale LC_MESSAGES))
-   (list "LC_MONETARY" (setlocale LC_MONETARY))
-   (list "LC_NUMERIC" (setlocale LC_NUMERIC))
-   (list "LC_TIME" (setlocale LC_TIME))))
+  (vector
+   (vector "LC_ALL" (setlocale LC_ALL))
+   (vector "LC_COLLATE" (setlocale LC_COLLATE))
+   (vector "LC_CTYPE" (setlocale LC_CTYPE))
+   (vector "LC_MESSAGES" (setlocale LC_MESSAGES))
+   (vector "LC_MONETARY" (setlocale LC_MONETARY))
+   (vector "LC_NUMERIC" (setlocale LC_NUMERIC))
+   (vector "LC_TIME" (setlocale LC_TIME))))
 
 (define (gdn-get-system-information)
   (let ((un (uname)))
@@ -138,12 +138,13 @@
 ))
 
 (define (gdn-get-environment-variables)
-  (let ((EV (sort! (environ) string-ci<?)))
-    (vector-map (lambda (entry)
-           (let ((split-location (string-index entry #\=)))
-             (vector (string-take entry split-location)
-                   (string-drop entry (1+ split-location)))))
-         EV)))
+  (let ((EV (sort (environ) string-ci<?)))
+    (list->vector
+     (map (lambda (entry)
+            (let ((split-location (string-index entry #\=)))
+              (vector (string-take entry split-location)
+                      (string-drop entry (1+ split-location)))))
+          EV))))
 
 (define (gdn-get-time-entries)
   (let* ((curtime (current-time))
@@ -260,11 +261,11 @@
   (vector
    (vector "system" (gdn-get-system-information))
    (vector "memory" (gdn-get-gc-stats))
-   ;;(vectorize "locale" (gdn-get-locale-information))
-   ;;(vectorize "process" (gdn-get-process-information))
-    ;;(vectorize "time" (gdn-get-time-entries))
-   ;; (vectorize "user" (gdn-get-user-information-entries))
-   ;; (vectorize "environment" (gdn-get-environment-variables))
+   (vector "environment" (gdn-get-environment-variables))
+   (vector "locale" (gdn-get-locale-information))
+   (vector "process" (gdn-get-process-information))
+   (vector "time" (gdn-get-time-entries))
+   (vector "user" (gdn-get-user-information-entries))
    ))
 
 #|

@@ -122,7 +122,7 @@ pack_entries (gpointer key, gpointer value, gpointer user_data)
 // A GtkTreeListModelCreateModelFunc
 // Creates the 1st level children of an GdnEnvironmentCategory
 static GListModel *
-get_child_model (GObject *item, gpointer user_data)
+get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
 {
   GdnEnvironmentInfo *info;
   GListModel *        entries;

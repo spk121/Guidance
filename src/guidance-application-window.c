@@ -49,18 +49,26 @@ struct _GdnApplicationWindow
 
   /* Threads tab */
   GtkScrolledWindow *thread_window;
+  GtkColumnView *      thread_column_view;
+  GtkColumnViewColumn *thread_name_column;
+  GtkColumnViewColumn *thread_emoji_column;
+  GtkColumnViewColumn *thread_active_column;
 
   /* Threads tab */
   GtkScrolledWindow *module_window;
 
   /* Environment tab */
-  GtkScrolledWindow *  environment_window;
   GtkColumnView *      environment_column_view;
   GtkColumnViewColumn *environment_key_column;
   GtkColumnViewColumn *environment_value_column;
 
   /* Backtrace tab */
-  GtkScrolledWindow *backtrace_window;
+  GtkListView *        backtrace_stack_column_view;
+  GtkColumnView *      backtrace_variables_column_view;
+  GtkColumnViewColumn *backtrace_variables_name_column;
+  GtkColumnViewColumn *backtrace_variables_representation_column;
+  GtkColumnViewColumn *backtrace_variables_value_column;
+  GtkColumnViewColumn *backtrace_variables_info_column;
 };
 
 G_DEFINE_TYPE (GdnApplicationWindow,
@@ -165,10 +173,17 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   BIND (module_window);
 
   /* Environment tab */
-  BIND (environment_window);
+  BIND (environment_column_view);
+  BIND (environment_key_column);
+  BIND (environment_value_column);
 
   /* Backtrace tab */
-  BIND (backtrace_window);
+  BIND (backtrace_stack_column_view);
+  BIND (backtrace_variables_column_view);
+  BIND (backtrace_variables_name_column);
+  BIND (backtrace_variables_representation_column);
+  BIND (backtrace_variables_value_column);
+  BIND (backtrace_variables_info_column);
 }
 
 static void
@@ -272,8 +287,7 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
       G_LIST_MODEL (g_object_ref (G_OBJECT (tree_model))));
   // g_signal_connect(selection_model, "selection-changed",
   // environment_selection_changed, self);
-  self->environment_column_view =
-      GTK_WIDGET (gtk_column_view_new (GTK_SELECTION_MODEL (selection_model)));
+  gtk_column_view_set_model (self->environment_column_view, selection_model);
 
   /* This column view has a key and a value column. We need to set up
    * factories to create the cells in each column. */
@@ -288,8 +302,8 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
                     environment_key_unbind, self);
   g_signal_connect (environment_key_column_factory, "teardown",
                     environment_key_teardown, self);
-  self->environment_key_column =
-      gtk_column_view_column_new ("key", environment_key_column_factory);
+  gtk_column_view_column_set_factory (self->environment_key_column,
+                                      environment_key_column_factory);
 
   GtkSignalListItemFactory *environment_value_column_factory;
   environment_value_column_factory = gtk_signal_list_item_factory_new ();
@@ -301,18 +315,8 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
                     environment_value_unbind, self);
   g_signal_connect (environment_value_column_factory, "teardown",
                     environment_value_teardown, self);
-  self->environment_value_column =
-      gtk_column_view_column_new ("value", environment_value_column_factory);
-
-  gtk_column_view_append_column (self->environment_column_view,
-                                 self->environment_key_column);
-  gtk_column_view_append_column (self->environment_column_view,
-                                 self->environment_value_column);
-
-  //  g_signal_connect(self->environment_column_view, "activate",
-  //  G_CALLBACK(environment_activate), NULL);
-  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->environment_window),
-                                 GTK_WIDGET (self->environment_column_view));
+  gtk_column_view_column_set_factory (self->environment_value_column,
+                                      environment_value_column_factory);
 }
 
 static void
@@ -334,8 +338,6 @@ application_window_init_backtrace_tab (GdnApplicationWindow *self)
                          GTK_LIST_ITEM_FACTORY (factory)));
   g_signal_connect (listview, "activate", G_CALLBACK (backtrace_activate),
                     NULL);
-  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->backtrace_window),
-                                 GTK_WIDGET (listview));
 }
 
 static void
