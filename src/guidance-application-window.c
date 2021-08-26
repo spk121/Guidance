@@ -83,6 +83,11 @@ static void     activate_launch (GSimpleAction *simple,
                                  GVariant *     parameter,
                                  gpointer       user_data);
 static void     activate_terminal_entry (GtkEntry *entry, gpointer user_data);
+static void     handle_css_parsing_error (GtkCssProvider *provider,
+                                          GtkCssSection * section,
+                                          GError *        error,
+                                          gpointer        user_data);
+
 static gboolean
 poll_terminal_text2 (gint fd, GIOCondition condition, gpointer user_data);
 static gboolean
@@ -192,7 +197,7 @@ application_window_init_settings_tab (GdnApplicationWindow *self)
   GdnApplication *app;
   GtkEntryBuffer *buf;
 
-  app = GDN_APPLICATION (g_application_get_default ());
+  app = gdn_application_get_default ();
   buf = gtk_entry_get_buffer (self->settings_args_entry);
 
   gtk_check_button_set_group (self->settings_use_args_radio,
@@ -345,6 +350,16 @@ gdn_application_window_init (GdnApplicationWindow *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
 
+  /* Style and fashion */
+  GtkCssProvider *provider = gtk_css_provider_new ();
+  g_signal_connect (provider, "parsing-error",
+                    G_CALLBACK (handle_css_parsing_error), NULL);
+  gtk_css_provider_load_from_resource (
+      provider, "/com/lonelycactus/Guidance/gtk/guidance-window.css");
+  gtk_style_context_add_provider_for_display (
+      gdk_display_get_default (), provider,
+      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
   add_simple_action (self, "launch", G_CALLBACK (activate_launch));
 
   application_window_init_settings_tab (self);
@@ -441,6 +456,15 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
   /* Then clear the entry box. */
   gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->terminal_input_entry),
                              "", 0);
+}
+
+static void
+handle_css_parsing_error (GtkCssProvider *provider,
+                          GtkCssSection * section,
+                          GError *        error,
+                          gpointer        user_data)
+{
+  g_error ("CSS parsing error: %s", error->message);
 }
 
 gboolean
@@ -652,13 +676,21 @@ environment_key_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 static void
 environment_key_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
-  g_critical ("environment_key_unbind unimplemented");
+  GtkTreeListRow *list_row;
+  GtkWidget *     expander;
+  GtkWidget *     label;
+
+  g_debug ("environment_key_unbind");
+  list_row = gtk_list_item_get_item (list_item);
+  expander = gtk_list_item_get_child (list_item);
+  label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
+  gtk_label_set_label (GTK_LABEL (label), "");
 }
 
 static void
 environment_key_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
 {
-  g_critical ("environment_key_teardown unimplemented");
+  g_debug ("environment_key_teardown");
 }
 
 static void
@@ -693,13 +725,19 @@ environment_value_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 static void
 environment_value_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
-  g_critical ("environment_value_unbind unimplemented");
+  GtkTreeListRow *list_row;
+  GtkWidget *     label;
+
+  g_debug ("environment_value_unbind");
+  list_row = gtk_list_item_get_item (list_item);
+  label = gtk_list_item_get_child (list_item);
+  gtk_label_set_label (GTK_LABEL (label), "");
 }
 
 static void
 environment_value_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
 {
-  g_critical ("environment_value_teardown unimplemented");
+  g_debug ("environment_value_teardown");
 }
 
 static void

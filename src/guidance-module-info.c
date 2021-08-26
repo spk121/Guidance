@@ -165,7 +165,7 @@ module_info_new (const char *      name,
  * 'package-data or 'other
  */
 static GdnModuleInfo *
-module_info_new_from_scm (SCM lst)
+module_info_new_from_scm (SCM module_info)
 {
   SCM               s_name;
   SCM               s_short_path;
@@ -176,10 +176,10 @@ module_info_new_from_scm (SCM lst)
   char *            abs_path;
   GdnModuleCategory category;
 
-  s_name = scm_list_ref (lst, scm_from_int (0));
-  s_short_path = scm_list_ref (lst, scm_from_int (1));
-  s_abs_path = scm_list_ref (lst, scm_from_int (2));
-  s_category = scm_list_ref (lst, scm_from_int (3));
+  s_name = scm_c_vector_ref (module_info, 0);
+  s_short_path = scm_c_vector_ref (module_info, 1);
+  s_abs_path = scm_c_vector_ref (module_info, 2);
+  s_category = scm_c_vector_ref (module_info, 3);
 
   name = scm_to_utf8_string (s_name);
   short_path = scm_to_utf8_string (s_short_path);

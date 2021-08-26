@@ -6,6 +6,5 @@
     <file>gtk/menus.ui</file>
     <file>gtk/help-overlay.ui</file>
     <file>scm/lib.scm</file>
-    <file>scm/guidance.scm</file>
   </gresource>
 </gresources>

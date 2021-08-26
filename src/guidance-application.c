@@ -31,6 +31,8 @@ struct _GdnApplication
 
 G_DEFINE_TYPE (GdnApplication, gdn_application, GTK_TYPE_APPLICATION)
 
+GdnApplication *_default = NULL;
+
 static void
 gdn_application_init (G_GNUC_UNUSED GdnApplication *app)
 {
@@ -115,6 +117,7 @@ gdn_application_new (void)
   app->activate_handler_id = id;
   id = g_signal_connect_data ((gpointer) app, "command-line",
                               G_CALLBACK (on_command_line), NULL, NULL, 0);
+  _default = app;
   return app;
 }
 
@@ -128,4 +131,10 @@ const char *
 gdn_application_get_args (GdnApplication *app)
 {
   return app->args;
+}
+
+GdnApplication *
+gdn_application_get_default (void)
+{
+  return _default;
 }

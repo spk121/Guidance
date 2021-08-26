@@ -71,6 +71,9 @@
               <object class="GtkStackSidebar">
                 <property name="stack">main_stack</property>
                 <property name="vexpand">True</property>
+                <style>
+                  <class name="navigation-sidebar" />
+                </style>
               </object>
             </child>
           </object>
@@ -515,6 +518,9 @@
                                 <property name="vexpand">True</property>
                                 <child>
                                   <object class="GtkColumnView" id="environment_column_view">
+                                    <style>
+                                      <class name="data-table" />
+                                    </style>
                                     <child>
                                       <object class="GtkColumnViewColumn" id="environment_key_column">
                                         <property name="title">Key</property>

@@ -26,8 +26,8 @@ struct _GdnEnvironmentInfo
   GObject parent;
 
   char *key;
-  char *      value;
-  GHashTable *hash_table;
+  char *  value;
+  GSList *list;
 };
 
 G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT)
@@ -46,10 +46,10 @@ gdn_environment_info_finalize (GObject *object)
       g_free (self->value);
       self->value = NULL;
     }
-  if (self->hash_table)
+  if (self->list)
     {
-      g_hash_table_destroy (self->hash_table);
-      self->hash_table = NULL;
+      g_slist_free_full (self->list, gdn_environment_info_finalize);
+      self->list = NULL;
     }
 
   /* Don't forget to chain up. */
@@ -84,8 +84,7 @@ info_new_from_scm (SCM info)
    */
   self->key = scm_to_utf8_string (scm_c_vector_ref (info, 0));
   self->value = NULL;
-  self->hash_table =
-      g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+  self->list = NULL;
 
   entries = scm_c_vector_ref (info, 1);
   g_assert (scm_c_vector_length (entries) > 0);
@@ -96,26 +95,25 @@ info_new_from_scm (SCM info)
   for (i = 0; i < scm_c_vector_length (entries); i++)
     {
       SCM   child = scm_c_vector_ref (entries, i);
-      char *key;
-      char *val;
-      key = scm_to_utf8_string (scm_c_vector_ref (child, 0));
-      val = scm_to_utf8_string (scm_c_vector_ref (child, 1));
-      g_hash_table_insert (self->hash_table, key, val);
+      GdnEnvironmentInfo *kiddo =
+          g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+
+      kiddo->key = scm_to_utf8_string (scm_c_vector_ref (child, 0));
+      kiddo->value = scm_to_utf8_string (scm_c_vector_ref (child, 1));
+      kiddo->list = NULL;
+      self->list = g_slist_append (self->list, kiddo);
     }
   return self;
 }
 
-// A GHFunc
-// Pushes each entry of a GdnEnvironmentCategories's entry hash
+// A GFunc
+// Pushes each entry of a GdnEnvironmentCategories's entry list
 // into a list store of type GDN_ENVIRONMENT_ENTRY_TYPE
 static void
-pack_entries (gpointer key, gpointer value, gpointer user_data)
+pack_entries (gpointer data, gpointer user_data)
 {
   GListStore *        store = G_LIST_STORE (user_data);
-  GdnEnvironmentInfo *entry = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
-  entry->key = g_strdup (key);
-  entry->value = g_strdup (value);
-  entry->hash_table = NULL;
+  GdnEnvironmentInfo *entry = GDN_ENVIRONMENT_INFO (data);
   g_list_store_append (store, entry);
 }
 
@@ -128,10 +126,10 @@ get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
   GListModel *        entries;
 
   info = GDN_ENVIRONMENT_INFO (item);
-  if (info->hash_table)
+  if (info->list)
     {
       entries = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
-      g_hash_table_foreach (info->hash_table, pack_entries, entries);
+      g_slist_foreach (info->list, pack_entries, entries);
       return entries;
     }
 
@@ -139,7 +137,7 @@ get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
 }
 
 void
-gdn_environment_info_update (SCM all_info)
+gdn_environment_info_update_all (SCM all_info)
 {
   SCM                 entry;
   GdnEnvironmentInfo *info;
@@ -152,6 +150,67 @@ gdn_environment_info_update (SCM all_info)
       entry = scm_c_vector_ref (all_info, i);
       info = info_new_from_scm (entry);
       g_list_store_append (_store, info);
+    }
+}
+
+static gboolean
+info_key_eq (gconstpointer *a, gconstpointer *b)
+{
+  GdnEnvironmentInfo *ia = GDN_ENVIRONMENT_INFO (a);
+  GdnEnvironmentInfo *ib = GDN_ENVIRONMENT_INFO (b);
+  return (g_strcmp0 (ia->key, ib->key) == 0);
+}
+
+void
+gdn_environment_info_update_one (const char *category,
+                                 const char *key,
+                                 const char *value)
+{
+  GdnEnvironmentInfo *category_info;
+  GdnEnvironmentInfo *entry_info;
+  GdnEnvironmentInfo *temp_info =
+      g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+  gboolean found;
+  guint    position;
+
+  temp_info->key = category;
+
+  /* First check to see if there exists a top-level category by this
+   * name, otherwise create one. */
+  found = g_list_store_find_with_equal_func (_store, temp_info, info_key_eq,
+                                             &position);
+  if (!found)
+    {
+      category_info = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+      category_info->key = g_strdup (category);
+      category_info->value = NULL;
+      category_info->list = NULL;
+      g_list_store_append (_store, category_info);
+    }
+  else
+    category_info = g_list_model_get_item (_store, position);
+
+  /* Now check to see if there is a child. Either update an existing child
+   * or create a new one. */
+  temp_info->key = key;
+  GSList *entry =
+      g_slist_find_custom (category_info->list, temp_info, info_key_eq);
+  if (entry)
+    {
+      /* Overwrite an existing entry value */
+      entry_info = entry->data;
+      entry_info->value = g_strdup (value);
+    }
+  else
+    {
+      /* Insert a new one. Note that we don't worry about the ordering
+       * here, because the update_all function re-writes everything
+       * from scratch.  The only way we'd get here is right at the
+       * beginning, before a program is started. */
+      temp_info->key = g_strdup (key);
+      temp_info->value = g_strdup (value);
+      temp_info->list = NULL;
+      g_slist_append (category_info->list, temp_info);
     }
 }
 
@@ -175,4 +234,40 @@ const char *
 gdn_environment_info_get_value (GdnEnvironmentInfo *info)
 {
   return info->value;
+}
+
+char *
+memory_string (size_t x)
+{
+  if (x < 1000)
+    return g_strdup_printf ("%d B", x);
+  else if (x < 1000000)
+    return g_strdup_printf ("%.3f kB", x / 1000.0);
+  else if (x < 1000000000)
+    return g_strdup_printf ("%.3f MB", x / 1000000.0);
+  else if (x < 1000000000000ull)
+    return g_strdup_printf ("%.3f GB", x / 1000000000.0);
+
+  return g_strdup_printf ("%.3f TB", x / 1000000000000.0);
+}
+
+char *
+time_string (double x)
+{
+  if (x < 1.0e-6)
+    return g_strdup_printf ("%.3f ns", x * 1.0e9);
+  else if (x < 1.0e-3)
+    return g_strdup_printf ("%.3f µs", x * 1.0e6);
+  else if (x < 0.0)
+    return g_strdup_printf ("%.3f ms", x * 1.0e3);
+  else if (x < 60.0)
+    return g_strdup_printf ("%.3f s", x);
+  else if (x < 3600.0)
+    return g_strdup_printf ("%.3f min", x / 60.0);
+  else if (x < 24.0 * 3600.0)
+    return g_strdup_printf ("%.3f h", x / 3600.0);
+  else if (x < 365.0 * 24.0 * 3600.0)
+    return g_strdup_printf ("%.3f d", x / (24.0 * 3600.0));
+
+  return g_strdup_printf ("%.3f yr", x / (365.0 * 24.0 * 60.0 * 60.0));
 }
