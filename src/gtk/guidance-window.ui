@@ -62,6 +62,11 @@
       </object>
     </child>
     <child>
+      <object class="GtkFrame">
+        <style>
+          <class name="fat_border" />
+        </style>
+      <child>
       <object class="GtkBox" id="left-right">
         <child>
           <object class="GtkBox" id="left">
@@ -421,20 +426,27 @@
                             <property name="title">Backtrace</property>
                             <property name="child">
                               <object class="GtkPaned">
+                                <property name="wide-handle">True</property>
                                 <child>
-                                  <object class="GtkScrolledWindow" id="backtrace_window">
-                                    <property name="hexpand">True</property>
-                                    <property name="vexpand">True</property>
+                                  <object class="GtkFrame">
                                     <child>
-                                      <object class="GtkColumnView" id="backtrace_stack_column_view">
+                                      <object class="GtkScrolledWindow" id="backtrace_window">
+                                        <property name="hexpand">True</property>
+                                        <property name="vexpand">True</property>
                                         <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_stack_frame_column">
-                                            <property name="title">Frame</property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_stack_location_column">
-                                            <property name="title">Location</property>
+                                          <object class="GtkColumnView" id="backtrace_stack_column_view">
+                                            <property name="single-click-activate">True</property>
+                                            <child>
+                                              <object class="GtkColumnViewColumn" id="backtrace_stack_frame_column">
+                                                <property name="title">Frame</property>
+                                                
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkColumnViewColumn" id="backtrace_stack_location_column">
+                                                <property name="title">Location</property>
+                                              </object>
+                                            </child>
                                           </object>
                                         </child>
                                       </object>
@@ -575,5 +587,7 @@
         </child>
       </object>
     </child>
+  </object>
+</child>
   </template>
 </interface>

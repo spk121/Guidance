@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define G_LOG_USE_STRUCTURED
 #include "guidance-frame-info.h"
 
 struct _GdnFrameInfo
@@ -83,8 +84,12 @@ gdn_frame_info_get_property (GObject *    object,
 static void
 gdn_frame_info_finalize (GObject *object)
 {
+  g_assert (G_IS_OBJECT (object));
+  g_assert (G_OBJECT_TYPE (object) == GDN_FRAME_INFO_TYPE);
   GdnFrameInfo *self = GDN_FRAME_INFO (object);
+  g_assert (self->name != NULL);
 
+  printf ("Freeing frame info %p name %s ref %d\n", object, self->name);
   free (self->name);
   self->name = NULL;
   free (self->filename);
@@ -92,7 +97,7 @@ gdn_frame_info_finalize (GObject *object)
   self->line = 0;
   self->column = 0;
   self->n_args = 0;
-  self->bindings = 0;
+  self->bindings = SCM_UNPACK (SCM_BOOL_F);
 
   /* Don't forget to chain up. */
   G_OBJECT_CLASS (gdn_frame_info_parent_class)->finalize (object);
@@ -167,6 +172,10 @@ frame_info_new_from_scm (SCM frame)
   self->n_args = scm_to_int (s_n_args);
   self->bindings = SCM_UNPACK (s_bindings);
 
+  g_log_structured (G_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "MESSAGE_ID",
+                    "38a21f3e600d497c9194e4080769fdb0", "CODE_FILE", __FILE__,
+                    "CODE_LINE", __LINE__, "CODE_FUNC", __func__, "MESSAGE",
+                    "new GdnFrameInfo %p", self);
   return self;
 }
 
@@ -177,13 +186,35 @@ gdn_frame_info_store_update (GListStore *store, SCM frames)
   g_assert_nonnull (frames);
   g_assert (scm_is_vector (frames));
 
-  g_list_store_remove_all (store);
+  // g_list_store_remove_all (store);
 
   for (size_t i = 0; i < scm_c_vector_length (frames); i++)
     {
       SCM           entry = scm_c_vector_ref (frames, i);
       GdnFrameInfo *info = frame_info_new_from_scm (entry);
-      g_list_store_append (store, info);
+      if (g_list_model_get_object (store, i) != NULL)
+        {
+          GdnFrameInfo *old_info =
+              GDN_FRAME_INFO (g_list_model_get_object (store, i));
+          free (old_info->name);
+          old_info->name = g_strdup (info->name);
+          free (old_info->filename);
+          old_info->filename = g_strdup (info->filename);
+          old_info->line = info->line;
+          old_info->column = info->column;
+          old_info->n_args = info->n_args;
+          old_info->bindings = info->bindings;
+          g_object_unref (info);
+        }
+      else
+        g_list_store_append (store, info);
+    }
+  if (scm_c_vector_length (frames) < g_list_model_get_n_items (store))
+    {
+      g_list_store_splice (store, scm_c_vector_length (frames),
+                           g_list_model_get_n_items (store) -
+                               scm_c_vector_length (frames),
+                           NULL, 0);
     }
 }
 
@@ -191,4 +222,28 @@ const char *
 gdn_frame_info_get_name (GdnFrameInfo *self)
 {
   return (const char *) self->name;
+}
+
+const char *
+gdn_frame_info_get_filename (GdnFrameInfo *self)
+{
+  return (const char *) self->filename;
+}
+
+int
+gdn_frame_info_get_line (GdnFrameInfo *self)
+{
+  return self->line;
+}
+
+int
+gdn_frame_info_get_column (GdnFrameInfo *self)
+{
+  return self->column;
+}
+
+guint64
+gdn_frame_info_get_bindings (GdnFrameInfo *self)
+{
+  return self->bindings;
 }

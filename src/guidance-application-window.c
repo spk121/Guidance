@@ -18,6 +18,7 @@
 
 #include "guidance-application-window.h"
 #include "guidance-application.h"
+#include "guidance-binding-info.h"
 #include "guidance-config.h"
 #include "guidance-environment-info.h"
 #include "guidance-frame-info.h"
@@ -63,8 +64,11 @@ struct _GdnApplicationWindow
   GtkColumnViewColumn *environment_value_column;
 
   /* Backtrace tab */
-  GtkListView *        backtrace_stack_column_view;
+  GtkColumnView *      backtrace_stack_column_view;
+  GtkColumnViewColumn *backtrace_stack_frame_column;
+  GtkColumnViewColumn *backtrace_stack_location_column;
   GtkColumnView *      backtrace_variables_column_view;
+  GtkColumnViewColumn *backtrace_variables_type_column;
   GtkColumnViewColumn *backtrace_variables_name_column;
   GtkColumnViewColumn *backtrace_variables_representation_column;
   GtkColumnViewColumn *backtrace_variables_value_column;
@@ -133,14 +137,48 @@ static void environment_value_teardown (GtkListItemFactory *factory,
 // static void environment_activate(GtkListView *list, guint position, gpointer
 // unused);
 
-static void backtrace_setup (GtkListItemFactory *factory,
-                             GtkListItem *       list_item);
-static void backtrace_teardown (GtkListItemFactory *factory,
-                                GtkListItem *       list_item);
-static void backtrace_bind (GtkListItemFactory *factory,
-                            GtkListItem *       list_item);
+static void backtrace_stack_frame_setup (GtkListItemFactory *factory,
+                                         GtkListItem *       list_item);
+static void backtrace_stack_frame_bind (GtkListItemFactory *factory,
+                                        GtkListItem *       list_item);
+static void backtrace_stack_frame_unbind (GtkListItemFactory *factory,
+                                          GtkListItem *       list_item);
+static void backtrace_stack_location_setup (GtkListItemFactory *factory,
+                                            GtkListItem *       list_item);
+static void backtrace_stack_location_bind (GtkListItemFactory *factory,
+                                           GtkListItem *       list_item);
+static void backtrace_stack_location_unbind (GtkListItemFactory *factory,
+                                             GtkListItem *       list_item);
+static void backtrace_variables_type_setup (GtkListItemFactory *factory,
+                                            GtkListItem *       list_item);
+static void backtrace_variables_type_bind (GtkListItemFactory *factory,
+                                           GtkListItem *       list_item);
+static void backtrace_variables_type_unbind (GtkListItemFactory *factory,
+                                             GtkListItem *       list_item);
+static void backtrace_variables_name_setup (GtkListItemFactory *factory,
+                                            GtkListItem *       list_item);
+static void backtrace_variables_name_bind (GtkListItemFactory *factory,
+                                           GtkListItem *       list_item);
+static void backtrace_variables_name_unbind (GtkListItemFactory *factory,
+                                             GtkListItem *       list_item);
 static void
-backtrace_activate (GtkListView *list, guint position, gpointer unused);
+backtrace_variables_representation_setup (GtkListItemFactory *factory,
+                                          GtkListItem *       list_item);
+static void
+backtrace_variables_representation_bind (GtkListItemFactory *factory,
+                                         GtkListItem *       list_item);
+static void
+backtrace_variables_representation_unbind (GtkListItemFactory *factory,
+                                           GtkListItem *       list_item);
+static void backtrace_variables_value_setup (GtkListItemFactory *factory,
+                                             GtkListItem *       list_item);
+static void backtrace_variables_value_bind (GtkListItemFactory *factory,
+                                            GtkListItem *       list_item);
+static void backtrace_variables_value_unbind (GtkListItemFactory *factory,
+                                              GtkListItem *       list_item);
+
+static void
+backtrace_activate (GtkColumnView *list, guint position, gpointer unused);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -184,7 +222,10 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 
   /* Backtrace tab */
   BIND (backtrace_stack_column_view);
+  BIND (backtrace_stack_frame_column);
+  BIND (backtrace_stack_location_column);
   BIND (backtrace_variables_column_view);
+  BIND (backtrace_variables_type_column);
   BIND (backtrace_variables_name_column);
   BIND (backtrace_variables_representation_column);
   BIND (backtrace_variables_value_column);
@@ -327,22 +368,95 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
 static void
 application_window_init_backtrace_tab (GdnApplicationWindow *self)
 {
-  GListModel *              model;
-  GtkSignalListItemFactory *factory;
-  GtkListView *             listview;
+  GListModel *        frames_model;
+  GtkSingleSelection *frames_selection_model;
+  GListModel *        variables_model;
+  GtkSingleSelection *variables_selection_model;
 
-  model = G_LIST_MODEL (gdn_lisp_get_backtrace (self->lisp));
-  factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
+  frames_model = G_LIST_MODEL (gdn_lisp_get_backtrace (self->lisp));
+  frames_selection_model = gtk_single_selection_new (
+      G_LIST_MODEL (g_object_ref (G_OBJECT (frames_model))));
+  // g_signal_connect(selection_model, "selection-changed",
+  // environment_selection_changed, self);
+  gtk_column_view_set_model (self->backtrace_stack_column_view,
+                             frames_selection_model);
+  variables_model = gdn_binding_info_get_list_store ();
+  variables_selection_model = gtk_single_selection_new (
+      G_LIST_MODEL (g_object_ref (G_OBJECT (variables_model))));
+  gtk_column_view_set_model (self->backtrace_variables_column_view,
+                             variables_selection_model);
 
-  g_signal_connect (factory, "setup", G_CALLBACK (backtrace_setup), NULL);
-  g_signal_connect (factory, "teardown", G_CALLBACK (backtrace_teardown), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (backtrace_bind), NULL);
+  GtkSignalListItemFactory *backtrace_stack_frame_column_factory;
+  backtrace_stack_frame_column_factory = gtk_signal_list_item_factory_new ();
+  g_signal_connect (backtrace_stack_frame_column_factory, "setup",
+                    backtrace_stack_frame_setup, self);
+  g_signal_connect (backtrace_stack_frame_column_factory, "bind",
+                    backtrace_stack_frame_bind, self);
+  g_signal_connect (backtrace_stack_frame_column_factory, "unbind",
+                    backtrace_stack_frame_unbind, self);
+  gtk_column_view_column_set_factory (self->backtrace_stack_frame_column,
+                                      backtrace_stack_frame_column_factory);
 
-  listview = GTK_LIST_VIEW (
-      gtk_list_view_new (GTK_SELECTION_MODEL (gtk_single_selection_new (model)),
-                         GTK_LIST_ITEM_FACTORY (factory)));
-  g_signal_connect (listview, "activate", G_CALLBACK (backtrace_activate),
-                    NULL);
+  GtkSignalListItemFactory *backtrace_stack_location_column_factory;
+  backtrace_stack_location_column_factory = gtk_signal_list_item_factory_new ();
+  g_signal_connect (backtrace_stack_location_column_factory, "setup",
+                    backtrace_stack_location_setup, self);
+  g_signal_connect (backtrace_stack_location_column_factory, "bind",
+                    backtrace_stack_location_bind, self);
+  g_signal_connect (backtrace_stack_location_column_factory, "unbind",
+                    backtrace_stack_location_unbind, self);
+  gtk_column_view_column_set_factory (self->backtrace_stack_location_column,
+                                      backtrace_stack_location_column_factory);
+
+  g_signal_connect (self->backtrace_stack_column_view, "activate",
+                    G_CALLBACK (backtrace_activate), NULL);
+
+  GtkSignalListItemFactory *backtrace_variables_type_column_factory;
+  backtrace_variables_type_column_factory = gtk_signal_list_item_factory_new ();
+  g_signal_connect (backtrace_variables_type_column_factory, "setup",
+                    backtrace_variables_type_setup, self);
+  g_signal_connect (backtrace_variables_type_column_factory, "bind",
+                    backtrace_variables_type_bind, self);
+  g_signal_connect (backtrace_variables_type_column_factory, "unbind",
+                    backtrace_variables_type_unbind, self);
+  gtk_column_view_column_set_factory (self->backtrace_variables_type_column,
+                                      backtrace_variables_type_column_factory);
+
+  GtkSignalListItemFactory *backtrace_variables_name_column_factory;
+  backtrace_variables_name_column_factory = gtk_signal_list_item_factory_new ();
+  g_signal_connect (backtrace_variables_name_column_factory, "setup",
+                    backtrace_variables_name_setup, self);
+  g_signal_connect (backtrace_variables_name_column_factory, "bind",
+                    backtrace_variables_name_bind, self);
+  g_signal_connect (backtrace_variables_name_column_factory, "unbind",
+                    backtrace_variables_name_unbind, self);
+  gtk_column_view_column_set_factory (self->backtrace_variables_name_column,
+                                      backtrace_variables_name_column_factory);
+
+  GtkSignalListItemFactory *backtrace_variables_representation_column_factory;
+  backtrace_variables_representation_column_factory =
+      gtk_signal_list_item_factory_new ();
+  g_signal_connect (backtrace_variables_representation_column_factory, "setup",
+                    backtrace_variables_representation_setup, self);
+  g_signal_connect (backtrace_variables_representation_column_factory, "bind",
+                    backtrace_variables_representation_bind, self);
+  g_signal_connect (backtrace_variables_representation_column_factory, "unbind",
+                    backtrace_variables_representation_unbind, self);
+  gtk_column_view_column_set_factory (
+      self->backtrace_variables_representation_column,
+      backtrace_variables_representation_column_factory);
+
+  GtkSignalListItemFactory *backtrace_variables_value_column_factory;
+  backtrace_variables_value_column_factory =
+      gtk_signal_list_item_factory_new ();
+  g_signal_connect (backtrace_variables_value_column_factory, "setup",
+                    backtrace_variables_value_setup, self);
+  g_signal_connect (backtrace_variables_value_column_factory, "bind",
+                    backtrace_variables_value_bind, self);
+  g_signal_connect (backtrace_variables_value_column_factory, "unbind",
+                    backtrace_variables_value_unbind, self);
+  gtk_column_view_column_set_factory (self->backtrace_variables_value_column,
+                                      backtrace_variables_value_column_factory);
 }
 
 static void
@@ -384,7 +498,6 @@ activate_launch (G_GNUC_UNUSED GSimpleAction *simple,
   GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
   if (gtk_check_button_get_active (self->settings_start_repl_radio))
     {
-      g_debug ("launch repl requested");
       gdn_lisp_spawn_repl_thread (self->lisp);
       GtkWidget *wigz =
           gtk_stack_get_child_by_name (self->main_stack, "terminal");
@@ -589,7 +702,6 @@ thread_bind (GtkListItemFactory *factory, GtkListItem *list_item)
       info = GDN_THREAD_INFO (obj);
       gtk_label_set_text (label, gdn_thread_info_get_name (info));
     }
-  g_object_unref (obj);
 }
 
 static void
@@ -630,7 +742,6 @@ module_bind (GtkListItemFactory *factory, GtkListItem *list_item)
       info = GDN_MODULE_INFO (obj);
       gtk_label_set_text (label, gdn_thread_info_get_name (info));
     }
-  g_object_unref (obj);
 }
 
 static void
@@ -664,13 +775,13 @@ environment_key_bind (GtkListItemFactory *factory, GtkListItem *list_item)
   gpointer        item;
 
   list_row = gtk_list_item_get_item (list_item);
+  item = gtk_tree_list_row_get_item (list_row);
+
   expander = gtk_list_item_get_child (list_item);
   gtk_tree_expander_set_list_row (GTK_TREE_EXPANDER (expander), list_row);
-  item = gtk_tree_list_row_get_item (list_row);
   label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
 
   gtk_label_set_label (GTK_LABEL (label), gdn_environment_info_get_key (item));
-  g_object_unref (item);
 }
 
 static void
@@ -680,7 +791,6 @@ environment_key_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
   GtkWidget *     expander;
   GtkWidget *     label;
 
-  g_debug ("environment_key_unbind");
   list_row = gtk_list_item_get_item (list_item);
   expander = gtk_list_item_get_child (list_item);
   label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
@@ -710,16 +820,14 @@ environment_value_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
   GtkTreeListRow *list_row;
   GtkWidget *     expander;
-  GtkWidget *     label;
+  GtkLabel *      label;
   gpointer        item;
 
   list_row = gtk_list_item_get_item (list_item);
   item = gtk_tree_list_row_get_item (list_row);
 
-  label = gtk_list_item_get_child (list_item);
-  gtk_label_set_label (GTK_LABEL (label),
-                       gdn_environment_info_get_value (item));
-  g_object_unref (item);
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_label (label, gdn_environment_info_get_value (item));
 }
 
 static void
@@ -728,7 +836,6 @@ environment_value_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
   GtkTreeListRow *list_row;
   GtkWidget *     label;
 
-  g_debug ("environment_value_unbind");
   list_row = gtk_list_item_get_item (list_item);
   label = gtk_list_item_get_child (list_item);
   gtk_label_set_label (GTK_LABEL (label), "");
@@ -741,7 +848,47 @@ environment_value_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
 }
 
 static void
-backtrace_setup (GtkListItemFactory *factory, GtkListItem *list_item)
+backtrace_stack_frame_setup (GtkListItemFactory *factory,
+                             GtkListItem *       list_item)
+{
+  GtkLabel *label;
+
+  label = gtk_label_new (NULL);
+  gtk_label_set_xalign (label, 0);
+  gtk_label_set_width_chars (label, 30);
+  gtk_list_item_set_child (list_item, label);
+}
+
+static void
+backtrace_stack_frame_bind (GtkListItemFactory *factory, GtkListItem *list_item)
+{
+  GtkLabel *     label;
+  GdnThreadInfo *info;
+  GObject *      obj;
+
+  label = gtk_list_item_get_child (list_item);
+  obj = gtk_list_item_get_item (list_item);
+  info = GDN_FRAME_INFO (obj);
+  gtk_label_set_text (label, gdn_frame_info_get_name (info));
+  if (label)
+    gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
+}
+
+static void
+backtrace_stack_frame_unbind (GtkListItemFactory *factory,
+                              GtkListItem *       list_item)
+{
+  GtkLabel *     label;
+  GdnThreadInfo *info;
+  GObject *      obj;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_text (label, "");
+}
+
+static void
+backtrace_stack_location_setup (GtkListItemFactory *factory,
+                                GtkListItem *       list_item)
 {
   GtkLabel *label;
 
@@ -751,35 +898,207 @@ backtrace_setup (GtkListItemFactory *factory, GtkListItem *list_item)
 }
 
 static void
-backtrace_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
+backtrace_stack_location_bind (GtkListItemFactory *factory,
+                               GtkListItem *       list_item)
+{
+  GtkLabel *    label;
+  GObject *     obj;
+  GdnFrameInfo *info;
+  char *        location;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  obj = gtk_list_item_get_item (list_item);
+  if (G_IS_OBJECT (label) && G_OBJECT_TYPE (label) == GTK_TYPE_LABEL)
+    {
+
+      info = GDN_FRAME_INFO (obj);
+      location = g_strdup_printf (
+          "%s:%d:%d", gdn_frame_info_get_filename (info),
+          gdn_frame_info_get_line (info), gdn_frame_info_get_column (info));
+      gtk_label_set_text (label, location);
+      g_free (location);
+    }
+}
+
+static void
+backtrace_stack_location_unbind (GtkListItemFactory *factory,
+                                 GtkListItem *       list_item)
+{
+  GtkLabel *    label;
+  GObject *     obj;
+  GdnFrameInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_text (label, "");
+}
+
+static void
+backtrace_variables_type_setup (GtkListItemFactory *factory,
+                                GtkListItem *       list_item)
 {
   GtkLabel *label;
 
-  label = gtk_list_item_get_child (list_item);
-  if (label)
-    g_object_unref (label);
+  label = gtk_label_new (NULL);
+  gtk_label_set_xalign (label, 0);
+  gtk_list_item_set_child (list_item, label);
 }
 
 static void
-backtrace_bind (GtkListItemFactory *factory, GtkListItem *list_item)
+backtrace_variables_type_bind (GtkListItemFactory *factory,
+                               GtkListItem *       list_item)
 {
-  GtkLabel *     label;
-  GdnThreadInfo *info;
+  GtkLabel *      label;
+  GObject *       obj;
+  GdnBindingInfo *info;
+  char *          location;
 
-  label = gtk_list_item_get_child (list_item);
-  GObject *obj = gtk_list_item_get_item (list_item);
-  if (list_item)
-    {
-      info = GDN_FRAME_INFO (obj);
-      gtk_label_set_text (label, gdn_frame_info_get_name (info));
-    }
-  g_object_unref (obj);
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  obj = gtk_list_item_get_item (list_item);
+  info = GDN_BINDING_INFO (obj);
+  if (gdn_binding_info_get_argument (info))
+    gtk_label_set_text (label, "A");
+  else
+    gtk_label_set_text (label, "");
 }
 
 static void
-backtrace_activate (GtkListView *list, guint position, gpointer unused)
+backtrace_variables_type_unbind (GtkListItemFactory *factory,
+                                 GtkListItem *       list_item)
 {
-  // gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
+  GtkLabel *    label;
+  GObject *     obj;
+  GdnFrameInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_text (label, "");
+}
+
+static void
+backtrace_variables_name_setup (GtkListItemFactory *factory,
+                                GtkListItem *       list_item)
+{
+  GtkLabel *label;
+
+  label = gtk_label_new (NULL);
+  gtk_label_set_xalign (label, 0);
+  gtk_list_item_set_child (list_item, label);
+}
+
+static void
+backtrace_variables_name_bind (GtkListItemFactory *factory,
+                               GtkListItem *       list_item)
+{
+  GtkLabel *      label;
+  GObject *       obj;
+  GdnBindingInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  obj = gtk_list_item_get_item (list_item);
+  info = GDN_BINDING_INFO (obj);
+  gtk_label_set_text (label, gdn_binding_info_get_name (info));
+}
+
+static void
+backtrace_variables_name_unbind (GtkListItemFactory *factory,
+                                 GtkListItem *       list_item)
+{
+  GtkLabel *    label;
+  GObject *     obj;
+  GdnFrameInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_text (label, "");
+}
+
+static void
+backtrace_variables_representation_setup (GtkListItemFactory *factory,
+                                          GtkListItem *       list_item)
+{
+  GtkLabel *label;
+
+  label = gtk_label_new (NULL);
+  gtk_label_set_xalign (label, 0);
+  gtk_list_item_set_child (list_item, label);
+}
+
+static void
+backtrace_variables_representation_bind (GtkListItemFactory *factory,
+                                         GtkListItem *       list_item)
+{
+  GtkLabel *      label;
+  GObject *       obj;
+  GdnBindingInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  obj = gtk_list_item_get_item (list_item);
+  info = GDN_BINDING_INFO (obj);
+  gtk_label_set_text (label, gdn_binding_info_get_representation (info));
+}
+
+static void
+backtrace_variables_representation_unbind (GtkListItemFactory *factory,
+                                           GtkListItem *       list_item)
+{
+  GtkLabel *    label;
+  GObject *     obj;
+  GdnFrameInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_text (label, "");
+}
+
+static void
+backtrace_variables_value_setup (GtkListItemFactory *factory,
+                                 GtkListItem *       list_item)
+{
+  GtkLabel *label;
+
+  label = gtk_label_new (NULL);
+  gtk_label_set_xalign (label, 0);
+  gtk_list_item_set_child (list_item, label);
+}
+
+static void
+backtrace_variables_value_bind (GtkListItemFactory *factory,
+                                GtkListItem *       list_item)
+{
+  GtkLabel *      label;
+  GObject *       obj;
+  GdnBindingInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  obj = gtk_list_item_get_item (list_item);
+  info = GDN_BINDING_INFO (obj);
+  gtk_label_set_text (label, gdn_binding_info_get_value (info));
+}
+
+static void
+backtrace_variables_value_unbind (GtkListItemFactory *factory,
+                                  GtkListItem *       list_item)
+{
+  GtkLabel *    label;
+  GObject *     obj;
+  GdnFrameInfo *info;
+
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  gtk_label_set_text (label, "");
+}
+
+static void
+backtrace_activate (GtkColumnView *        self,
+                    G_GNUC_UNUSED guint    position,
+                    G_GNUC_UNUSED gpointer user_data)
+{
+  GtkSingleSelection *sel_model;
+  GObject *           obj;
+  GdnFrameInfo *      info;
+  SCM                 bindings;
+
+  sel_model = GTK_SINGLE_SELECTION (gtk_column_view_get_model (self));
+  obj = gtk_single_selection_get_selected_item (sel_model);
+  info = GDN_FRAME_INFO (obj);
+  bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
+  gdn_binding_info_update_all (bindings);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -804,9 +1123,9 @@ xread (int fd)
 #define BLOCK_LEN 1024
 #define MAX_LEN 10 * BLOCK_LEN
   ssize_t     len, total_len;
-  char        buf[BLOCK_LEN];
-  char        nullbuf[1] = { '\0' };
-  char        badbuf[] = "■\n";
+  guint8      buf[BLOCK_LEN];
+  guint8      nullbuf[1] = { '\0' };
+  guint8      badbuf[] = "■\n";
   GByteArray *gbarray;
 
   total_len = 0;
@@ -836,8 +1155,8 @@ xread (int fd)
   if (total_len > MAX_LEN)
     {
       g_critical ("truncating excessive input read from Lisp file descriptor");
-      g_byte_array_append (gbarray, badbuf, strlen (badbuf));
+      g_byte_array_append (gbarray, badbuf, sizeof (badbuf));
     }
   g_byte_array_append (gbarray, nullbuf, 1);
-  return g_byte_array_free (gbarray, FALSE);
+  return (char *) g_byte_array_free (gbarray, FALSE);
 }

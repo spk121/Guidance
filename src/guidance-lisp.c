@@ -838,7 +838,7 @@ gdn_lisp_get_modules (GdnLisp *self)
 GListStore *
 gdn_lisp_get_environment (GdnLisp *self)
 {
-  return self->environment;
+  return G_LIST_STORE (self->environment);
 }
 
 GListStore *

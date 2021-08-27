@@ -32,8 +32,8 @@ struct _GdnEnvironmentInfo
 
 G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT)
 
-GtkTreeListModel *_model = NULL;
-GListStore *      _store = NULL;
+static GtkTreeListModel *_model = NULL;
+static GListStore *      _store = NULL;
 
 static void
 gdn_environment_info_finalize (GObject *object)

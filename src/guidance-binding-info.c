@@ -22,7 +22,6 @@ struct _GdnBindingInfo
 {
   GObject parent;
 
-  guint64  pack;
   char *   name;
   gboolean argument;
   char *   representation;
@@ -32,10 +31,11 @@ struct _GdnBindingInfo
 
 G_DEFINE_TYPE (GdnBindingInfo, gdn_binding_info, G_TYPE_OBJECT)
 
+static GListStore *_store = NULL;
+
 enum
 {
   PROP_0,
-  PROP_PACK,
   PROP_NAME,
   PROP_ARGUMENT,
   PROP_REPRESENTATION,
@@ -48,9 +48,6 @@ static GParamSpec *properties[N_PROPS] = {
   NULL,
 };
 
-static SCM binding_index_func, binding_name_func, binding_representation_func,
-    binding_ref_func;
-
 static void
 gdn_binding_info_get_property (GObject *object, unsigned int property_id, GValue *value, GParamSpec *pspec)
 {
@@ -58,9 +55,6 @@ gdn_binding_info_get_property (GObject *object, unsigned int property_id, GValue
 
   switch (property_id)
     {
-    case PROP_PACK:
-      g_value_set_uint64 (value, self->pack);
-      break;
     case PROP_NAME:
       g_value_set_string (value, self->name);
       break;
@@ -85,7 +79,6 @@ static void
 gdn_binding_info_finalize (GObject *object)
 {
   GdnBindingInfo *self = GDN_BINDING_INFO (object);
-  self->pack = 0;
   g_free (self->name);
   self->name = NULL;
   self->argument = FALSE;
@@ -108,8 +101,6 @@ gdn_binding_info_class_init (GdnBindingInfoClass *klass)
   gobj_class->finalize = gdn_binding_info_finalize;
   gobj_class->get_property = gdn_binding_info_get_property;
 
-  properties[PROP_PACK] = g_param_spec_uint64 ("pack", "pack", "the Guile binding packed as an integer", 0, G_MAXUINT64, 0,
-                                               G_PARAM_READABLE);
   properties[PROP_NAME] = g_param_spec_string ("name", "name", "binding name",
                                                NULL, G_PARAM_READABLE);
   properties[PROP_ARGUMENT] = g_param_spec_boolean ("argument", "argument", "argument flag",
@@ -121,10 +112,6 @@ gdn_binding_info_class_init (GdnBindingInfoClass *klass)
   properties[PROP_EXTRA] = g_param_spec_string ("value", "value", "extra info",
                                                 NULL, G_PARAM_READABLE);
 
-  binding_index_func = scm_c_public_ref ("system vm frame", "binding-index");
-  binding_name_func = scm_c_public_ref ("system vm frame", "binding-name");
-  binding_representation_func = scm_c_public_ref ("system vm frame", "binding-representation");
-  binding_ref_func = scm_c_public_ref ("system vm frame", "binding-ref");
 }
 
 static void
@@ -132,74 +119,74 @@ gdn_binding_info_init (G_GNUC_UNUSED GdnBindingInfo *self)
 {
 }
 
-GdnBindingInfo *
-gdn_binding_info_new_from_scm (SCM binding, int n_args)
+static GdnBindingInfo *
+info_new_from_scm (SCM info)
 {
-  guint64 pack;
-  int     index;
-  SCM     name;
-  SCM     representation;
-  SCM     ref;
-  SCM     format_string;
-  SCM     extra;
-
   GdnBindingInfo *self = g_object_new (GDN_BINDING_INFO_TYPE, NULL);
 
-  pack = SCM_UNPACK (binding);
-  self->pack = pack;
-
-  name = scm_call_1 (binding_name_func, binding);
-  self->name = scm_to_utf8_string (name);
-
-  /* The index lets us disinguish between frame arguments and
-   * locals. Arguments have the first indices. */
-  index = scm_to_int (scm_call_1 (binding_index_func, binding));
-  if (index <= n_args)
-    self->argument = TRUE;
-  else
-    self->argument = FALSE;
-
-  representation = scm_call_1 (binding_representation_func, binding);
-  self->representation = scm_to_utf8_string (representation);
-
-  ref = scm_call_1 (binding_ref_func, binding);
-  format_string = scm_from_utf8_string ("~A");
-  self->value = scm_to_utf8_string (
-      scm_simple_format (SCM_BOOL_F, format_string, scm_list_1 (ref)));
-
-  // FIXME: should these strings be truncated in case they're too big?
-
-  /* For a couple types of variables, we can provide some helpful
-   * information by peeking at the contents. */
-  self->extra = NULL;
-  if (scm_is_true (scm_procedure_p (ref)))
-    {
-      extra = scm_procedure_name (ref);
-      if (scm_is_true (extra))
-        self->extra = scm_to_utf8_string (
-            scm_simple_format (SCM_BOOL_F, format_string, extra));
-      else
-        self->extra = g_strdup ("λ");
-    }
-  else if (scm_is_true (scm_variable_p (ref)))
-    {
-      extra = scm_variable_ref (ref);
-      self->extra = scm_to_utf8_string (
-          scm_simple_format (SCM_BOOL_F, format_string, extra));
-    }
+  self->name = scm_to_utf8_string (scm_c_vector_ref (info, 0));
+  self->argument = scm_is_true (scm_c_vector_ref (info, 1));
+  self->representation = scm_to_utf8_string (scm_c_vector_ref (info, 2));
+  self->value = scm_to_utf8_string (scm_c_vector_ref (info, 3));
+  self->extra = scm_to_utf8_string (scm_c_vector_ref (info, 4));
 
   return self;
 }
 
 void
-gdn_binding_info_store_update (GListStore *store, SCM bindings_vec, int n_args)
+gdn_binding_info_update_all (SCM all_bindings)
 {
-  g_list_store_remove_all (store);
+  SCM             entry;
+  GdnBindingInfo *info;
+  size_t          i;
 
-  for (size_t i = 0; i < scm_c_vector_length (bindings_vec); i++)
+  if (_store == NULL)
+    _store = g_list_store_new (GDN_BINDING_INFO_TYPE);
+
+  g_list_store_remove_all (_store);
+
+  for (i = 0; i < scm_c_vector_length (all_bindings); i++)
     {
-      SCM             entry = scm_c_vector_ref (bindings_vec, i);
-      GdnBindingInfo *info = gdn_binding_info_new_from_scm (entry, n_args);
-      g_list_store_append (store, info);
+      entry = scm_c_vector_ref (all_bindings, i);
+      info = info_new_from_scm (entry);
+      g_list_store_append (_store, info);
     }
+}
+
+GListStore *
+gdn_binding_info_get_list_store (void)
+{
+  if (_store == NULL)
+    _store = g_list_store_new (GDN_BINDING_INFO_TYPE);
+  return _store;
+}
+
+gboolean
+gdn_binding_info_get_argument (GdnBindingInfo *self)
+{
+  return self->argument;
+}
+
+const char *
+gdn_binding_info_get_name (GdnBindingInfo *self)
+{
+  return self->name;
+}
+
+const char *
+gdn_binding_info_get_representation (GdnBindingInfo *self)
+{
+  return self->representation;
+}
+
+const char *
+gdn_binding_info_get_value (GdnBindingInfo *self)
+{
+  return self->value;
+}
+
+const char *
+gdn_binding_info_get_extra (GdnBindingInfo *self)
+{
+  return self->extra;
 }

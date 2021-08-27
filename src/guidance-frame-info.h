@@ -28,5 +28,8 @@ G_DECLARE_FINAL_TYPE (GdnFrameInfo, gdn_frame_info, GDN, FRAME_INFO, GObject)
 
 void gdn_frame_info_store_update (GListStore *store, SCM frames);
 const char *gdn_frame_info_get_name (GdnFrameInfo *self);
-
+const char *gdn_frame_info_get_filename (GdnFrameInfo *self);
+int         gdn_frame_info_get_line (GdnFrameInfo *self);
+int         gdn_frame_info_get_column (GdnFrameInfo *self);
+guint64     gdn_frame_info_get_bindings (GdnFrameInfo *self);
 G_END_DECLS

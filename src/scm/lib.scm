@@ -50,17 +50,32 @@
    (else
     "")))
 
-(define (gdn-unpack-binding binding)
+(define (gdn-unpack-binding n_args binding)
   (let ((name (__binding-name binding))
         (val (__binding-ref binding)))
     (vector
      (if name
          (symbol->string name)
          "(anonymous)")
-     (__binding-index binding)
+     (if (< (__binding-index binding) n_args)
+         #t
+         #f)
      (gdn-value->string (__binding-representation binding))
      (gdn-value->string val)
      (gdn-value->extra-info val))))
+
+(define (gdn-format-frame-arguments frame)
+  (with-output-to-string
+    (lambda ()
+      (display "(")
+      (display (or (frame-procedure-name frame) 'λ))
+      (for-each
+       (lambda (arg)
+         (newline)
+         (display "  ")
+         (display arg))
+       (frame-arguments frame))
+      (display ")"))))
 
 ;; This is trying to push the frame and variable info into a compact form.
 ;; Each vector entry should be
@@ -94,15 +109,15 @@
              (line (if source (__source:line-for-user source) 0))
              (col (if source (__source:column source) 0)))
         (loop (frame-previous frame)
-              (cons (vector 
-                     (format #f "~A"
-                             (cons (or (frame-procedure-name frame) 'λ)
-                                   (frame-arguments frame)))
+              (cons (vector
+                     (gdn-format-frame-arguments frame)
                      file
                      line
                      col
                      (length (frame-arguments frame))
-                     (list->vector (map gdn-unpack-binding (__frame-bindings frame))))
+                     (list->vector (map (lambda (binding)
+                                          (gdn-unpack-binding (length (frame-arguments frame)) binding))
+                                        (__frame-bindings frame))))
                     backtrace))))
      (else
       ;; We've reached the top of the program's frames. Above here

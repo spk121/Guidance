@@ -1,3 +1,7 @@
+.fat_border {
+    padding: 2px;
+}
+
 .repl_output_text_buffer {
     padding: 10px;
 }
