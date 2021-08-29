@@ -6,5 +6,18 @@
     <file>gtk/menus.ui</file>
     <file>gtk/help-overlay.ui</file>
     <file>scm/lib.scm</file>
+    <file>icons/launch.png</file>
+    <file>icons/edit-shred.png</file>
+    <file>icons/edit-trash.png</file>
+    <file>icons/document-open.png</file>
+    <file>icons/process-stop.png</file>
+    <file>icons/debug-restart.png</file>
+    <file>icons/debug-run.png</file>
+    <file>icons/debug-step-instruction.png</file>
+    <file>icons/debug-next-instruction.png</file>
+    <file>icons/debug-step.png</file>
+    <file>icons/debug-next.png</file>
+    <file>icons/debug-step-out.png</file>
+    <!-- file>icons/open-menu.png</file -->
   </gresource>
 </gresources>

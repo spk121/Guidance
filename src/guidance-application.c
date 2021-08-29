@@ -68,7 +68,7 @@ on_activate (GdnApplication *app)
   window = gtk_application_get_active_window (GTK_APPLICATION (app));
   if (window == NULL)
     window = g_object_new (GDN_TYPE_APPLICTION_WINDOW, "application", app,
-                           "default-width", 600, "default-height", 300, NULL);
+                           "default-width", 700, "default-height", 400, NULL);
   gtk_window_present (window);
 }
 
@@ -131,6 +131,12 @@ const char *
 gdn_application_get_args (GdnApplication *app)
 {
   return app->args;
+}
+
+const char **
+gdn_application_get_argv (GdnApplication *app)
+{
+  return (const char **) (app->argv);
 }
 
 GdnApplication *

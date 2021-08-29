@@ -18,6 +18,7 @@
  ((system vm frame) #:select (frame-bindings binding-representation binding-index binding-ref binding-name) #:prefix __)
  ((system vm program) #:select (source:file source:column source:line-for-user) #:prefix __)
  ((system vm trap-state) #:select (add-trap-at-procedure-call! disable-trap! enable-trap! install-trap-handler!) #:prefix __)
+ (system repl error-handling)
  ((ice-9 command-line) #:select (compile-shell-switches) #:prefix __)
  ((ice-9 top-repl) #:select (top-repl) #:prefix __)
  ((ice-9 i18n) #:select (number->locale-string) #:prefix __)
@@ -316,7 +317,47 @@
    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Entry points
+;; Entry point for REPL
+
+;; The REPL entry point is different than the standard REPL
+;; in that
+;; - it uses the Guidance 'run' error handler
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Entry point for running
+
+;; 'Run' error handler
+
+;; When running code that creates an error, we want to
+;; end up in a debug mode.
+;; Capture the stack for the error.
+;; Update the backtrace and environment info.
+;; Enter a debug mode where
+;; -  the limited debug repl works.
+;  -  allow traps to be created or destroyed
+;; -  allow "stop", "restart"
+;; If "stop" or "restart", the stack is unwound.
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Break function handling
+
+;; Break function handling is similar to run error handler. It
+;; is caused by placing a call to (*break*) in the code, or by
+;; clicking the pause button.
+
+;; It has the same features as the 'run' error handler plus
+;; it allows all the step and next actions, as well as the
+;; continue action.
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Trap error handling
+
+;; Basically the same as the Break handler except
+;; for its entry point.  Also, it highlights
+;; the trap that triggered it in the trap list view until
+;; the source location changes.
+
+
 
 (define (gdn-run-repl)
   (__top-repl))
@@ -324,15 +365,19 @@
 (define (gdn-run-argv argv)
   "Process the command line argument list and then run a Guile
 interpreter."
-  (eval (__compile-shell-switches argv) (current-module)))
+  ;;(eval (__compile-shell-switches argv) (current-module)))
+  (display "ARGV: ")
+  (write argv)
+  (newline)
+  (call-with-error-handling (__compile-shell-switches argv)))
 
 (define gdn-run-trap (__add-trap-at-procedure-call! gdn-run-argv))
 
 (define (gdn-run-trap-enable)
-  (__enable-trap! gdn-run-trap))
+  (false-if-exception (__enable-trap! gdn-run-trap)))
 
 (define (gdn-run-trap-disable)
-  (__disable-trap! gdn-run-trap))
+  (false-if-exception (__disable-trap! gdn-run-trap)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HOOKS

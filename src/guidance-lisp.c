@@ -291,20 +291,25 @@ gdn_lisp_spawn_argv_thread (GdnLisp *self, char **argv, gboolean break_on_entry)
   self->default_thread = thrd;
 }
 
+#if 0
 void
 gdn_lisp_spawn_args_thread (GdnLisp *   self,
                             const char *args,
                             gboolean    break_on_entry)
 {
+#if 0
   if (break_on_entry)
-    scm_call_0 (run_trap_enable_func);
+      //scm_catch(SCM_BOOL_T, run_trap_enable_func, SCM_BOOL_F);
+      scm_call_0 (run_trap_enable_func);
   else
     scm_call_0 (run_trap_disable_func);
-
+#endif
+  scm_init_guile();
   SCM thrd = scm_spawn_thread (spawn_argv, GPOINTER_TO_SCM (args), NULL, NULL);
   /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread. */
   self->default_thread = thrd;
 }
+#endif
 
 void
 gdn_lisp_cancel_thread (GdnLisp *self)
@@ -851,4 +856,22 @@ gboolean
 gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx)
 {
   return TRUE;
+}
+
+char **
+gdn_lisp_get_paths (GdnLisp *lisp)
+{
+  SCM           path = scm_vector (scm_c_eval_string ("%load-path"));
+  GStrvBuilder *builder = g_strv_builder_new ();
+  for (int i = 0; i < scm_c_vector_length (path); i++)
+    {
+      char *str;
+      str = scm_to_utf8_string (scm_c_vector_ref (path, i));
+      g_strv_builder_add (builder, str);
+      free (str);
+    }
+  char **strv;
+  strv = g_strv_builder_end (builder);
+  g_strv_builder_unref (builder);
+  return strv;
 }

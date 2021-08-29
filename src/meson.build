@@ -1,14 +1,15 @@
 guidance_sources = [
   'main.c',
-  'guidance-application.c',
   'guidance-application-window.c',
-  'guidance-lisp.c',
+  'guidance-application.c',
   'guidance-binding-info.c',
   'guidance-environment-info.c',
   'guidance-frame-info.c',
+  'guidance-lisp.c',
   'guidance-module-info.c',
+  'guidance-source-view.c',
   'guidance-thread-info.c',
-  'guidance-trap-info.c',
+  'guidance-trap-info.c'
 ]
 
 guidance_deps = [

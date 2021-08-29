@@ -95,7 +95,7 @@
                       <object class="GtkButton">
                         <child>
                           <object class="GtkImage">
-                            <property name="icon-name">document-open-symbolic</property>
+                            <property name="icon-name">document-open</property>
                           </object>
                         </child>
                       </object>
@@ -110,7 +110,7 @@
                       <object class="GtkButton">
                         <child>
                           <object class="GtkImage">
-                            <property name="icon-name">process-stop-symbolic</property>
+                            <property name="icon-name">process-stop</property>
                           </object>
                         </child>
                       </object>
@@ -367,35 +367,17 @@
                             <property name="title">Source</property>
                             <property name="child">
                               <object class="GtkBox">
-                                <property name="orientation">vertical</property>
                                 <child>
-                                  <object class="GtkStackSwitcher">
-                                    <property name="stack">source-stack</property>
-
-                                  </object>
+                                  <object class="GtkLabel" id="source_label" />
                                 </child>
                                 <child>
-                                  <object class="GtkStack" id="source-stack">
+                                  <object class="GtkScrolledWindow">
+                                    <property name="hexpand">True</property>
+                                    <property name="vexpand">True</property>
                                     <child>
-                                      <object class="GtkStackPage">
-                                        <property name="name">tmptxt</property>
-                                        <property name="title">tmp.txt</property>
-                                        <property name="child">
-                                          <object class="GtkLabel">
-                                            <property name="label">some source code</property>
-                                          </object>
-                                        </property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkStackPage">
-                                        <property name="name">tmptxt2</property>
-                                        <property name="title">tmp2.txt</property>
-                                        <property name="child">
-                                          <object class="GtkLabel">
-                                            <property name="label">some source code #2</property>
-                                          </object>
-                                        </property>
+                                      <object class="GtkTextView" id="source_view">
+                                        <property name="editable">False</property>
+                                        <property name="monospace">True</property>
                                       </object>
                                     </child>
                                   </object>

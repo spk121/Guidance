@@ -1,4 +1,4 @@
-/* guidance-application.h
+/* guidance-source-view.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -19,15 +19,12 @@
 #pragma once
 
 #include <gtk/gtk.h>
+#include <libguile.h>
 
 G_BEGIN_DECLS
+void gdn_source_view_init (GtkTextView *view, GtkLabel *label);
+void gdn_source_view_set_paths (char **paths);
+gboolean
+gdn_source_view_show_location (const char *rel_path, int line, int col);
 
-#define GDN_TYPE_APPLICATION (gdn_application_get_type ())
-G_DECLARE_FINAL_TYPE (GdnApplication, gdn_application, GDN, APPLICATION, GtkApplication)
-
-GdnApplication *gdn_application_new (void);
-int             gdn_application_get_argc (GdnApplication *app);
-const char *    gdn_application_get_args (GdnApplication *app);
-const char **   gdn_application_get_argv (GdnApplication *app);
-GdnApplication *gdn_application_get_default (void);
 G_END_DECLS
