@@ -19,12 +19,14 @@ least, I avoid them because they are a bit cumbersome.
 This project is an attempt to make different type of debugger that
 suits my personal preferences: simpler and more graphical.
 
-In terms of the coding philosophy.
+These are the self-imposed restrictions on this coding effort.
 
-- Generally follow GNOME coding style.
+- Follow GNU coding style.
+- Follow GNOME practices and styles.
 - Don't fight GTK4. Use GTK4's native widgets and use them in their
   common manner.
-- Don't reverse engineer Guile. Use only documented Guile 3.x API.
+- Use only Guile API that is documented in the reference manual, and
+  use them in their common manner.
 
 Getting Started
 ---------------

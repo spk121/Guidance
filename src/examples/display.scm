@@ -1,0 +1,8 @@
+(display "one")
+(newline)
+(display "two")
+(newline)
+(display "three")
+(newline)
+(display "four")
+(newline)

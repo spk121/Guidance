@@ -22,6 +22,7 @@
  ((ice-9 command-line) #:select (compile-shell-switches) #:prefix __)
  ((ice-9 top-repl) #:select (top-repl) #:prefix __)
  ((ice-9 i18n) #:select (number->locale-string) #:prefix __)
+ (ice-9 rdelim)
  ((ice-9 threads) #:select()))
 
 (define (gdn-string-starts-with prefix str)
@@ -338,6 +339,13 @@
 ;; -  allow "stop", "restart"
 ;; If "stop" or "restart", the stack is unwound.
 
+
+;; (call-with-error-handling repl-handler
+;;   #:on-error error-handler
+;;   #:trap-handler trap-handler)
+
+;; (define (repl-handler)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Break function handling
 
@@ -357,10 +365,34 @@
 ;; the trap that triggered it in the trap list view until
 ;; the source location changes.
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Setting traps
 
+;; You can set traps by
+;; - using the add-trap commands at the REPL
+;; - right-clicking on a source file
+;; - choosing a function from the module explorer
+
+;; (interaction-environment) is the same as
+;; (current-module) for the current thread.
 
 (define (gdn-run-repl)
-  (__top-repl))
+  (let loop ()
+    (unless (char-ready?)
+      (display "poop>" %gdn-prompt-port))
+    (force-output)
+    (run-hook before-read-hook)
+    (%gdn-update-thread-info)
+    (%gdn-update-environment-info (gdn-get-environment))
+    (%gdn-update-frame-info
+     (gdn-get-backtrace
+      (vector-ref (__stack->vector (make-stack #t
+                                               8 ; layers to get out of repl-reader
+                                               )) 0)))
+    (let ((input (read-line (current-input-port))))
+      (let ((result (false-if-exception (eval-string input))))
+        (write result)
+        (loop)))))
 
 (define (gdn-run-argv argv)
   "Process the command line argument list and then run a Guile
@@ -427,6 +459,9 @@ interpreter."
 ;; %gdn-prompt-port. Does not handle readline-like commands.  Each
 ;; iteration, it runs the help functions that update the information
 ;; GtkStack pages.
+
+
+
 (define gdn-repl-reader
   (lambda* (prompt #:optional (reader (fluid-ref current-reader)))
     (unless (char-ready?)
@@ -439,7 +474,7 @@ interpreter."
     (%gdn-update-frame-info
      (gdn-get-backtrace
       (vector-ref (__stack->vector (make-stack #t
-                                               5 ; five layers to get out of repl-reader
+                                               8 ; layers to get out of repl-reader
                                                )) 0)))
     ((or reader read) (current-input-port))))
 
