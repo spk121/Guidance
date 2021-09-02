@@ -42,22 +42,20 @@ current error port."
 
 (define (top-repl)
   "Kick off the REPL for Guidance."
-  
-  ;; FIXME: signal handler for SIGINT would go here.
- 
-  ;; TODO: check that we have the full interaction environment
+
+  ;; Note that there is no signal handler here, because we handle
+  ;; signals in the GTK main loop.
   
   ;; Install the locale.
   (print-error-on-exception
    (lambda () (setlocale LC_ALL "")))
-
+        
   ;; Run the Guidance REPL
   (let ((status (start-repl)))
 
-    ;; FIXME: here is where we'd run the exit-hook, but, exit-hook is
-    ;; undocumented.
+    ;; FIXME: here is where we'd put an exit hook.
     ;;   (run-hook exit-hook)
-    
+          
     (format #t
             "The REPL has ended with a return status of ~a.~%"
             status)
@@ -77,46 +75,55 @@ signal handler has been set up."
   (format #t "This is linked to Guile ~a.~%" (version))
   (newline))
 
+(define *outer-prompt-tag* (make-prompt-tag "outer"))
+(define *inner-prompt-tag* (make-prompt-tag "inner"))
+
 (define (run-repl)
   "This is the guts of the REPL. We presume locale and signal is set
 up and that the language is available."
-  (let loop ()
-    (let ((input-str (repl-read)))
-      ;; FIXME: we presuming that input has no trailing whitespace or
-      ;; control characters
-      
-      ;; Evaluate the input string in the current language
-      ;; catching errors and traps.
-      (call-with-error-and-trap-handler
-       ;; Thunk to be executed
-       (lambda ()
-         (call-with-values
-             (lambda ()
-               (eval-string input-string (gdn-language)))
-           ;; Print the return, which could be multiple values
-           (lambda return-vals
-             (for-each (lambda (val)
-                         (unless (eq? val *unspecified)
-                           (write val)
-                           (newline)))
-                       return-vals)))))
-      (loop))))
-  
+  (call-with-prompt *outer-prompt-tag*
+    (while #t
+      (let ((input-str (string-trim-both (read-line))))
+        ;; Evaluate the input string in the current language
+        ;; catching errors and traps.
+        (call-with-error-and-trap-handler
+         ;; Thunk to be executed
+         (lambda ()
+           (call-with-values
+               ;; Limit stack to here
+               (begin
+                 (%gdn-set-eval-buttons)
+                 (let ((retval (start-stack #t
+                                            (eval-string input-string (gdn-language)))))
+                   (%gdn-set-default-buttons)
+                   retval))
+             ;; Print the return, which could be multiple values.
+             (lambda return-vals
+               (for-each (lambda (val)
+                           (unless (eq? val *unspecified*)
+                             (display "→ ")
+                             (write val)
+                             (newline)))
+                         return-vals)))))))
+
+    ;; abort handler
+    (lambda (k status)
+      status)))
+
+#|
 (define (with-stack-and-prompt thunk)
   "Calls thunk. The stack is constrained to THUNK.
 If '(abort-to-prompt \"prompt\")' is called, THUNK is restarted."
-  (call-with-prompt *prompt-tag*
+  (call-with-prompt *inner-prompt-tag*
     (lambda ()
       (start-stack #t (thunk)))
     (lambda (k proc)
       (with-stack-and-prompt (lambda () (proc k))))))
-
-
-;; There exists 'display-error'
+|#
 
 (define (handle-exception key subr message args rest)
-  "This exception handler rethrows on 'quit, and prints
-and error on 'stack-overflow, and ignore other errors."
+  "This exception handler rethrows on 'quit, and prints and error on
+'stack-overflow, and ignore other errors."
   (when (memq key '(quit))
     (apply throw key subr message args rest))
   (when (memq key '(stack-overflow))
@@ -145,7 +152,7 @@ errors except 'quit."
       
       (format #t "Entering error mode.~%")
       (format #t "When ready, press the STOP button to terminate.~%")
-      (gdn-error-handler stack))))
+      (gdn-error-handler (stack-ref stack 0)))))
 
 (define (handle-trap frame trap-idx trap-name)
   "This trap handler launches Guidance's trap-handler UX."
@@ -157,11 +164,11 @@ errors except 'quit."
         ;; else
         (format #t "Entering break mode.~%"))
     (format #t "When ready, press the CONTINUE button to continue.~%")
-    (gdn-trap-handler frame trap-idx trap-name)))
+    (gdn-trap-handler (stack-ref stack 0) trap-idx trap-name)))
 
 (define (_break_)
   "This causes a break to occur at this location"
-  (handle-trap #t #f #f))
+  (handle-trap #t #f "break"))
 
 (define (call-with-error-and-trap-handler thunk)
   "This procedure calls THUNK. On error it calls ON-ERROR then POST-ERROR.
@@ -179,5 +186,3 @@ If a trap is encountered, it calls TRAP-HANDLER."
 
       ;; Pre-unwind handler
       handle-pre-unwind-exception)))
-              
-         

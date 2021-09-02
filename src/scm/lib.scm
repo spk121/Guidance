@@ -505,11 +505,12 @@ interpreter."
   "A trap and break handler. To indicate a break, TRAP-IDX should be
 #f and TRAP-NAME should be 'break'.  Otherwise the trap-idx and
 trap-name indicate the current trap."
+  (%gdn-set-trap-buttons)
   (%gdn-update-thread-info)
   (%gdn-update-environment-info (gdn-get-environment))
   (%gdn-update-trap-info trap-idx)
   (%gdn-update-frame-info (gdn-get-backtrace frame))
-  (display "debug>" %gdn-prompt-port)
+  (display "trap>" %gdn-prompt-port)
   
   ;; This is a blocking operation, awaiting a response from the
   ;; operator. This cannot be run in the Gtk main thread.
@@ -518,40 +519,54 @@ trap-name indicate the current trap."
           (data (cdr response)))
       (cond
        ((eq? type 'step-into-instruction)
-        #f)
+        (add-ephemeral-stepping-trap! frame gdn-trap-handler #:into? #t #:instruction? #t))
        ((eq? type 'step-into)
-        #f)
+        (add-ephemeral-stepping-trap! framd gdn-trap-handler #:into? #t #:instruction? #f))
        ((eq? type 'step-instruction)
-        #f)
+        (add-ephemeral-stepping-trap! framd gdn-trap-handler #:into? #f #:instruction? #t))
        ((eq? type 'step)
-        #f)
+        (add-ephemeral-stepping-trap! frame gdn-trap-handler #:into? #f #:instruction? #g))
        ((eq? type 'step-out)
-        #f)
+        (add-ephemeral-trap-at-frame-finish! frame gdn-trap-handler))
        ((eq? type 'continue)
-        #f)
+        (%gdn-disable-trap-buttonsx)
+        *unspecified*)
        ((eq? type 'restart)
-        #f)
+        (%gdn-disable-trap-buttons)
+        (abort-to-prompt *start-prompt* "trap restart"))
        ((eq? type 'eval)
         (display data (current-output-port))
         (newline (current-output-port))
         (display "=> " (current-output-port))
         (write (false-if-exception (eval-string data)) (current-output-port))
         (newline (current-output-port))
-        (loop (%gdn-get-trap-response))
-        #f)))))
+        (loop (%gdn-get-trap-response)))))))
 
-;;
-;; I suppose we hook the step and return buttons to
-;;  add-ephemeral-trap-at-frame-finish! and
-;;  add-ephemeral-stepping-trap!
-;;
-
-;; There are functions to list the traps
-;; (list-traps)
-;; (enable-trap! idx)
-;; (disable-trap! idx)
-;; (delete-trap! idx)
-
-(__install-trap-handler! gdn-trap-handler)
-#t
+(define (gdn-error-handler frame)
+  "An error handler"
+  (%gdn-enable-error-buttons)
+  (%gdn-update-thread-info)
+  (%gdn-update-environment-info (gdn-get-environment))
+  (%gdn-update-trap-info #f)
+  (%gdn-update-frame-info (gdn-get-backtrace frame))
+  (display "error>" %gdn-prompt-port)
+  
+  ;; This is a blocking operation, awaiting a response from the
+  ;; operator. This cannot be run in the Gtk main thread.
+  (let loop ((response (%gdn-get-error-response)))
+    (let ((type (car response))
+          (data (cdr response)))
+      (cond
+       ((eq? type 'continue)
+        *unspecified*)
+       ((eq? type 'restart)
+        (%gdn-disable-error-buttons)
+        (abort-to-prompt *start-prompt* "error restart"))
+       ((eq? type 'eval)
+        (display data (current-output-port))
+        (newline (current-output-port))
+        (display "=> " (current-output-port))
+        (write (false-if-exception (eval-string data)) (current-output-port))
+        (newline (current-output-port))
+        (loop (%gdn-get-error-response)))))))
 
