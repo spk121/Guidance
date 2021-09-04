@@ -520,10 +520,6 @@ activate_launch (G_GNUC_UNUSED GSimpleAction *simple,
   if (gtk_check_button_get_active (self->settings_start_repl_radio))
     {
       gdn_lisp_spawn_repl_thread (self->lisp);
-      GtkWidget *wigz =
-          gtk_stack_get_child_by_name (self->main_stack, "terminal");
-      if (wigz != NULL)
-        gtk_stack_set_visible_child (self->main_stack, wigz);
     }
   else if (gtk_check_button_get_active (self->settings_use_args_radio))
     {
@@ -532,6 +528,12 @@ activate_launch (G_GNUC_UNUSED GSimpleAction *simple,
       const char **   argv = gdn_application_get_argv (app);
       gdn_lisp_spawn_argv_thread (self->lisp, argv, pause);
     }
+
+  // Flip over to the terminal widget
+  GtkWidget *terminal_page =
+      gtk_stack_get_child_by_name (self->main_stack, "terminal");
+  if (terminal_page != NULL)
+    gtk_stack_set_visible_child (self->main_stack, terminal_page);
 }
 
 /* The operater has hit enter on the GtkEntry in the Terminal widget.
