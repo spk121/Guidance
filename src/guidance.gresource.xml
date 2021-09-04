@@ -5,7 +5,7 @@
     <file>gtk/guidance-window.css</file>
     <file>gtk/menus.ui</file>
     <file>gtk/help-overlay.ui</file>
-    <file>scm/lib.scm</file>
+    <file>gdn/lib.scm</file>
     <file>icons/launch.png</file>
     <file>icons/edit-shred.png</file>
     <file>icons/edit-trash.png</file>

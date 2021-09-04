@@ -2,6 +2,11 @@
     padding: 2px;
 }
 
+.mono_text {
+    font-family: monospace;
+    background-color: antiquewhite;
+}
+
 .repl_output_text_buffer {
     padding: 10px;
 }

@@ -90,7 +90,6 @@ static SCM      run_repl_func;
 static SCM      run_argv_func;
 static SCM      run_trap_enable_func;
 static SCM      run_trap_disable_func;
-static SCM      get_environment_func;
 
 ////////////////////////////////////////////////////////////////
 static int         unix_pty_input_fd_new (void);
@@ -111,15 +110,13 @@ gdn_lisp_class_init (GdnLispClass *klass)
 
   signals[SIGNAL_AFTER_GC] =
       g_signal_newv ("after-gc", G_TYPE_FROM_CLASS (klass),
-                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE | G_SIGNAL_NO_HOOKS, NULL,
-                     NULL, NULL, NULL,
-                     G_TYPE_NONE, 0, NULL);
+                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, NULL, NULL, NULL,
+                     NULL, G_TYPE_NONE, 0, NULL);
 
   signals[SIGNAL_AFTER_SWEEP] =
       g_signal_newv ("after-sweep", G_TYPE_FROM_CLASS (klass),
-                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE | G_SIGNAL_NO_HOOKS, NULL,
-                     NULL, NULL, NULL,
-                     G_TYPE_NONE, 0, NULL);
+                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, NULL, NULL, NULL,
+                     NULL, G_TYPE_NONE, 0, NULL);
 
   signals[SIGNAL_BREAK] =
       g_signal_newv ("break", G_TYPE_FROM_CLASS (klass),
@@ -157,6 +154,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
                 "%gdn-load-handler", "%gdn-module-defined-handler", NULL);
   gui_thread = scm_current_thread ();
 
+#if 0
   // Loading this library sets up the GTK->Guile port mapping and defines our spawn functions.
   contents = g_resource_lookup_data (guidance_get_resource (),
                                      "/com/lonelycactus/Guidance/scm/lib.scm",
@@ -168,8 +166,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
   run_argv_func = scm_variable_ref (scm_c_lookup ("gdn-run-argv"));
   run_trap_enable_func = scm_variable_ref (scm_c_lookup ("gdn-run-trap-enable"));
   run_trap_disable_func = scm_variable_ref (scm_c_lookup ("gdn-run-trap-disable"));
-  get_environment_func =
-      scm_variable_ref (scm_c_lookup ("gdn-get-environment"));
+#endif
 }
 
 static GdnLisp *_self = NULL;
@@ -265,29 +262,32 @@ gdn_lisp_spawn_repl_thread (GdnLisp *self)
 static SCM
 spawn_argv (void *data)
 {
-  SCM args = GPOINTER_TO_SCM (data);
-  scm_call_1 (run_argv_func, args);
+  scm_shell (g_strv_length ((char **) data), (char **) data);
+  return SCM_UNSPECIFIED;
+}
+
+SCM
+spawn_handler (void *data, SCM key, SCM args)
+{
+  scm_simple_format (scm_current_output_port (),
+                     scm_from_utf8_string ("Key: ~S Args: ~S~%"),
+                     scm_list_2 (key, args));
+  printf ("shell has exited\n");
+  // exit(0);
   return SCM_UNSPECIFIED;
 }
 
 void
 gdn_lisp_spawn_argv_thread (GdnLisp *self, char **argv, gboolean break_on_entry)
 {
-  SCM args = SCM_EOL;
-  while (*argv != NULL)
-    {
-      args = scm_cons (scm_from_locale_string (*argv), args);
-      argv++;
-    }
-  args = scm_reverse (args);
+  int argc = 0;
 
   if (break_on_entry)
-    scm_call_0 (run_trap_enable_func);
-  else
-    scm_call_0 (run_trap_disable_func);
-  SCM thrd = scm_spawn_thread (spawn_argv, SCM_TO_GPOINTER (args), NULL, NULL);
-  /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread.
-   */
+    scm_c_eval_string ("(use-modules (system vm trap-state)) "
+                       "(add-trap-at-procedure-call! (@ (ice-9 command-line) "
+                       "compile-shell-switches))");
+
+  SCM thrd = scm_spawn_thread (spawn_argv, argv, spawn_handler, NULL);
   self->default_thread = thrd;
 }
 
@@ -874,4 +874,9 @@ gdn_lisp_get_paths (GdnLisp *lisp)
   strv = g_strv_builder_end (builder);
   g_strv_builder_unref (builder);
   return strv;
+}
+
+void
+gdm_lisp_scm_shell (void)
+{
 }

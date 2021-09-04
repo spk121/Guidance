@@ -37,7 +37,7 @@ struct _GdnApplicationWindow
   /* Settings tab */
   GtkCheckButton *settings_start_repl_radio;
   GtkCheckButton *settings_use_args_radio;
-  GtkEntry *      settings_args_entry;
+  GtkLabel *      settings_args_label;
   GtkSwitch *     settings_pause_switch;
 
   /* Interpreter and terminal tab */
@@ -78,6 +78,9 @@ struct _GdnApplicationWindow
   /* Source tab */
   GtkTextView *source_view;
   GtkLabel *   source_label;
+
+  GtkImage *sweep_image;
+  GtkImage *gc_image;
 };
 
 G_DEFINE_TYPE (GdnApplicationWindow,
@@ -98,6 +101,8 @@ static void     handle_css_parsing_error (GtkCssProvider *provider,
                                           GtkCssSection * section,
                                           GError *        error,
                                           gpointer        user_data);
+static void     handle_after_gc (GdnLisp *lisp, gpointer user_data);
+static void     handle_after_sweep (GdnLisp *lisp, gpointer user_data);
 
 static gboolean
 poll_terminal_text2 (gint fd, GIOCondition condition, gpointer user_data);
@@ -204,7 +209,7 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   /* Settings Tab */
   BIND (settings_start_repl_radio);
   BIND (settings_use_args_radio);
-  BIND (settings_args_entry);
+  BIND (settings_args_label);
   BIND (settings_pause_switch);
 
   /* Terminal tab */
@@ -238,6 +243,9 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   /* Source Tab */
   BIND (source_label);
   BIND (source_view);
+
+  BIND (sweep_image);
+  BIND (gc_image);
 }
 
 static void
@@ -247,14 +255,14 @@ application_window_init_settings_tab (GdnApplicationWindow *self)
   GtkEntryBuffer *buf;
 
   app = gdn_application_get_default ();
-  buf = gtk_entry_get_buffer (self->settings_args_entry);
 
   gtk_check_button_set_group (self->settings_use_args_radio,
                               self->settings_start_repl_radio);
   if (gdn_application_get_argc (app) > 1)
     {
       /* Copy the command-line arguments into this buffer. */
-      gtk_entry_buffer_set_text (buf, gdn_application_get_args (app), -1);
+      gtk_label_set_text (self->settings_args_label,
+                          gdn_application_get_args (app));
       gtk_check_button_set_active (self->settings_use_args_radio, TRUE);
     }
   else
@@ -490,6 +498,10 @@ gdn_application_window_init (GdnApplicationWindow *self)
 
   gdn_source_view_set_paths (gdn_lisp_get_paths (self->lisp));
   gdn_source_view_init (self->source_view, self->source_label);
+
+  g_signal_connect (self->lisp, "after-gc", G_CALLBACK (handle_after_gc), NULL);
+  g_signal_connect (self->lisp, "after-sweep", G_CALLBACK (handle_after_sweep),
+                    NULL);
   _self = self;
 }
 
@@ -516,8 +528,6 @@ activate_launch (G_GNUC_UNUSED GSimpleAction *simple,
   else if (gtk_check_button_get_active (self->settings_use_args_radio))
     {
       gboolean pause = gtk_switch_get_active (self->settings_pause_switch);
-      GtkEntryBuffer *buf = gtk_entry_get_buffer (self->settings_args_entry);
-      const char *    args = gtk_entry_buffer_get_text (buf);
       GdnApplication *app = GDN_APPLICATION (g_application_get_default ());
       const char **   argv = gdn_application_get_argv (app);
       gdn_lisp_spawn_argv_thread (self->lisp, argv, pause);
@@ -589,6 +599,36 @@ handle_css_parsing_error (GtkCssProvider *provider,
                           gpointer        user_data)
 {
   g_error ("CSS parsing error: %s", error->message);
+}
+
+static gboolean
+clear_gc (gpointer user_data)
+{
+  gtk_widget_set_visible (GTK_WIDGET (_self->gc_image), FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+handle_after_gc (GdnLisp *lisp, gpointer user_data)
+{
+  /* When called, we reveal the sweep image for a second. */
+  gtk_widget_set_visible (GTK_WIDGET (_self->gc_image), TRUE);
+  g_timeout_add (2000, clear_gc, NULL);
+}
+
+static gboolean
+clear_sweep (gpointer user_data)
+{
+  gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+handle_after_sweep (GdnLisp *lisp, gpointer user_data)
+{
+  /* When called, we reveal the sweep image for a second. */
+  gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), TRUE);
+  g_timeout_add (2000, clear_gc, NULL);
 }
 
 gboolean

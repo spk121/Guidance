@@ -28,6 +28,47 @@ These are the self-imposed restrictions on this coding effort.
 - Use only Guile API that is documented in the reference manual, and
   use them in their common manner.
 
+What this is
+------------
+
+Guidance is a version of the Guile REPL with a GUI and some extra
+features.  Largely, you just call Guidance the way you would call
+Guile.
+
+The extra features are these:
+
+- When the REPL is prompting at a location with an associated debug
+  frame, the *Source* and *Backtrace* tabs are updated to give
+  context.
+  
+- The *Traps* tab provides an alternate way to see, disable, and
+  enable traps.
+  
+- The *Peek* tab keeps a history of all calls to the `pk` macro and
+  their output.
+  
+- A new procedure `breakpoint` is provided in the top-level
+  environment. When called, it acts as if a trap were added at the
+  location of the procedure.
+  
+- A simpler trap handler is available, and installed by default, so
+  that when a trap is reached, the *Source* and *Backtrace* tabs are
+  updated, and a button bar is enabled.
+
+
+- The REPL adds a couple of new metacommands
+
+  `,where`: If the REPL currently is associated with a debug frame,
+  `,where` or `,w` loads the source file of a given frame and displays
+  its location in the *Source* tab.
+  
+- Some existing metacommands are given extra features
+
+  `,backtrace` or `,bt` updates the *Backtrace* tab with the current
+  backtrace information.
+  
+  `,step`, `,next` and all other associated 
+
 Getting Started
 ---------------
 
