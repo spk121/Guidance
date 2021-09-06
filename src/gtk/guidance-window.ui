@@ -87,7 +87,7 @@
             <child>
               <object class="GtkBox" id="right">
                 <property name="orientation">vertical</property>
-                <child>
+                <!-- child>
                   <object class="GtkBox" id="toolbar">
                     <property name="halign">end</property>
                     <child>
@@ -198,7 +198,7 @@
                 <child>
                   <object class="GtkSeparator">
                   </object>
-                </child>
+                </child -->
                 <child>
                   <object class="GtkBox" id="main-frame">
                     <child>
@@ -247,47 +247,6 @@
                                       <object class="GtkMenuButton">
                                       </object>
                                     </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkStackPage">
-                            <property name="name">source</property>
-                            <property name="title">Source</property>
-                            <property name="child">
-                              <object class="GtkBox">
-                                <child>
-                                  <object class="GtkLabel" id="source_label" />
-                                </child>
-                                <child>
-                                  <object class="GtkScrolledWindow">
-                                    <property name="hexpand">True</property>
-                                    <property name="vexpand">True</property>
-                                    <child>
-                                      <object class="GtkTextView" id="source_view">
-                                        <property name="editable">False</property>
-                                        <property name="monospace">True</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkStackPage">
-                            <property name="name">traps</property>
-                            <property name="title">Breakpoints</property>
-                            <property name="child">
-                              <object class="GtkScrolledWindow">
-                                <property name="hexpand">True</property>
-                                <property name="vexpand">True</property>
-                                <child>
-                                  <object class="GtkColumnView">
                                   </object>
                                 </child>
                               </object>
@@ -365,7 +324,49 @@
                               </object>
                             </property>
                           </object>
+                        </child>                        
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">source</property>
+                            <property name="title">Source</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <child>
+                                  <object class="GtkLabel" id="source_label" />
+                                </child>
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="hexpand">True</property>
+                                    <property name="vexpand">True</property>
+                                    <child>
+                                      <object class="GtkTextView" id="source_view">
+                                        <property name="editable">False</property>
+                                        <property name="monospace">True</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
                         </child>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">traps</property>
+                            <property name="title">Breakpoints</property>
+                            <property name="child">
+                              <object class="GtkScrolledWindow">
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <child>
+                                  <object class="GtkColumnView">
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+
                         <child>
                           <object class="GtkStackPage">
                             <property name="name">threads</property>
