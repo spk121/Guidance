@@ -70,6 +70,7 @@ struct _GdnLisp
   GtkTreeListModel *environment; /* Holds the last-computed environment info as
                                   * a list of `GdnEnvironmentInfo` */
   GListStore *threads;        /* Holds the last-computed list of active Guile threads. */
+
   SCM         default_thread; /* The Guile representation of this interpreter's main thread */
 };
 
@@ -154,14 +155,14 @@ gdn_lisp_class_init (GdnLispClass *klass)
                 "%gdn-load-handler", "%gdn-module-defined-handler", NULL);
   gui_thread = scm_current_thread ();
 
-#if 0
   // Loading this library sets up the GTK->Guile port mapping and defines our spawn functions.
   contents = g_resource_lookup_data (guidance_get_resource (),
-                                     "/com/lonelycactus/Guidance/scm/lib.scm",
+                                     "/com/lonelycactus/Guidance/gdn/lib.scm",
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   scm_c_eval_string (g_bytes_get_data (contents, NULL));
   g_bytes_unref (contents);
 
+#if 0
   run_repl_func = scm_variable_ref (scm_c_lookup ("gdn-run-repl"));
   run_argv_func = scm_variable_ref (scm_c_lookup ("gdn-run-argv"));
   run_trap_enable_func = scm_variable_ref (scm_c_lookup ("gdn-run-trap-enable"));
@@ -245,22 +246,22 @@ gdn_lisp_new (void)
 }
 
 static SCM
-spawn_repl (G_GNUC_UNUSED void *data)
+spawn_top_repl (G_GNUC_UNUSED void *data)
 {
-  scm_call_0 (run_repl_func);
+  scm_c_eval_string ("((@ (ice-9 top-repl) top-repl))");
   return SCM_UNSPECIFIED;
 }
 
 void
 gdn_lisp_spawn_repl_thread (GdnLisp *self)
 {
-  SCM thrd = scm_spawn_thread (spawn_repl, NULL, NULL, NULL);
+  SCM thrd = scm_spawn_thread (spawn_top_repl, NULL, NULL, NULL);
   /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread. */
   self->default_thread = thrd;
 }
 
 static SCM
-spawn_argv (void *data)
+spawn_shell (void *data)
 {
   scm_shell (g_strv_length ((char **) data), (char **) data);
   return SCM_UNSPECIFIED;
@@ -270,10 +271,10 @@ SCM
 spawn_handler (void *data, SCM key, SCM args)
 {
   scm_simple_format (scm_current_output_port (),
+                     scm_from_utf8_string ("Guile has exited"), SCM_EOL);
+  scm_simple_format (scm_current_output_port (),
                      scm_from_utf8_string ("Key: ~S Args: ~S~%"),
                      scm_list_2 (key, args));
-  printf ("shell has exited\n");
-  // exit(0);
   return SCM_UNSPECIFIED;
 }
 
@@ -282,12 +283,18 @@ gdn_lisp_spawn_argv_thread (GdnLisp *self, char **argv, gboolean break_on_entry)
 {
   int argc = 0;
 
-  if (break_on_entry)
-    scm_c_eval_string ("(use-modules (system vm trap-state)) "
-                       "(add-trap-at-procedure-call! (@ (ice-9 command-line) "
-                       "compile-shell-switches))");
-
-  SCM thrd = scm_spawn_thread (spawn_argv, argv, spawn_handler, NULL);
+  /* In original mode, to mock up breaking on entry, we start off with
+   * a regular top-level REPL.  The command-line arguments will be
+   * processed separately, perhaps as a response to the "play"
+   * button. */
+  SCM thrd;
+  // if (break_on_entry)
+  //{
+  self->default_thread =
+      scm_spawn_thread (spawn_top_repl, NULL, spawn_handler, NULL);
+  //}
+  // else
+  // thrd = scm_spawn_thread (spawn_shell, argv, spawn_handler, NULL);
   self->default_thread = thrd;
 }
 
@@ -305,7 +312,7 @@ gdn_lisp_spawn_args_thread (GdnLisp *   self,
     scm_call_0 (run_trap_disable_func);
 #endif
   scm_init_guile();
-  SCM thrd = scm_spawn_thread (spawn_argv, GPOINTER_TO_SCM (args), NULL, NULL);
+  SCM thrd = scm_spawn_thread (spawn_shell, GPOINTER_TO_SCM (args), NULL, NULL);
   /* FIXME: use scm_set_thread_cleanup_x to handle the exit of the repl thread. */
   self->default_thread = thrd;
 }

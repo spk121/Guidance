@@ -35,7 +35,49 @@ Guidance is a version of the Guile REPL with a GUI and some extra
 features.  Largely, you just call Guidance the way you would call
 Guile.
 
+Classic Experience
+------------------
+
+Classic mode brings up the tried-and-true Guile REPL -- full featured
+and powerful -- with a few quality-of-life modifications.
+
+- Classic mode always starts at a Guile REPL.  Even when called with
+  command-line arguments that would normally cause a program to start
+  executing, we start with a REPL.  To actually execute the
+  command-line arguments, use the new meta-command `,run`.
+
+- The `,backtrace` command as well as the family of `,step` and
+  `,next` commands will update the *Backtrace* and *Source* tabs,
+  providing a quicker experience to see context information and the
+  stack.
+
+Guided Experience
+-----------------
+
+The guided experience replaces the standard Guile REPL with graphical
+elements. Using a GUI toolbar and menu, you can set breakpoints and
+step through the program.
+
+The Peek Log
+------------
+
+In both modes, there is a Peek log. Any call to the `pk` or `peek`
+commands will log their output on the Peek tab.
+
+Breakpoints
+-----------
+
+A new procedure `breakpoint` is provided in the top-level
+environment, which you can add to the code being debugged to ensure
+a breakpoint is triggered at the location.
+
+Really, `breakpoint` is procedure of zero arguments that does nothing,
+but, Guidance adds a breakpoint on this procedure at startup.
+
+
+
 The extra features are these:
+
 
 - When the REPL is prompting at a location with an associated debug
   frame, the *Source* and *Backtrace* tabs are updated to give
@@ -47,16 +89,15 @@ The extra features are these:
 - The *Peek* tab keeps a history of all calls to the `pk` macro and
   their output.
   
-- A new procedure `breakpoint` is provided in the top-level
-  environment. When called, it acts as if a trap were added at the
-  location of the procedure.
+- 
   
 - A simpler trap handler is available, and installed by default, so
   that when a trap is reached, the *Source* and *Backtrace* tabs are
   updated, and a button bar is enabled.
 
-
 - The REPL adds a couple of new metacommands
+
+  `,run`: This processes the command-line arguments
 
   `,where`: If the REPL currently is associated with a debug frame,
   `,where` or `,w` loads the source file of a given frame and displays

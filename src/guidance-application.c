@@ -20,10 +20,18 @@
 #include "guidance-application-window.h"
 #include "guidance-config.h"
 
+typedef enum
+{
+  GDN_APPLICATION_MODE_UNKNOWN,
+  GDN_APPLICATION_MODE_GUIDED,
+  GDN_APPLICATION_MODE_REPL
+} GdnApplicationMode;
+
 struct _GdnApplication
 {
   GtkApplication parent_instance;
   gulong         activate_handler_id;
+  GdnApplicationMode mode;
   int            argc;
   char **        argv;
   char *         args;
@@ -36,6 +44,11 @@ GdnApplication *_default = NULL;
 static void
 gdn_application_init (G_GNUC_UNUSED GdnApplication *app)
 {
+#ifdef REPL_MODE
+  app->mode = GDN_APPLICATION_MODE_REPL;
+#else
+  app->mode = GDN_APPLICATION_MODE_GUIDED;
+#endif
 }
 
 static void
@@ -45,6 +58,7 @@ application_finalize (GObject *object)
   g_strfreev (self->argv);
   self->argv = NULL;
   self->argc = 0;
+  self->mode = GDN_APPLICATION_MODE_UNKNOWN;
 
   /* Don't forget to chain up. */
   G_OBJECT_CLASS (gdn_application_parent_class)->finalize (object);
@@ -72,71 +86,23 @@ on_activate (GdnApplication *app)
   gtk_window_present (window);
 }
 
-static int
-on_command_line (GApplication *app, GApplicationCommandLine *cmdline)
-{
-  int             argc;
-  GdnApplication *gapp = GDN_APPLICATION (app);
-
-  /* We just stash the command line arguments for later, and then
-   * the GTK side of things carries ignoring the command line. */
-  gapp->argv = g_application_command_line_get_arguments (cmdline, &argc);
-  gapp->argc = argc;
-  GString *args = g_string_new (NULL);
-  if (argc > 1)
-    {
-      for (int i = 1; i < argc; i++)
-        {
-          g_string_append (args, gapp->argv[i]);
-          if (i != argc - 1)
-            g_string_append (args, " ");
-        }
-      gapp->args = g_string_free (args, FALSE);
-    }
-  on_activate (gapp);
-
-  return 0;
-}
-
 GdnApplication *
 gdn_application_new (void)
 {
   GObject *       gobj;
   GdnApplication *app;
-  gulong          id;
   unsigned        flags;
 
   g_set_application_name ("Guidance");
-  flags = G_APPLICATION_NON_UNIQUE | G_APPLICATION_HANDLES_COMMAND_LINE;
+  flags = G_APPLICATION_NON_UNIQUE;
   gobj = g_object_new (gdn_application_get_type (), "application-id",
                        "com.lonelycactus.Guidance", "flags", flags, NULL);
   app = GDN_APPLICATION (gobj);
-  id = g_signal_connect_data ((gpointer) app, "activate",
-                              G_CALLBACK (on_activate), NULL, NULL, 0);
+  g_signal_connect_data ((gpointer) app, "activate", G_CALLBACK (on_activate),
+                         NULL, NULL, 0);
 
-  app->activate_handler_id = id;
-  id = g_signal_connect_data ((gpointer) app, "command-line",
-                              G_CALLBACK (on_command_line), NULL, NULL, 0);
   _default = app;
   return app;
-}
-
-int
-gdn_application_get_argc (GdnApplication *app)
-{
-  return app->argc;
-}
-
-const char *
-gdn_application_get_args (GdnApplication *app)
-{
-  return app->args;
-}
-
-const char **
-gdn_application_get_argv (GdnApplication *app)
-{
-  return (const char **) (app->argv);
 }
 
 GdnApplication *

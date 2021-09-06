@@ -34,5 +34,4 @@ void setup_thread_name (GtkSignalListItemFactory *factory,
                         GtkListItem *             list_item);
 void bind_thread_name (GtkSignalListItemFactory *factory,
                        GtkListItem *             list_item);
-
 G_END_DECLS

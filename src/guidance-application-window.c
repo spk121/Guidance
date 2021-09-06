@@ -34,12 +34,6 @@ struct _GdnApplicationWindow
 
   GtkStack *main_stack;
 
-  /* Settings tab */
-  GtkCheckButton *settings_start_repl_radio;
-  GtkCheckButton *settings_use_args_radio;
-  GtkLabel *      settings_args_label;
-  GtkSwitch *     settings_pause_switch;
-
   /* Interpreter and terminal tab */
   GdnLisp *      lisp;
   GList *        history;
@@ -206,12 +200,6 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 
   BIND (main_stack);
 
-  /* Settings Tab */
-  BIND (settings_start_repl_radio);
-  BIND (settings_use_args_radio);
-  BIND (settings_args_label);
-  BIND (settings_pause_switch);
-
   /* Terminal tab */
   BIND (terminal_text_view);
   BIND (terminal_text_buffer);
@@ -246,29 +234,6 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 
   BIND (sweep_image);
   BIND (gc_image);
-}
-
-static void
-application_window_init_settings_tab (GdnApplicationWindow *self)
-{
-  GdnApplication *app;
-  GtkEntryBuffer *buf;
-
-  app = gdn_application_get_default ();
-
-  gtk_check_button_set_group (self->settings_use_args_radio,
-                              self->settings_start_repl_radio);
-  if (gdn_application_get_argc (app) > 1)
-    {
-      /* Copy the command-line arguments into this buffer. */
-      gtk_label_set_text (self->settings_args_label,
-                          gdn_application_get_args (app));
-      gtk_check_button_set_active (self->settings_use_args_radio, TRUE);
-    }
-  else
-    {
-      gtk_check_button_set_active (self->settings_start_repl_radio, TRUE);
-    }
 }
 
 static void
@@ -349,7 +314,8 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
       G_LIST_MODEL (g_object_ref (G_OBJECT (tree_model))));
   // g_signal_connect(selection_model, "selection-changed",
   // environment_selection_changed, self);
-  gtk_column_view_set_model (self->environment_column_view, selection_model);
+  gtk_column_view_set_model (self->environment_column_view,
+                             GTK_SELECTION_MODEL (selection_model));
 
   /* This column view has a key and a value column. We need to set up
    * factories to create the cells in each column. */
@@ -357,28 +323,31 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
   environment_key_column_factory =
       GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (environment_key_column_factory, "setup",
-                    environment_key_setup, self);
+                    G_CALLBACK (environment_key_setup), self);
   g_signal_connect (environment_key_column_factory, "bind",
-                    environment_key_bind, self);
+                    G_CALLBACK (environment_key_bind), self);
   g_signal_connect (environment_key_column_factory, "unbind",
-                    environment_key_unbind, self);
+                    G_CALLBACK (environment_key_unbind), self);
   g_signal_connect (environment_key_column_factory, "teardown",
-                    environment_key_teardown, self);
-  gtk_column_view_column_set_factory (self->environment_key_column,
-                                      environment_key_column_factory);
+                    G_CALLBACK (environment_key_teardown), self);
+  gtk_column_view_column_set_factory (
+      self->environment_key_column,
+      GTK_LIST_ITEM_FACTORY (environment_key_column_factory));
 
   GtkSignalListItemFactory *environment_value_column_factory;
-  environment_value_column_factory = gtk_signal_list_item_factory_new ();
+  environment_value_column_factory =
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (environment_value_column_factory, "setup",
-                    environment_value_setup, self);
+                    G_CALLBACK (environment_value_setup), self);
   g_signal_connect (environment_value_column_factory, "bind",
-                    environment_value_bind, self);
+                    G_CALLBACK (environment_value_bind), self);
   g_signal_connect (environment_value_column_factory, "unbind",
-                    environment_value_unbind, self);
+                    G_CALLBACK (environment_value_unbind), self);
   g_signal_connect (environment_value_column_factory, "teardown",
-                    environment_value_teardown, self);
-  gtk_column_view_column_set_factory (self->environment_value_column,
-                                      environment_value_column_factory);
+                    G_CALLBACK (environment_value_teardown), self);
+  gtk_column_view_column_set_factory (
+      self->environment_value_column,
+      GTK_LIST_ITEM_FACTORY (environment_value_column_factory));
 }
 
 static void
@@ -395,79 +364,87 @@ application_window_init_backtrace_tab (GdnApplicationWindow *self)
   // g_signal_connect(selection_model, "selection-changed",
   // environment_selection_changed, self);
   gtk_column_view_set_model (self->backtrace_stack_column_view,
-                             frames_selection_model);
+                             GTK_SELECTION_MODEL (frames_selection_model));
   variables_model = gdn_binding_info_get_list_store ();
   variables_selection_model = gtk_no_selection_new (
       G_LIST_MODEL (g_object_ref (G_OBJECT (variables_model))));
   gtk_column_view_set_model (self->backtrace_variables_column_view,
-                             variables_selection_model);
+                             GTK_SELECTION_MODEL (variables_selection_model));
 
   GtkSignalListItemFactory *backtrace_stack_frame_column_factory;
-  backtrace_stack_frame_column_factory = gtk_signal_list_item_factory_new ();
+  backtrace_stack_frame_column_factory =
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (backtrace_stack_frame_column_factory, "setup",
-                    backtrace_stack_frame_setup, self);
+                    G_CALLBACK (backtrace_stack_frame_setup), self);
   g_signal_connect (backtrace_stack_frame_column_factory, "bind",
-                    backtrace_stack_frame_bind, self);
+                    G_CALLBACK (backtrace_stack_frame_bind), self);
   g_signal_connect (backtrace_stack_frame_column_factory, "unbind",
-                    backtrace_stack_frame_unbind, self);
-  gtk_column_view_column_set_factory (self->backtrace_stack_frame_column,
-                                      backtrace_stack_frame_column_factory);
+                    G_CALLBACK (backtrace_stack_frame_unbind), self);
+  gtk_column_view_column_set_factory (
+      self->backtrace_stack_frame_column,
+      GTK_LIST_ITEM_FACTORY (backtrace_stack_frame_column_factory));
 
   GtkSignalListItemFactory *backtrace_stack_location_column_factory;
-  backtrace_stack_location_column_factory = gtk_signal_list_item_factory_new ();
+  backtrace_stack_location_column_factory =
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (backtrace_stack_location_column_factory, "setup",
-                    backtrace_stack_location_setup, self);
+                    G_CALLBACK (backtrace_stack_location_setup), self);
   g_signal_connect (backtrace_stack_location_column_factory, "bind",
-                    backtrace_stack_location_bind, self);
+                    G_CALLBACK (backtrace_stack_location_bind), self);
   g_signal_connect (backtrace_stack_location_column_factory, "unbind",
-                    backtrace_stack_location_unbind, self);
-  gtk_column_view_column_set_factory (self->backtrace_stack_location_column,
-                                      backtrace_stack_location_column_factory);
+                    G_CALLBACK (backtrace_stack_location_unbind), self);
+  gtk_column_view_column_set_factory (
+      self->backtrace_stack_location_column,
+      GTK_LIST_ITEM_FACTORY (backtrace_stack_location_column_factory));
 
   GtkSignalListItemFactory *backtrace_variables_type_column_factory;
-  backtrace_variables_type_column_factory = gtk_signal_list_item_factory_new ();
+  backtrace_variables_type_column_factory =
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (backtrace_variables_type_column_factory, "setup",
-                    backtrace_variables_type_setup, self);
+                    G_CALLBACK (backtrace_variables_type_setup), self);
   g_signal_connect (backtrace_variables_type_column_factory, "bind",
-                    backtrace_variables_type_bind, self);
+                    G_CALLBACK (backtrace_variables_type_bind), self);
   g_signal_connect (backtrace_variables_type_column_factory, "unbind",
-                    backtrace_variables_type_unbind, self);
+                    G_CALLBACK (backtrace_variables_type_unbind), self);
   gtk_column_view_column_set_factory (self->backtrace_variables_type_column,
                                       backtrace_variables_type_column_factory);
 
   GtkSignalListItemFactory *backtrace_variables_name_column_factory;
-  backtrace_variables_name_column_factory = gtk_signal_list_item_factory_new ();
+  backtrace_variables_name_column_factory =
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (backtrace_variables_name_column_factory, "setup",
-                    backtrace_variables_name_setup, self);
+                    G_CALLBACK (backtrace_variables_name_setup), self);
   g_signal_connect (backtrace_variables_name_column_factory, "bind",
-                    backtrace_variables_name_bind, self);
+                    G_CALLBACK (backtrace_variables_name_bind), self);
   g_signal_connect (backtrace_variables_name_column_factory, "unbind",
-                    backtrace_variables_name_unbind, self);
+                    G_CALLBACK (backtrace_variables_name_unbind), self);
   gtk_column_view_column_set_factory (self->backtrace_variables_name_column,
                                       backtrace_variables_name_column_factory);
 
   GtkSignalListItemFactory *backtrace_variables_representation_column_factory;
   backtrace_variables_representation_column_factory =
-      gtk_signal_list_item_factory_new ();
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (backtrace_variables_representation_column_factory, "setup",
-                    backtrace_variables_representation_setup, self);
+                    G_CALLBACK (backtrace_variables_representation_setup),
+                    self);
   g_signal_connect (backtrace_variables_representation_column_factory, "bind",
-                    backtrace_variables_representation_bind, self);
+                    G_CALLBACK (backtrace_variables_representation_bind), self);
   g_signal_connect (backtrace_variables_representation_column_factory, "unbind",
-                    backtrace_variables_representation_unbind, self);
+                    G_CALLBACK (backtrace_variables_representation_unbind),
+                    self);
   gtk_column_view_column_set_factory (
       self->backtrace_variables_representation_column,
       backtrace_variables_representation_column_factory);
 
   GtkSignalListItemFactory *backtrace_variables_value_column_factory;
   backtrace_variables_value_column_factory =
-      gtk_signal_list_item_factory_new ();
+      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
   g_signal_connect (backtrace_variables_value_column_factory, "setup",
-                    backtrace_variables_value_setup, self);
+                    G_CALLBACK (backtrace_variables_value_setup), self);
   g_signal_connect (backtrace_variables_value_column_factory, "bind",
-                    backtrace_variables_value_bind, self);
+                    G_CALLBACK (backtrace_variables_value_bind), self);
   g_signal_connect (backtrace_variables_value_column_factory, "unbind",
-                    backtrace_variables_value_unbind, self);
+                    G_CALLBACK (backtrace_variables_value_unbind), self);
   gtk_column_view_column_set_factory (self->backtrace_variables_value_column,
                                       backtrace_variables_value_column_factory);
 }
@@ -487,9 +464,6 @@ gdn_application_window_init (GdnApplicationWindow *self)
       gdk_display_get_default (), provider,
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  add_simple_action (self, "launch", G_CALLBACK (activate_launch));
-
-  application_window_init_settings_tab (self);
   application_window_init_lisp_and_terminal_tab (self);
   application_window_init_threads_tab (self);
   application_window_init_modules_tab (self);
@@ -502,39 +476,13 @@ gdn_application_window_init (GdnApplicationWindow *self)
   g_signal_connect (self->lisp, "after-gc", G_CALLBACK (handle_after_gc), NULL);
   g_signal_connect (self->lisp, "after-sweep", G_CALLBACK (handle_after_sweep),
                     NULL);
+  gdn_lisp_spawn_argv_thread (self->lisp, NULL, FALSE);
   _self = self;
 }
 
 ////////////////////////////////////////////////////////////////
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
-
-/* The operator has hit the launch button. Kick off a new thread
- * in the Lisp interpreter */
-static void
-activate_launch (G_GNUC_UNUSED GSimpleAction *simple,
-                 G_GNUC_UNUSED GVariant *parameter,
-                 gpointer                user_data)
-{
-  GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
-  if (gtk_check_button_get_active (self->settings_start_repl_radio))
-    {
-      gdn_lisp_spawn_repl_thread (self->lisp);
-    }
-  else if (gtk_check_button_get_active (self->settings_use_args_radio))
-    {
-      gboolean pause = gtk_switch_get_active (self->settings_pause_switch);
-      GdnApplication *app = GDN_APPLICATION (g_application_get_default ());
-      const char **   argv = gdn_application_get_argv (app);
-      gdn_lisp_spawn_argv_thread (self->lisp, argv, pause);
-    }
-
-  // Flip over to the terminal widget
-  GtkWidget *terminal_page =
-      gtk_stack_get_child_by_name (self->main_stack, "terminal");
-  if (terminal_page != NULL)
-    gtk_stack_set_visible_child (self->main_stack, terminal_page);
-}
 
 /* The operater has hit enter on the GtkEntry in the Terminal widget.
  * Send that text to the Lisp interpreter. */
