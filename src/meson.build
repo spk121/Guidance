@@ -8,6 +8,7 @@ guidance_sources = [
   'guidance-lisp.c',
   'guidance-module-info.c',
   'guidance-source-view.c',
+  'guidance-backtrace-view.c',
   'guidance-thread-info.c',
   'guidance-trap-info.c'
 ]

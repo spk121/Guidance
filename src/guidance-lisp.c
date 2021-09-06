@@ -30,9 +30,11 @@
 #include <libguile.h>
 #include <stdlib.h>
 
+#include "guidance-backtrace-view.h"
+#include "guidance-source-view.h"
+
 static SCM   update_thread_info (void);
 static SCM   update_trap_info (SCM trap_cur);
-static SCM   update_frame_info (SCM frame);
 static SCM   update_environment_info (SCM env_vec);
 static void *after_gc_handler (void *hook_data, void *fn_data, void *data);
 static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
@@ -56,7 +58,7 @@ struct _GdnLisp
   SCM  prompt_port_var; /* aka `%gdn-prompt-port`.  A Guile variable that holds
                            the REPL promp port. */
   int  output_fd;       /* Sends data to Guile input port */
-  SCM                    input_port;    /* A substitute `current-input-port` */
+  SCM  input_port;      /* A substitute `current-input-port` */
   SCM input_port_var; /* A Guile variable that hold the input port */
 
   int    response; /* Actually an enum of type `GdnReplCommand` */
@@ -64,7 +66,6 @@ struct _GdnLisp
   GCond  response_condition; /* Used in signalling operator responses */
   GMutex response_mutex;     /* Used in signalling operator responses */
 
-  GListStore *frames;         /* Holds the last-computed backtrace as a list of `GdnFrameInfo` */
   GListStore *modules;        /* Holds the current list of modules as a list of `GdnModuleInfo` */
   GListStore *traps;          /* Holds the current list of traps as a list of `GdnTrapInfo` */
   GtkTreeListModel *environment; /* Holds the last-computed environment info as
@@ -140,7 +141,6 @@ gdn_lisp_class_init (GdnLispClass *klass)
 #pragma GCC diagnostic ignored "-Wpedantic"
   scm_c_define_gsubr ("%gdn-update-thread-info", 0, 0, 0, update_thread_info);
   scm_c_define_gsubr ("%gdn-update-trap-info", 1, 0, 0, update_trap_info);
-  scm_c_define_gsubr ("%gdn-update-frame-info", 1, 0, 0, update_frame_info);
   scm_c_define_gsubr ("%gdn-update-environment-info", 1, 0, 0,
                       update_environment_info);
   scm_c_define_gsubr ("%gdn-exit-handler", 0, 0, 0, exit_handler);
@@ -168,6 +168,8 @@ gdn_lisp_class_init (GdnLispClass *klass)
   run_trap_enable_func = scm_variable_ref (scm_c_lookup ("gdn-run-trap-enable"));
   run_trap_disable_func = scm_variable_ref (scm_c_lookup ("gdn-run-trap-disable"));
 #endif
+  gdn_source_view_guile_init ();
+  gdn_backtrace_view_guile_init ();
 }
 
 static GdnLisp *_self = NULL;
@@ -215,7 +217,6 @@ gdn_lisp_init (GdnLisp *self)
   g_mutex_init (&(self->response_mutex));
 
   /* The list stores all require special member types. */
-  self->frames = g_list_store_new (GDN_FRAME_INFO_TYPE);
   self->modules = g_list_store_new (GDN_MODULE_INFO_TYPE);
   self->traps = g_list_store_new (GDN_TRAP_INFO_TYPE);
   self->environment = gdn_environment_info_get_tree_model ();
@@ -492,29 +493,6 @@ update_trap_info (SCM trap_cur)
 {
   g_assert (scm_is_integer (trap_cur));
   gdn_trap_info_store_update (_self->traps, scm_to_int (trap_cur));
-  return SCM_UNSPECIFIED;
-}
-
-static SCM
-update_frame_info (SCM frames)
-{
-  g_assert (scm_is_vector (frames));
-#ifndef G_DISABLE_ASSERT
-  for (size_t i = 0; i < scm_c_vector_length (frames); i++)
-    {
-      SCM entry = scm_c_vector_ref (frames, i);
-      g_assert (scm_is_vector (entry));
-      g_assert_cmpint (scm_c_vector_length (entry), ==, 6);
-      g_assert (scm_is_string (scm_c_vector_ref (entry, 0)));
-      g_assert (scm_is_string (scm_c_vector_ref (entry, 1)));
-      g_assert (scm_is_integer (scm_c_vector_ref (entry, 2)));
-      g_assert (scm_is_integer (scm_c_vector_ref (entry, 3)));
-      g_assert (scm_is_integer (scm_c_vector_ref (entry, 4)));
-      g_assert (scm_is_vector (scm_c_vector_ref (entry, 5)));
-    }
-#endif
-
-  gdn_frame_info_store_update (_self->frames, frames);
   return SCM_UNSPECIFIED;
 }
 
@@ -851,12 +829,6 @@ GListStore *
 gdn_lisp_get_environment (GdnLisp *self)
 {
   return G_LIST_STORE (self->environment);
-}
-
-GListStore *
-gdn_lisp_get_backtrace (GdnLisp *self)
-{
-  return self->frames;
 }
 
 gboolean

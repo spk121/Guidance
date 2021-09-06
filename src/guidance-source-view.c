@@ -143,3 +143,26 @@ gdn_source_view_show_location (const char *rel_path, int line, int col)
 
   return TRUE;
 }
+
+static SCM
+scm_show_location (SCM sfname, SCM sline, SCM scol)
+{
+  SCM_ASSERT_TYPE (scm_is_string (sfname), sfname, SCM_ARG1,
+                   "gdn-show-location", "string");
+  SCM_ASSERT_TYPE (scm_is_exact_integer (sline), sline, SCM_ARG2,
+                   "gdn-show-location", "integer");
+  SCM_ASSERT_TYPE (scm_is_exact_integer (scol), scol, SCM_ARG3,
+                   "gdn-show-location", "integer");
+  char *   fname = scm_to_utf8_string (sfname);
+  gboolean ret;
+  ret = gdn_source_view_show_location (fname, scm_to_int (sline),
+                                       scm_to_int (scol));
+  free (fname);
+  return scm_from_bool (ret);
+}
+
+void
+gdn_source_view_guile_init (void)
+{
+  scm_c_define_gsubr ("gdn-show-location", 3, 0, 0, scm_show_location);
+}

@@ -95,14 +95,6 @@ GListStore *gdn_lisp_get_threads (GdnLisp *lisp);
 void gdn_lisp_update_threads (GdnLisp *lisp);
 
 /*
- * Returns the store that holds the frames from last stored backtrace.
- * @param lisp The object pointer.
- * @return Some sort of GListStore or GtkTreeListStore? of
- *         a GdnFrameInfo
- */
-GListStore *gdn_lisp_get_frames (GdnLisp *lisp);
-
-/*
  * Returns the store that hods the currently loaded modules.
  * @param lisp The object pointer.
  * @return A GListStore of a GdnModuleInfo.

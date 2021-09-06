@@ -1,4 +1,4 @@
-/* guidance-source-view.h
+/* guidance-backtrace-view.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -22,9 +22,15 @@
 #include <libguile.h>
 
 G_BEGIN_DECLS
-void gdn_source_view_init (GtkTextView *view, GtkLabel *label);
-void gdn_source_view_set_paths (char **paths);
-gboolean
-gdn_source_view_show_location (const char *rel_path, int line, int col);
-void gdn_source_view_guile_init (void);
+void gdn_backtrace_view_init (GtkColumnView *      stack_view,
+                              GtkColumnViewColumn *stack_frame_col,
+                              GtkColumnViewColumn *location_col,
+                              GtkColumnView *      variable_view,
+                              GtkColumnViewColumn *type_col,
+                              GtkColumnViewColumn *name_col,
+                              GtkColumnViewColumn *representation_col,
+                              GtkColumnViewColumn *value_col,
+                              GtkColumnViewColumn *info_col);
+
+void gdn_backtrace_view_guile_init (void);
 G_END_DECLS

@@ -384,11 +384,10 @@
     (run-hook before-read-hook)
     (%gdn-update-thread-info)
     (%gdn-update-environment-info (gdn-get-environment))
-    (%gdn-update-frame-info
-     (gdn-get-backtrace
+    (gdn-update-backtrace
       (vector-ref (__stack->vector (make-stack #t
                                                8 ; layers to get out of repl-reader
-                                               )) 0)))
+                                               )) 0))
     (let ((input (read-line (current-input-port))))
       (let ((result (false-if-exception (eval-string input))))
         (write result)
@@ -471,11 +470,10 @@ interpreter."
     (%gdn-update-thread-info)
     (%gdn-update-environment-info (gdn-get-environment))
     ;;  (%gdn-update-trap-info trap-idx)
-    (%gdn-update-frame-info
-     (gdn-get-backtrace
+    (gdn-update-backtrace
       (vector-ref (__stack->vector (make-stack #t
                                                8 ; layers to get out of repl-reader
-                                               )) 0)))
+                                               )) 0))
     ((or reader read) (current-input-port))))
 
 (set! repl-reader gdn-repl-reader)
@@ -509,7 +507,7 @@ trap-name indicate the current trap."
   (%gdn-update-thread-info)
   (%gdn-update-environment-info (gdn-get-environment))
   (%gdn-update-trap-info trap-idx)
-  (%gdn-update-frame-info (gdn-get-backtrace frame))
+  (gdn-update-backtrace frame)
   (display "trap>" %gdn-prompt-port)
   
   ;; This is a blocking operation, awaiting a response from the
@@ -548,7 +546,7 @@ trap-name indicate the current trap."
   (%gdn-update-thread-info)
   (%gdn-update-environment-info (gdn-get-environment))
   (%gdn-update-trap-info #f)
-  (%gdn-update-frame-info (gdn-get-backtrace frame))
+  (gdn-update-backtrace frame)
   (display "error>" %gdn-prompt-port)
   
   ;; This is a blocking operation, awaiting a response from the
