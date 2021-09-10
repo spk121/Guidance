@@ -36,6 +36,7 @@ static GtkColumnViewColumn *_info_col = NULL;
 static GdnFrameInfo *       _frames = NULL;
 static GdnBindingInfo *     _bindings = NULL;
 static SCM                  _get_backtrace_func = SCM_BOOL_F;
+static GtkWidget *          _main_stack = NULL;
 
 static void
 set_column_view_model (GtkColumnView *view, GListModel *model)
@@ -83,11 +84,9 @@ location_button_activate (GtkButton *self, gpointer user_data)
   const char *filename = gdn_frame_info_get_filename (info);
   int         line = gdn_frame_info_get_line (info);
   int         col = gdn_frame_info_get_column (info);
-#if 0  
-  GtkWidget * wigz = gtk_stack_get_child_by_name (_self->main_stack, "source");
+  GtkWidget * wigz = gtk_stack_get_child_by_name (_main_stack, "source");
   if (wigz != NULL)
-    gtk_stack_set_visible_child (_self->main_stack, wigz);
-#endif
+    gtk_stack_set_visible_child (_main_stack, wigz);
   gdn_source_view_show_location (filename, line, col);
 }
 
@@ -417,7 +416,8 @@ gdn_backtrace_view_init (GtkColumnView *      stack_view,
                          GtkColumnViewColumn *name_col,
                          GtkColumnViewColumn *representation_col,
                          GtkColumnViewColumn *value_col,
-                         GtkColumnViewColumn *info_col)
+                         GtkColumnViewColumn *info_col,
+                         GtkWidget *          main_stack)
 {
   _stack_view = g_object_ref (stack_view);
   _frame_col = g_object_ref (frame_col);
@@ -428,6 +428,7 @@ gdn_backtrace_view_init (GtkColumnView *      stack_view,
   _representation_col = g_object_ref (representation_col);
   _value_col = g_object_ref (_value_col);
   _info_col = g_object_ref (_info_col);
+  _main_stack = main_stack;
 
   _frames = g_list_store_new (GDN_FRAME_INFO_TYPE);
   _bindings = gdn_binding_info_get_list_store ();

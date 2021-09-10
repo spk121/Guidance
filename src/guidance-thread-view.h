@@ -1,4 +1,4 @@
-/* guidance-backtrace-view.h
+/* guidance-thread-view.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -22,16 +22,9 @@
 #include <libguile.h>
 
 G_BEGIN_DECLS
-void gdn_backtrace_view_init (GtkColumnView *      stack_view,
-                              GtkColumnViewColumn *stack_frame_col,
-                              GtkColumnViewColumn *location_col,
-                              GtkColumnView *      variable_view,
-                              GtkColumnViewColumn *type_col,
-                              GtkColumnViewColumn *name_col,
-                              GtkColumnViewColumn *representation_col,
-                              GtkColumnViewColumn *value_col,
-                              GtkColumnViewColumn *info_col,
-                              GtkWidget *          main_stack);
+#define GDN_TYPE_THREAD_VIEW (gdn_thread_view_get_type ())
 
-void gdn_backtrace_view_guile_init (void);
+G_DECLARE_FINAL_TYPE (GdnThreadView, gdn_thread_view, GDN, THREAD_VIEW, GtkBox)
+
+void gdn_thread_view_guile_init (void);
 G_END_DECLS

@@ -170,6 +170,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
 #endif
   gdn_source_view_guile_init ();
   gdn_backtrace_view_guile_init ();
+  gdn_thread_view_guile_init ();
 }
 
 static GdnLisp *_self = NULL;

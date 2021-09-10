@@ -160,3 +160,9 @@ gdn_thread_info_get_name (GdnThreadInfo *info)
 {
   return (const char *) (info->name);
 }
+
+gboolean
+gdn_thread_info_get_active (GdnThreadInfo *info)
+{
+  return info->active;
+}

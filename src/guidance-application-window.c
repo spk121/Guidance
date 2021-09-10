@@ -25,7 +25,7 @@
 #include "guidance-lisp.h"
 #include "guidance-module-info.h"
 #include "guidance-source-view.h"
-#include "guidance-thread-info.h"
+#include "guidance-thread-view.h"
 #include <glib-unix.h>
 
 struct _GdnApplicationWindow
@@ -45,12 +45,9 @@ struct _GdnApplicationWindow
 
   /* Threads tab */
   GtkScrolledWindow *thread_window;
-  GtkColumnView *      thread_column_view;
-  GtkColumnViewColumn *thread_name_column;
-  GtkColumnViewColumn *thread_emoji_column;
-  GtkColumnViewColumn *thread_active_column;
+  GdnThreadView *    thread_view;
 
-  /* Threads tab */
+  /* Module tab */
   GtkScrolledWindow *module_window;
 
   /* Environment tab */
@@ -109,12 +106,6 @@ static void add_simple_action (GdnApplicationWindow *self,
                                const char *          name,
                                GCallback             callback);
 static char *xread (int fd);
-static void  thread_setup (GtkListItemFactory *factory, GtkListItem *list_item);
-static void  thread_teardown (GtkListItemFactory *factory,
-                              GtkListItem *       list_item);
-static void  thread_bind (GtkListItemFactory *factory, GtkListItem *list_item);
-static void
-thread_activate (GtkListView *list, guint position, gpointer unused);
 
 static void module_setup (GtkListItemFactory *factory, GtkListItem *list_item);
 static void module_teardown (GtkListItemFactory *factory,
@@ -217,21 +208,11 @@ application_window_init_lisp_and_terminal_tab (GdnApplicationWindow *self)
 static void
 application_window_init_threads_tab (GdnApplicationWindow *self)
 {
-  GListModel *              model;
-  GtkSignalListItemFactory *factory;
-  GtkListView *             listview;
+  GdnThreadView *thread_view;
 
-  model = G_LIST_MODEL (gdn_lisp_get_threads (self->lisp));
-  factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (factory, "setup", G_CALLBACK (thread_setup), NULL);
-  g_signal_connect (factory, "teardown", G_CALLBACK (thread_teardown), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (thread_bind), NULL);
-  listview = GTK_LIST_VIEW (
-      gtk_list_view_new (GTK_SELECTION_MODEL (gtk_single_selection_new (model)),
-                         GTK_LIST_ITEM_FACTORY (factory)));
-  g_signal_connect (listview, "activate", G_CALLBACK (thread_activate), NULL);
+  thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
-                                 GTK_WIDGET (listview));
+                                 GTK_WIDGET (thread_view));
 }
 
 static void
@@ -312,15 +293,15 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
 static void
 application_window_init_backtrace_tab (GdnApplicationWindow *self)
 {
-  gdn_backtrace_view_init (self->backtrace_stack_column_view,
-                           self->backtrace_stack_frame_column,
-                           self->backtrace_stack_location_column,
-                           self->backtrace_variables_column_view,
-                           self->backtrace_variables_type_column,
-                           self->backtrace_variables_name_column,
-                           self->backtrace_variables_representation_column,
-                           self->backtrace_variables_value_column,
-                           self->backtrace_variables_info_column);
+  gdn_backtrace_view_init (
+      self->backtrace_stack_column_view, self->backtrace_stack_frame_column,
+      self->backtrace_stack_location_column,
+      self->backtrace_variables_column_view,
+      self->backtrace_variables_type_column,
+      self->backtrace_variables_name_column,
+      self->backtrace_variables_representation_column,
+      self->backtrace_variables_value_column,
+      self->backtrace_variables_info_column, self->main_stack);
 }
 
 static void
@@ -546,46 +527,6 @@ poll_terminal_prompt2 (gint fd, GIOCondition condition, gpointer user_data)
 }
 
 static void
-thread_setup (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  GtkLabel *label;
-
-  label = GTK_LABEL (gtk_label_new (NULL));
-  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
-}
-
-static void
-thread_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  GtkLabel *label;
-
-  label = gtk_list_item_get_child (list_item);
-  if (label)
-    g_object_unref (label);
-}
-
-static void
-thread_bind (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  GtkLabel *     label;
-  GdnThreadInfo *info;
-
-  label = gtk_list_item_get_child (list_item);
-  GObject *obj = gtk_list_item_get_item (list_item);
-  if (list_item)
-    {
-      info = GDN_THREAD_INFO (obj);
-      gtk_label_set_text (label, gdn_thread_info_get_name (info));
-    }
-}
-
-static void
-thread_activate (GtkListView *list, guint position, gpointer unused)
-{
-  // gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
-}
-
-static void
 module_setup (GtkListItemFactory *factory, GtkListItem *list_item)
 {
   GtkLabel *label;
@@ -615,7 +556,7 @@ module_bind (GtkListItemFactory *factory, GtkListItem *list_item)
   if (list_item)
     {
       info = GDN_MODULE_INFO (obj);
-      gtk_label_set_text (label, gdn_thread_info_get_name (info));
+      gtk_label_set_text (label, gdn_module_info_get_name (info));
     }
 }
 
