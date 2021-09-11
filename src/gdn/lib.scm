@@ -18,6 +18,8 @@
  ((system vm frame) #:select (frame-bindings binding-representation binding-index binding-ref binding-name) #:prefix __)
  ((system vm program) #:select (source:file source:column source:line-for-user) #:prefix __)
  ((system vm trap-state) #:select (add-trap-at-procedure-call! disable-trap! enable-trap! install-trap-handler!) #:prefix __)
+ (system repl common)
+ (system repl debug)
  (system repl error-handling)
  ((ice-9 command-line) #:select (compile-shell-switches) #:prefix __)
  ((ice-9 top-repl) #:select (top-repl) #:prefix __)
@@ -421,6 +423,9 @@ interpreter."
 
 (set! %load-hook gdn-load-hook)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Module handlers
+
 (define (gdn-module-defined-hook directory)
   "Inform Guidance every time a module is loaded"
   (let* ((name (module-name directory))
@@ -440,10 +445,18 @@ interpreter."
             'package-data)
            (else
             'other))))
-    (%gdn-module-defined-handler
-     (vector name-str filename abs-filename category))))
+    (gdn-add-module category name-str abs-filename)))
 
 (add-hook! module-defined-hook gdn-module-defined-hook)
+
+(define (gdn-module-function-list module-name-str)
+  "Given a module name as a string such as 'srfi srfi-1', this
+returns a vector of strings of the names of the functions
+in the module."
+  (let ((module (resolve
+  #f)
+
+
 
 (define (gdn-exit-hook)
   "Inform Guidance that this repl is about to quit"
@@ -459,24 +472,56 @@ interpreter."
 ;; iteration, it runs the help functions that update the information
 ;; GtkStack pages.
 
-
-
 (define gdn-repl-reader
   (lambda* (prompt #:optional (reader (fluid-ref current-reader)))
     (unless (char-ready?)
       (display (if (string? prompt) prompt (prompt)) %gdn-prompt-port))
     (force-output)
     (run-hook before-read-hook)
-    (%gdn-update-thread-info)
-    (%gdn-update-environment-info (gdn-get-environment))
-    ;;  (%gdn-update-trap-info trap-idx)
-    (gdn-update-backtrace
-      (vector-ref (__stack->vector (make-stack #t
-                                               8 ; layers to get out of repl-reader
-                                               )) 0))
+    (format #t "in gdn-repl-reader~%")
     ((or reader read) (current-input-port))))
 
 (set! repl-reader gdn-repl-reader)
+
+;; We has to use our own prompting-meta-read because we want to
+;; update the tabs for each iteration with debug information
+
+(define (gdn-prompting-meta-read repl)
+  (catch #t
+    (lambda ()
+      (error "in custom prompting-meta-read~%")
+      (%gdn-update-thread-info)
+      (%gdn-update-environment-info (gdn-get-environment))
+      (if (and (repl-debug repl)
+               (debug-frames (repl-debug repl)))
+          (begin
+            (format #t "updating backtrace~%")
+            (gdn-update-backtrace
+             (debug-frames (repl-debug repl))))
+          ;; else
+          (begin
+            (format #t "not updating backtrace ~A~%" (repl-debug repl))
+            (gdn-update-backtrace #f)))
+      (repl-reader (lambda () (repl-prompt repl))
+                   ((@@ (system repl repl) meta-reader) (repl-language repl) (current-module))))
+    (lambda (key . args)
+      (case key
+        ((quit)
+         (apply throw key args))
+        (else
+         (format (current-output-port) "While reading expression:\n")
+         (print-exception (current-output-port) #f key args)
+         ;; (flush-all-input)
+         *unspecified*)))))
+
+(module-set! (resolve-module '(system repl repl))
+             'prompting-meta-read
+             gdn-prompting-meta-read)
+
+(write (module-ref (resolve-module '(system repl repl)) 'prompting-meta-read)) (newline)
+
+(define (gdn-start-repl)
+  ((@@ (system repl repl) start-repl*) (current-language) #f gdn-prompting-meta-read))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Trap Handler
@@ -567,4 +612,19 @@ trap-name indicate the current trap."
         (write (false-if-exception (eval-string data)) (current-output-port))
         (newline (current-output-port))
         (loop (%gdn-get-error-response)))))))
+
+;;////////////////////////////////////////////////////////////////
+
+;; This construction adds a trap from the obarray
+
+(lambda ()
+
+  ;; Makes a list from the module
+  (let ((sym-var-list (hash-map->list
+                       (lambda (sym var)
+                         (cons sym var))
+                       (module-obarray (current-module)))))
+    (let ((entry (car sym-var-list)))
+      ;; Adds a trap for an entry
+      (add-trap-at-procedure-call (variable-ref (cdr entry))))))
 
