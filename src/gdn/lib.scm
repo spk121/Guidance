@@ -17,7 +17,7 @@
  ((system repl debug) #:select (stack->vector) #:prefix __)
  ((system vm frame) #:select (frame-bindings binding-representation binding-index binding-ref binding-name) #:prefix __)
  ((system vm program) #:select (source:file source:column source:line-for-user) #:prefix __)
- ((system vm trap-state) #:select (add-trap-at-procedure-call! disable-trap! enable-trap! install-trap-handler!) #:prefix __)
+ (system vm trap-state)
  (system repl common)
  (system repl debug)
  (system repl error-handling)
@@ -247,17 +247,17 @@
                                       ((< 0 (tm:isdst now-local)) "yes")
                                       ((> 0 (tm:isdst now-local)) "unknown")))
      (vector "CPU Clock Time" (gdn-time-string (/ (tms:clock now-cpu)
-                                              (exact->inexact internal-time-units-per-second))))
+                                                  (exact->inexact internal-time-units-per-second))))
      (vector "CPU Process Time" (gdn-time-string (/ (tms:utime now-cpu)
-                                                (exact->inexact internal-time-units-per-second))))
+                                                    (exact->inexact internal-time-units-per-second))))
      (vector "CPU System Time" (gdn-time-string (/ (tms:stime now-cpu)
-                                               (exact->inexact internal-time-units-per-second))))
+                                                   (exact->inexact internal-time-units-per-second))))
      (vector "CPU CU Time" (gdn-time-string (tms:cutime now-cpu)))
      (vector "CPU CS Time" (gdn-time-string (tms:cstime now-cpu)))
      (vector "Guile Time Units Per Sec" (__number->locale-string internal-time-units-per-second))
      (vector "Guile Real Time" (gdn-time-string (/ (get-internal-real-time) (exact->inexact internal-time-units-per-second))))
      (vector "Guile Run Time" (gdn-time-string (/ (get-internal-run-time)
-                                              (exact->inexact internal-time-units-per-second)))))))
+                                                  (exact->inexact internal-time-units-per-second)))))))
 
 (define (gdn-get-user-information-entries)
   (let ((uid (getuid))
@@ -337,7 +337,7 @@
 ;; Update the backtrace and environment info.
 ;; Enter a debug mode where
 ;; -  the limited debug repl works.
-;  -  allow traps to be created or destroyed
+                                        ;  -  allow traps to be created or destroyed
 ;; -  allow "stop", "restart"
 ;; If "stop" or "restart", the stack is unwound.
 
@@ -387,9 +387,9 @@
     (%gdn-update-thread-info)
     (%gdn-update-environment-info (gdn-get-environment))
     (gdn-update-backtrace
-      (vector-ref (__stack->vector (make-stack #t
-                                               8 ; layers to get out of repl-reader
-                                               )) 0))
+     (vector-ref (__stack->vector (make-stack #t
+                                              8 ; layers to get out of repl-reader
+                                              )) 0))
     (let ((input (read-line (current-input-port))))
       (let ((result (false-if-exception (eval-string input))))
         (write result)
@@ -404,13 +404,13 @@ interpreter."
   (newline)
   (call-with-error-handling (__compile-shell-switches argv)))
 
-(define gdn-run-trap (__add-trap-at-procedure-call! gdn-run-argv))
+(define gdn-run-trap (add-trap-at-procedure-call! gdn-run-argv))
 
 (define (gdn-run-trap-enable)
-  (false-if-exception (__enable-trap! gdn-run-trap)))
+  (false-if-exception (enable-trap! gdn-run-trap)))
 
 (define (gdn-run-trap-disable)
-  (false-if-exception (__disable-trap! gdn-run-trap)))
+  (false-if-exception (disable-trap! gdn-run-trap)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HOOKS
@@ -447,16 +447,7 @@ interpreter."
             'other))))
     (gdn-add-module category name-str abs-filename)))
 
-(add-hook! module-defined-hook gdn-module-defined-hook)
-
-(define (gdn-module-function-list module-name-str)
-  "Given a module name as a string such as 'srfi srfi-1', this
-returns a vector of strings of the names of the functions
-in the module."
-  (let ((module (resolve
-  #f)
-
-
+;;  (add-hook! module-defined-hook gdn-add-module)
 
 (define (gdn-exit-hook)
   "Inform Guidance that this repl is about to quit"

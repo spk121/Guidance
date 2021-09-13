@@ -18,6 +18,18 @@
 
 #include "guidance-module-info.h"
 
+////////////////////////////////////////////////////////////////
+// TYPES
+////////////////////////////////////////////////////////////////
+
+typedef enum
+{
+  LIBRARY_DIR,
+  SITE_DIR,
+  PACKAGE_DATA_DIR,
+  OTHER_DIR,
+} dir_type_t;
+
 GType
 gdn_module_info_category_get_type (void)
 {
@@ -49,9 +61,9 @@ struct _GdnModuleInfo
 {
   GObject parent;
 
-  guint64 pack;
+  guint64 pack; /* A packed SCM of a module or procedure */
   char *  name;
-  GSList *list;
+  GSList *list; /* For top-levels, a list of modules */
 };
 
 G_DEFINE_TYPE (GdnModuleInfo, gdn_module_info, G_TYPE_OBJECT)
@@ -64,50 +76,47 @@ enum
   PROP_LIST,
   N_PROPS
 };
+
 static GParamSpec *properties[N_PROPS] = {
   NULL,
 };
 
-static void
-gdn_module_info_get_property (GObject *    object,
-                              unsigned int property_id,
-                              GValue *     value,
-                              GParamSpec * pspec)
-{
-  GdnModuleInfo *self = GDN_MODULE_INFO (object);
+////////////////////////////////////////////////////////////////
+// DECLARATIONS
+////////////////////////////////////////////////////////////////
+static void gdn_module_info_finalize (GObject *object);
+static void gdn_module_info_get_property (GObject *    object,
+                                          unsigned int property_id,
+                                          GValue *     value,
+                                          GParamSpec * pspec);
 
-  switch (property_id)
-    {
-    case PROP_PACK:
-      g_value_set_uint64 (value, self->value);
-      break;
-    case PROP_NAME:
-      g_value_set_string (value, self->name);
-      break;
-    case PROP_LIST:
-      g_value_set_pointer (value, self->list);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-    }
-}
+static int         compare_info_by_name (GdnModuleInfo *a, GdnModuleInfo *b);
+static GListStore *convert_slist_to_list_store (GSList *list);
+static GListStore *create_module_bindings_list_store (SCM module);
+static void        find_top_level_info (const char *name, guint *pos);
+static GListModel *get_child_model (GObject *              item,
+                                    G_GNUC_UNUSED gpointer user_data);
+static char *      get_module_abs_path (SCM module, size_t *len);
+static dir_type_t  get_path_category (const char *path);
 
-static void
-gdn_module_info_finalize (GObject *object)
-{
-  GdnModuleInfo *self = GDN_MODULE_INFO (object);
-  free (self->name);
-  self->name = NULL;
-  self->pack = NULL;
-  if (self->list)
-    {
-      g_slist_free_full (self->list, gdn_module_info_finalize);
-      self->list = NULL;
-    }
+static int scm_is_module (SCM x);
+static SCM scm_module_filename (SCM module);
+static SCM scm_module_name (SCM module);
+static SCM scm_module_obarray (SCM module);
 
-  /* Don't forget to chain up. */
-  G_OBJECT_CLASS (gdn_module_info_parent_class)->finalize (object);
-}
+GListStore *      _store = NULL;
+GtkTreeListModel *_model = NULL;
+
+SCM make_info_from_binding_proc;
+SCM module_p_var;
+SCM module_name_var;
+SCM module_filename_var;
+SCM module_obarray_var;
+SCM module_defined_hook_var;
+
+////////////////////////////////////////////////////////////////
+// INITIALIZATION
+////////////////////////////////////////////////////////////////
 
 static void
 gdn_module_info_class_init (GdnModuleInfoClass *klass)
@@ -131,10 +140,350 @@ gdn_module_info_init (G_GNUC_UNUSED GdnModuleInfo *self)
 {
 }
 
+static void
+gdn_module_info_finalize (GObject *object)
+{
+  GdnModuleInfo *self = GDN_MODULE_INFO (object);
+  free (self->name);
+  self->name = NULL;
+  self->pack = 0;
+  if (self->list)
+    {
+      g_slist_free_full (self->list, (GDestroyNotify) gdn_module_info_finalize);
+      self->list = NULL;
+    }
+
+  /* Don't forget to chain up. */
+  G_OBJECT_CLASS (gdn_module_info_parent_class)->finalize (object);
+}
+
+static void
+gdn_module_info_get_property (GObject *    object,
+                              unsigned int property_id,
+                              GValue *     value,
+                              GParamSpec * pspec)
+{
+  GdnModuleInfo *self = GDN_MODULE_INFO (object);
+
+  switch (property_id)
+    {
+    case PROP_PACK:
+      g_value_set_uint64 (value, self->pack);
+      break;
+    case PROP_NAME:
+      g_value_set_string (value, self->name);
+      break;
+    case PROP_LIST:
+      g_value_set_pointer (value, self->list);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+    }
+}
+
 ////////////////////////////////////////////////////////////////
-//
+// SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
 
+GtkTreeListModel *
+gdn_module_info_get_tree_model (void)
+{
+  if (_store == NULL)
+    _store = g_list_store_new (GDN_MODULE_INFO_TYPE);
+  if (_model == NULL)
+    _model = gtk_tree_list_model_new (
+        G_LIST_MODEL (_store), FALSE, FALSE,
+        (GtkTreeListModelCreateModelFunc) get_child_model, NULL, NULL);
+  return _model;
+}
+
+gboolean
+gdn_module_info_is_top_level (GdnModuleInfo *info)
+{
+  if (info->pack == 0)
+    return TRUE;
+  return FALSE;
+}
+
+gboolean
+gdn_module_info_is_module (GdnModuleInfo *info)
+{
+  if (info->pack && scm_is_module (SCM_PACK (info->pack)))
+    return TRUE;
+  return FALSE;
+}
+
+gboolean
+gdn_module_info_is_procedure (GdnModuleInfo *info)
+{
+  if (info->pack && !scm_is_module (SCM_PACK (info->pack)))
+    return TRUE;
+  return FALSE;
+}
+
+const char *
+gdn_module_info_get_name (GdnModuleInfo *info)
+{
+  return (info->name);
+}
+
+////////////////////////////////////////////////////////////////
+// HELPER FUNCTIONS
+////////////////////////////////////////////////////////////////
+
+static GListStore *
+convert_slist_to_list_store (GSList *list)
+{
+  GSList *    cur;
+  GListStore *entries;
+
+  if (list == NULL)
+    return NULL;
+  entries = g_list_store_new (GDN_MODULE_INFO_TYPE);
+
+  cur = list;
+  while (cur != NULL)
+    {
+      g_list_store_append (entries, cur->data);
+      cur = cur->next;
+    }
+  return entries;
+}
+
+// A GtkTreeListModelCreateModelFunc
+// Creates the children model of an GdnModuleInfo
+static GListModel *
+get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
+{
+  GdnModuleInfo *info;
+
+  info = GDN_MODULE_INFO (item);
+
+  if (info->list)
+    {
+      /* Only top-level categories should have lists */
+      g_assert (info->pack == 0);
+
+      return G_LIST_MODEL (convert_slist_to_list_store (info->list));
+    }
+
+  if (info->pack && scm_is_module (SCM_PACK (info->pack)))
+    return G_LIST_MODEL (
+        create_module_bindings_list_store (SCM_PACK (info->pack)));
+
+  return NULL;
+}
+
+/* FIXME: hacky */
+GListStore *_inner_store;
+
+static SCM
+make_info_from_binding (SCM key, SCM value)
+{
+  GdnModuleInfo *info;
+  info = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
+  info->pack = SCM_UNPACK (value);
+  info->name = scm_to_utf8_string (scm_symbol_to_string (key));
+  info->list = NULL;
+  g_list_store_append (_inner_store, info);
+
+  return SCM_UNSPECIFIED;
+}
+
+static GListStore *
+create_module_bindings_list_store (SCM module)
+{
+  SCM hash;
+  _inner_store = g_list_store_new (GDN_MODULE_INFO_TYPE);
+  hash = scm_module_obarray (module);
+  scm_hash_for_each (make_info_from_binding_proc, hash);
+  return _inner_store;
+}
+
+static gboolean
+match_info_name (GdnModuleInfo *a, GdnModuleInfo *b)
+{
+  if (strcmp (a->name, b->name) == 0)
+    return TRUE;
+  return FALSE;
+}
+
+static int
+compare_info_by_name (GdnModuleInfo *a, GdnModuleInfo *b)
+{
+  return strcmp (a->name, b->name);
+}
+
+static void
+find_top_level_info (const char *name, guint *pos)
+{
+  gboolean       match;
+  GdnModuleInfo *info = NULL;
+
+  g_assert (pos != NULL);
+
+  info = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
+  info->name = g_strdup (name);
+  info->pack = 0;
+  info->list = NULL;
+
+  match = g_list_store_find_with_equal_func (_store, (void *) info,
+                                             (GEqualFunc) match_info_name, pos);
+  if (match)
+    return;
+
+  g_list_store_append (_store, info);
+
+  find_top_level_info (name, pos);
+}
+
+/* Given a module, return a string containing the absolute filepath of
+ * the module, or NULL.  LEN, if provided will contain the octet
+ * length of the absolute path string. */
+static char *
+get_module_abs_path (SCM module, size_t *len)
+{
+  SCM rel_path, abs_path;
+
+  rel_path = scm_module_filename (module);
+  if (scm_is_false (rel_path))
+    return NULL;
+  abs_path = scm_sys_search_load_path (rel_path);
+  if (scm_is_false (abs_path))
+    return NULL;
+
+  if (len)
+    *len = scm_c_string_length (abs_path);
+  return scm_to_utf8_string (abs_path);
+}
+
+static dir_type_t
+get_path_category (const char *path)
+{
+  char * prefix;
+  size_t prefix_len;
+
+  // Categorize this module
+  for (int i = 0; i < 3; i++)
+    {
+      int cmp;
+
+      if (i == LIBRARY_DIR)
+        prefix = scm_to_utf8_string (scm_sys_library_dir ());
+      else if (i == SITE_DIR)
+        prefix = scm_to_utf8_string (scm_sys_site_dir ());
+      else if (i == PACKAGE_DATA_DIR)
+        prefix = scm_to_utf8_string (scm_sys_package_data_dir ());
+      else
+        abort ();
+      prefix_len = strlen (prefix);
+
+      cmp = strncmp (prefix, path, prefix_len);
+      free (prefix);
+      if (cmp == 0)
+        return i;
+    }
+  return OTHER_DIR;
+}
+
+////////////////////////////////////////////////////////////////
+// GUILE API
+////////////////////////////////////////////////////////////////
+
+static SCM
+scm_add_module (SCM module)
+{
+  SCM            s_name_symbol_list, s_name;
+  char *         name, *abs_path;
+  size_t         abs_path_len;
+  GdnModuleInfo *new_entry, *category_info;
+  dir_type_t     dir_type;
+
+  const char *dir_names[4] = { "library", "site", "package data",
+                               "application" };
+
+  SCM_ASSERT (scm_is_module (module), module, SCM_ARG1, "gdn-add-module");
+  s_name_symbol_list = scm_module_name (module);
+  s_name = scm_object_to_string (s_name_symbol_list, SCM_UNDEFINED);
+  name = scm_to_utf8_string (s_name);
+
+  // Figure out the absolute path of this module
+  abs_path = get_module_abs_path (module, &abs_path_len);
+  dir_type = get_path_category (abs_path);
+  free (abs_path);
+  abs_path = NULL;
+
+  new_entry = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
+  new_entry->name = name;
+  new_entry->pack = SCM_UNPACK (module);
+  new_entry->list = NULL;
+
+  const char *category = dir_names[dir_type];
+
+  // Check to see if there is a parent list item for this category
+  guint position;
+
+  find_top_level_info (category, &position);
+  category_info =
+      GDN_MODULE_INFO (g_list_model_get_item (G_LIST_MODEL (_store), position));
+  category_info->list = g_slist_insert_sorted (
+      category_info->list, new_entry, (GCompareFunc) compare_info_by_name);
+  g_list_model_items_changed (_store, position, 0, 0);
+  return SCM_UNSPECIFIED;
+}
+
+static SCM
+scm_module_p (SCM x)
+{
+  return scm_call_1 (scm_variable_ref (module_p_var), x);
+}
+
+static int
+scm_is_module (SCM x)
+{
+  return scm_is_true (scm_module_p (x));
+}
+
+static SCM
+scm_module_name (SCM module)
+{
+  return scm_call_1 (scm_variable_ref (module_name_var), module);
+}
+
+static SCM
+scm_module_filename (SCM module)
+{
+  return scm_call_1 (scm_variable_ref (module_filename_var), module);
+}
+
+static SCM
+scm_module_obarray (SCM module)
+{
+  return scm_call_1 (scm_variable_ref (module_obarray_var), module);
+}
+
+void
+gdn_module_info_guile_init (void)
+{
+  gdn_module_info_get_tree_model ();
+
+  module_p_var = scm_c_lookup ("module?");
+  module_name_var = scm_c_lookup ("module-name");
+  module_filename_var = scm_c_lookup ("module-filename");
+  module_defined_hook_var = scm_c_lookup ("module-defined-hook");
+  module_obarray_var = scm_c_lookup ("module-obarray");
+
+  make_info_from_binding_proc = scm_c_define_gsubr (
+      "gdn-make-info-from-binding", 2, 0, 0, make_info_from_binding);
+
+  SCM proc = scm_c_define_gsubr ("gdn-add-module", 1, 0, 0, scm_add_module);
+  scm_add_hook_x (scm_variable_ref (module_defined_hook_var), proc, SCM_BOOL_F);
+}
+
+////////////////////////////////////////////////////////////////
+// END
+
+#if 0
 static GdnModuleInfo *
 module_info_new (const char *      name,
                  const char *      path,
@@ -235,231 +584,4 @@ module_info_new (GdnModuleCategory category,
   return self;
 }
 
-GtkTreeListModel *
-gdn_module_info_get_tree_model (void)
-{
-  GdnModuleInfo *entry;
-  if (_store == NULL)
-    {
-      _store = g_object_new (GDN_TYPE_MODULE_INFO);
-
-      /* Populate the top-level categories. */
-      entry =
-          module_info_new (GDN_MODULE_CATEGORY_LIBRARY, "library", NULL, NULL);
-      g_list_store_append (_store, entry);
-      entry = module_info_new (GDN_MODULE_CATEGORY_SITE, "site", NULL, NULL);
-      g_list_store_append (_store, entry);
-      entry = module_info_new (GDN_MODULE_CATEGORY_GLOBAL_SITE, "global site",
-                               NULL, NULL);
-      g_list_store_append (_store, entry);
-      entry =
-          module_info_new (GDN_MODULE_CATEGORY_PACKAGE, "package", NULL, NULL);
-      g_list_store_append (_store, entry);
-      entry = module_info_new (GDN_MODULE_CATEGORY_OTHER, "other", NULL, NULL);
-      g_list_store_append (_store, entry);
-    }
-  if (_model == NULL)
-    _model = gtk_tree_list_model_new (_store, FALSE, FALSE, get_child_model,
-                                      NULL, NULL);
-  return _model;
-}
-
-// A GtkTreeListModelCreateModelFunc
-// Creates the children model of an GdnModuleInfo
-static GListModel *
-get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
-{
-  GdnModuleInfo *info;
-  GListModel *   entries;
-
-  info = GDN_MODULE_INFO (item);
-
-  if (info->pack == 0)
-    {
-      /* with no associated SCM, this must be a top-level */
-      if (info->list)
-        {
-          modules = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
-          g_slist_foreach (info->list, pack_modules, entries);
-          return entries;
-        }
-      else
-        return NULL;
-    }
-  else if (scm_is_module (SCM_UNPACK (info->pack)))
-    {
-      /* For modules, query all the top-level functions of the module */
-      /* If there are not top-level modules, return NULL and quit.
-      /* Pack the variables. Get the names. No children per entry */
-      /* Construct a list model */
-    }
-  else if (!scm_is_module (SCM_UNPACK (info->pack)))
-    {
-      /* This must be a variables, so it has no children. */
-    }
-  return NULL;
-}
-
-/*
- * This callback is used in the gdn-module-defined-hook, which is
- * called on each new module by the module-defined-hook.
- */
-static SCM
-scm_module_defined_handler (SCM scat, SCM sname, SCM spath, SCM sabspath)
-{
-  SCM_ASSERT_TYPE (scm_is_string (scat), scat, SCM_ARG1,
-                   "gdn-module-defined-handler", "string");
-  SCM_ASSERT_TYPE (scm_is_string (sname), sname, SCM_ARG2,
-                   "gdn-module-defined-handler", "string");
-  SCM_ASSERT_TYPE (scm_is_string (spath), spath, SCM_ARG3,
-                   "gdn-module-defined-handler", "string");
-  SCM_ASSERT_TYPE (scm_is_string (scat), sabspath, SCM_ARG4,
-                   "gdn-module-defined-handler", "string");
-
-  char *         cat = scm_to_utf8_string (scat);
-  gboolean       ret;
-  guint          pos;
-  GdnModuleInfo *top_entry;
-  GdnModuleInfo *new_entry;
-
-  /* Find or create a top-level category for this entry. */
-  ret =
-      g_list_store_find_with_equal_func (_store, cat, category_equality, &pos);
-  if (ret == FALSE)
-    {
-      top_entry = module_info_new (cat, NULL, NULL);
-      g_list_store_append (_store, entry);
-    }
-  else
-    top_entry = g_list_model_get_item (_store, pos);
-
-  /* We sort the 2nd level entries by the relative path. */
-  new_entry = module_info_new (cat, path, abspath);
-
-  g_slist_insert_sorted_with_data (_store->list, new_entry, entry_compare);
-
-  return SCM_UNSPECIFIED;
-}
-
-/* This should only be called by the module defined hook, so hopefully
- * we can be confident that module is a <directory> type. */
-static SCM
-scm_module_defined_handler (SCM module)
-{
-  SCM     s_name_symbol_list = scm_module_name (module);
-  SCM     s_same = scm_object_to_string (s_name_symbol_list, SCM_UNDEFINED);
-  char *  name = scm_to_utf8_string (s_name);
-  guint64 pack = SCM_PACK_POINTER (module);
-
-  GSList *list = NULL;
-
-  // Figure out the absolute path of this module
-  SCM            s_rel_path = scm_module_filename (module);
-  SCM            s_abs_path = scm_sys_search_load_path (s_rel_path);
-  size_t         abs_path_len = scm_c_string_length (s_abs_path);
-  char *         abs_path = scm_to_utf8_string (s_abs_path);
-  GdnModuleInfo *new_entry = g_object_new (GDN_TYPE_MODULE_INFO);
-  new_entry->name = name;
-  new_entry->pack = pack;
-  new_entry->list = NULL;
-
-  // Categorize this module
-  int    i = 1;
-  SCM    prefix;
-  size_t prefix_len;
-  while (i <= 3)
-    {
-      if (i == 1)
-        prefix = scm_sys_library_dir ();
-      else if (i == 2)
-        prefix = scm_sys_site_dir ();
-      else if (i == 3)
-        prefix = scm_package_data_dir ();
-      prefix_len = scm_c_string_length (prefix);
-
-      if (prefix_len < abs_path_len)
-        {
-          if (scm_is_true (scm_string_eq (prefix, s_abs_path, scm_from_int (0),
-                                          scm_from_int (prefix_len),
-                                          scm_from_int (0),
-                                          scm_from_int (prefix_len))))
-            break;
-        }
-      i++;
-    }
-  char *category;
-  if (i == 1)
-    category = "library";
-  else if (i == 2)
-    category = "site";
-  else if (i == 3)
-    category = "package data";
-  else
-    category = "other";
-
-  // Check to see if there is a parent list item for this category
-
-  guint    position;
-  gboolean match;
-  match = g_list_store_find_with_equal_func (_store, category, category_equal,
-                                             &position);
-  if (match)
-    {
-      gpointer       item = g_list_model_get_item (_store, position);
-      GdnModuleInfo *category_info = GDN_MODULE_INFO (item);
-      category_info->list = g_slist_insert_sorted (category_info->list,
-                                                   new_entry, module_compare);
-    }
-  else
-    {
-      GdnModuleInfo *new_category_info = g_object_new (GDN_TYPE_MODULE_INFO);
-      new_category_info->name = g_strdup (category);
-      new_category_info->pack = 0;
-      new_category_info->list = NULL;
-      g_list_store_append (_store, new_category_info);
-      new_category_info->list =
-          g_slist_append (new_category_info->list, new_entry);
-    }
-  return SCM_UNSPECIFIED;
-}
-
-static SCM
-scm_module_p (SCM x)
-{
-  return scm_call_1 (scm_variable_ref (module_p_var), x);
-}
-
-static int
-scm_is_module (SCM x)
-{
-  return scm_is_true (scm_module_p (x));
-}
-
-static SCM
-scm_module_name (SCM module)
-{
-  return scm_call_1 (scm_variable_ref (module_name_var), module);
-}
-
-static SCM
-scm_module_filename (SCM module)
-{
-  return scm_call_1 (scm_variable_ref (module_filename_var), module);
-}
-
-void
-gdn_module_info_guile_init (void)
-{
-  GdnModuleInfo *entry;
-
-  gdn_module_info_get_tree_model ();
-
-  module_p_var = scm_c_lookup ("module?");
-  module_name_var = scm_c_lookup ("module-name");
-  module_filename_var = scm_c_lookup ("module-filename");
-  module_defined_hook_var = scm_c_lookup ("module-defined-hook");
-
-  SCM proc = scm_c_define_gsubr ("gdn-module-defined-handler", 1, 0, 0,
-                                 scm_module_defined_handler);
-  scm_c_add_hook (scm_variable_ref (module_defined_hook_var), proc, SCM_BOOL_F);
-}
+#endif

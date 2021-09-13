@@ -12,6 +12,8 @@ guidance_sources = [
   'guidance-backtrace-view.c',
   'guidance-thread-info.c',
   'guidance-thread-view.c',
+  'guidance-module-info.c',
+  'guidance-module-view.c',
   'guidance-trap-info.c'
 ]
 

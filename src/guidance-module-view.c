@@ -30,13 +30,12 @@
  */
 
 #include "guidance-module-view.h"
-#include "guidance-emoji.h"
 #include "guidance-module-info.h"
 #include <glib-unix.h>
 
 /* An expandable list view.
  - 1st level is just a label
- - 2nd level is also a label
+ - 2nd level is a label and an open button
  - 3rd level is a label with a source button and a trap button
    - The source button jumps to the function in the source view
    - The trap button pop a yes/no dialog then sets a trap a that procedure
@@ -47,7 +46,7 @@ struct _GdnModuleView
   GtkBox parent_instance;
 
   GtkScrolledWindow *scrolled_window;
-  GtkListView *      column_view;
+  GtkListView *      list_view;
 
   GListStore *model;
 };
@@ -59,46 +58,19 @@ static GdnModuleView *_self;
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
-typedef void (*factory_func_t) (GtkSignalListItemFactory *self,
-                                GtkListItem *             listitem,
-                                gpointer                  user_data);
-
-static void set_column_view_model (GtkColumnView *view, GListModel *model);
-static void add_column_factory (GtkColumnViewColumn *col,
-                                factory_func_t       setup,
-                                factory_func_t       bind,
-                                factory_func_t       unbind);
-
-static void name_setup (GtkListItemFactory *factory,
+static void entry_setup (GtkListItemFactory *factory,
+                         GtkListItem *       list_item,
+                         void *              user_data);
+static void entry_bind (GtkListItemFactory *factory,
                         GtkListItem *       list_item,
                         void *              user_data);
-static void name_bind (GtkListItemFactory *factory,
-                       GtkListItem *       list_item,
-                       void *              user_data);
-static void name_unbind (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void emoji_setup (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void emoji_bind (GtkListItemFactory *factory,
-                        GtkListItem *       list_item,
-                        void *              user_data);
-static void emoji_unbind (GtkListItemFactory *factory,
+static void entry_unbind (GtkListItemFactory *factory,
                           GtkListItem *       list_item,
                           void *              user_data);
-static void active_setup (GtkListItemFactory *factory,
-                          GtkListItem *       list_item,
-                          void *              user_data);
-static void active_bind (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void active_unbind (GtkListItemFactory *factory,
-                           GtkListItem *       list_item,
-                           void *              user_data);
 
-static void
-module_activate (GtkListView *list, guint position, gpointer unused);
+static void module_open_activate (GtkButton *button, gpointer user_data);
+static void procedure_open_activate (GtkButton *button, gpointer user_data);
+static void procedure_trap_activate (GtkButton *button, gpointer user_data);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -115,27 +87,32 @@ gdn_module_view_class_init (GdnModuleViewClass *klass)
 #define BIND(x)                                                                \
   gtk_widget_class_bind_template_child (widget_class, GdnModuleView, x)
 
-  BIND (column_view);
-  BIND (name_col);
-  BIND (emoji_col);
-  BIND (active_col);
-
+  BIND (scrolled_window);
+  BIND (list_view);
 #undef BIND
 }
 
 static void
 gdn_module_view_init (GdnModuleView *self)
 {
+  GtkTreeListModel *  tree_model;
+  GtkListItemFactory *factory;
+
   gtk_widget_init_template (GTK_WIDGET (self));
 
+  tree_model = gdn_module_info_get_tree_model ();
   _self = self;
-  self->model = g_list_store_new (GDN_MODULE_INFO_TYPE);
+  self->model = tree_model;
+  GtkNoSelection *nosel_model;
+  nosel_model = gtk_no_selection_new (
+      G_LIST_MODEL (g_object_ref (G_OBJECT (tree_model))));
+  gtk_list_view_set_model (self->list_view, GTK_SELECTION_MODEL (nosel_model));
 
-  set_column_view_model (self->column_view, G_LIST_MODEL (self->model));
-  add_column_factory (self->name_col, name_setup, name_bind, name_unbind);
-  add_column_factory (self->emoji_col, emoji_setup, emoji_bind, emoji_unbind);
-  add_column_factory (self->active_col, active_setup, active_bind,
-                      active_unbind);
+  factory = gtk_signal_list_item_factory_new ();
+  g_signal_connect (factory, "setup", G_CALLBACK (entry_setup), NULL);
+  g_signal_connect (factory, "bind", G_CALLBACK (entry_bind), NULL);
+  g_signal_connect (factory, "unbind", G_CALLBACK (entry_unbind), NULL);
+  gtk_list_view_set_factory (self->list_view, factory);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -143,10 +120,10 @@ gdn_module_view_init (GdnModuleView *self)
 ////////////////////////////////////////////////////////////////
 
 static void
-name_activate (GtkButton *self, gpointer user_data)
+module_open_activate (GtkButton *self, gpointer user_data)
 {
 #if 1
-  g_debug ("activate module");
+  g_debug ("activate module open");
 #else
   GtkListItem *list_item = user_data;
 
@@ -158,61 +135,118 @@ name_activate (GtkButton *self, gpointer user_data)
 }
 
 static void
-name_setup (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+procedure_open_activate (GtkButton *self, gpointer user_data)
 {
-  GtkExpander *expander;
+#if 1
+  g_debug ("activate procedure open");
+#else
+  GtkListItem *list_item = user_data;
+
+  GObject *      obj = gtk_list_item_get_item (list_item);
+  GdnModuleInfo *info = GDN_MODULE_INFO (obj);
+  SCM            bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
+  gdn_binding_info_update_all (bindings);
+#endif
+}
+
+static void
+procedure_trap_activate (GtkButton *self, gpointer user_data)
+{
+#if 1
+  g_debug ("activate procedure trap");
+#else
+  GtkListItem *list_item = user_data;
+
+  GObject *      obj = gtk_list_item_get_item (list_item);
+  GdnModuleInfo *info = GDN_MODULE_INFO (obj);
+  SCM            bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
+  gdn_binding_info_update_all (bindings);
+#endif
+}
+
+static void
+entry_setup (GtkListItemFactory *factory,
+             GtkListItem *       list_item,
+             gpointer            user_data)
+{
+  GtkTreeExpander *expander;
   GtkLabel *   label;
+  GtkBox *         box;
+  GtkButton *      button;
+  GtkImage *       image;
 
   expander = gtk_tree_expander_new ();
   gtk_list_item_set_child (list_item, expander);
+
+  box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
+  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), box);
 
   label = gtk_label_new (NULL);
   gtk_widget_set_margin_start (label, 5);
   gtk_widget_set_margin_end (label, 5);
   gtk_label_set_xalign (GTK_LABEL (label), 0.0);
-  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), label);
+  gtk_box_append (box, label);
+
+  button = gtk_button_new_from_icon_name ("document-open");
+  gtk_box_append (box, button);
+
+  button = gtk_button_new_from_icon_name ("process-stop");
+  gtk_box_append (box, button);
 }
 
 static void
-name_bind (GtkListItemFactory *factory,
-           GtkListItem *       list_item,
-           gpointer            user_data)
+entry_bind (GtkListItemFactory *factory,
+            GtkListItem *       list_item,
+            gpointer            user_data)
 {
-  GtkButton *    button;
-  GtkLabel *     label;
+  GtkTreeListRow * list_row;
+  GObject *        item;
   GdnModuleInfo *info;
-  GObject *      obj;
-
-  static void GtkTreeListRow *list_row;
-  GtkWidget *                 expander;
-  GtkWidget *                 label;
-  gpointer                    item;
+  GtkTreeExpander *expander;
+  GtkBox *         box;
+  GtkLabel *       label;
+  GtkButton *      open_button, *trap_button;
 
   list_row = gtk_list_item_get_item (list_item);
   item = gtk_tree_list_row_get_item (list_row);
+  info = GDN_MODULE_INFO (item);
 
-  expander = gtk_list_item_get_child (list_item);
-  gtk_tree_expander_set_list_row (GTK_TREE_EXPANDER (expander), list_row);
-  label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
+  expander = GTK_TREE_EXPANDER (gtk_list_item_get_child (list_item));
+  gtk_tree_expander_set_list_row (expander, list_row);
+  box = GTK_BOX (gtk_tree_expander_get_child (expander));
+  label = GTK_LABEL (gtk_widget_get_first_child (box));
+  open_button = gtk_widget_get_next_sibling (label);
+  trap_button = gtk_widget_get_next_sibling (open_button);
 
-  gtk_label_set_label (GTK_LABEL (label), gdn_environment_info_get_key (item));
+  gtk_label_set_label (GTK_LABEL (label), gdn_module_info_get_name (info));
+  gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
 
-  button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = gtk_button_get_child (button);
-  obj = gtk_list_item_get_item (list_item);
-  info = GDN_MODULE_INFO (obj);
-  gtk_label_set_text (label, gdn_module_info_get_name (info));
-  if (label)
-    gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
+  if (gdn_module_info_is_top_level (info))
+    {
+      gtk_widget_hide (open_button);
+      gtk_widget_hide (trap_button);
+    }
+  else if (gdn_module_info_is_module (info))
+    {
+      gtk_widget_show (open_button);
+      gtk_widget_hide (trap_button);
+      g_signal_connect (open_button, "activate", module_open_activate, info);
+    }
+  else if (gdn_module_info_is_procedure (info))
+    {
+      gtk_widget_show (open_button);
+      gtk_widget_show (trap_button);
+      g_signal_connect (open_button, "activate", procedure_open_activate, info);
+      g_signal_connect (trap_button, "activate", procedure_trap_activate, info);
+    }
 }
 
 static void
-name_unbind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+entry_unbind (GtkListItemFactory *factory,
+              GtkListItem *       list_item,
+              gpointer            user_data)
 {
+#if 0
   GtkButton *button;
   GtkLabel * label;
   GObject *  obj;
@@ -229,131 +263,14 @@ name_unbind (GtkListItemFactory *factory,
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
   label = gtk_button_get_child (button);
   gtk_label_set_text (label, "");
-}
-
-static void
-emoji_setup (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
-{
-  GtkLabel *label;
-
-  label = gtk_label_new (NULL);
-  gtk_list_item_set_child (list_item, label);
-}
-
-static void
-emoji_bind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
-{
-  GtkLabel *     label;
-  GObject *      obj;
-  GdnModuleInfo *info;
-  char *         location;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  obj = gtk_list_item_get_item (list_item);
-  info = GDN_MODULE_INFO (obj);
-  const char *name = gdn_module_info_get_name (info);
-  char *      emoji = gdn_string_hash_to_emoji (name);
-  gtk_label_set_text (label, emoji);
-  free (emoji);
-}
-
-static void
-emoji_unbind (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
-{
-  GtkLabel *label;
-  GObject * obj;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  gtk_label_set_text (label, "");
-}
-
-static void
-active_setup (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
-{
-  GtkLabel *label;
-
-  label = gtk_label_new (NULL);
-  gtk_list_item_set_child (list_item, label);
-}
-
-static void
-active_bind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
-{
-  GtkLabel *     label;
-  GObject *      obj;
-  GdnModuleInfo *info;
-  char *         location;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  obj = gtk_list_item_get_item (list_item);
-  info = GDN_MODULE_INFO (obj);
-  if (gdn_module_info_get_active (info))
-    gtk_label_set_text (label, "Y");
-  else
-    gtk_label_set_text (label, "N");
-}
-
-static void
-active_unbind (GtkListItemFactory *factory,
-               GtkListItem *       list_item,
-               gpointer            user_data)
-{
-  GtkLabel *label;
-  GObject * obj;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  gtk_label_set_text (label, "");
+#endif
 }
 
 ////////////////////////////////////////////////////////////////
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
-static void
-set_column_view_model (GtkColumnView *view, GListModel *model)
-{
-  GtkNoSelection *nosel_model;
-  nosel_model =
-      gtk_no_selection_new (G_LIST_MODEL (g_object_ref (G_OBJECT (model))));
-  gtk_column_view_set_model (view, GTK_SELECTION_MODEL (nosel_model));
-}
-
-static void
-add_column_factory (GtkColumnViewColumn *col,
-                    factory_func_t       setup,
-                    factory_func_t       bind,
-                    factory_func_t       unbind)
-{
-  GtkSignalListItemFactory *factory;
-  factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (factory, "setup", G_CALLBACK (setup), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (bind), NULL);
-  g_signal_connect (factory, "unbind", G_CALLBACK (unbind), NULL);
-  gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
-}
-
 ////////////////////////////////////////////////////////////////
 // Guile API
 ////////////////////////////////////////////////////////////////
 
-static SCM
-scm_update_modules (void)
-{
-  gdn_module_info_store_update (_self->model);
-}
-
-void
-gdn_module_view_guile_init (void)
-{
-  scm_c_define_gsubr ("gdn-update-modules", 0, 0, 0, scm_update_modules);
-}

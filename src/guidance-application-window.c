@@ -24,6 +24,7 @@
 #include "guidance-frame-info.h"
 #include "guidance-lisp.h"
 #include "guidance-module-info.h"
+#include "guidance-module-view.h"
 #include "guidance-source-view.h"
 #include "guidance-thread-view.h"
 #include <glib-unix.h>
@@ -45,7 +46,6 @@ struct _GdnApplicationWindow
 
   /* Threads tab */
   GtkScrolledWindow *thread_window;
-  GdnThreadView *    thread_view;
 
   /* Module tab */
   GtkScrolledWindow *module_window;
@@ -218,24 +218,11 @@ application_window_init_threads_tab (GdnApplicationWindow *self)
 static void
 application_window_init_modules_tab (GdnApplicationWindow *self)
 {
-  GListModel *              model;
-  GtkSignalListItemFactory *factory;
-  GtkListView *             listview;
+  GdnModuleView *module_view;
 
-  model = G_LIST_MODEL (gdn_lisp_get_modules (self->lisp));
-  factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-
-  g_signal_connect (factory, "setup", G_CALLBACK (module_setup), NULL);
-  g_signal_connect (factory, "teardown", G_CALLBACK (module_teardown), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (module_bind), NULL);
-
-  listview = GTK_LIST_VIEW (
-      gtk_list_view_new (GTK_SELECTION_MODEL (gtk_single_selection_new (model)),
-                         GTK_LIST_ITEM_FACTORY (factory)));
-
-  g_signal_connect (listview, "activate", G_CALLBACK (module_activate), NULL);
+  module_view = g_object_new (GDN_TYPE_MODULE_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->module_window),
-                                 GTK_WIDGET (listview));
+                                 GTK_WIDGET (module_view));
 }
 
 static void
@@ -549,14 +536,14 @@ static void
 module_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
   GtkLabel *     label;
-  GdnThreadInfo *info;
+  GdnModuleInfo *info;
 
   label = gtk_list_item_get_child (list_item);
   GObject *obj = gtk_list_item_get_item (list_item);
   if (list_item)
     {
       info = GDN_MODULE_INFO (obj);
-      gtk_label_set_text (label, gdn_module_info_get_name (info));
+      // gtk_label_set_text (label, gdn_module_info_get_name (info));
     }
 }
 

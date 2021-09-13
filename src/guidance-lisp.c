@@ -171,6 +171,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
   gdn_source_view_guile_init ();
   gdn_backtrace_view_guile_init ();
   gdn_thread_view_guile_init ();
+  gdn_module_info_guile_init ();
 }
 
 static GdnLisp *_self = NULL;
@@ -444,7 +445,7 @@ module_defined_handler (SCM module_info)
   g_assert (_self != NULL);
   g_assert (_self->modules != NULL);
 
-  gdn_module_info_store_append (_self->modules, module_info);
+  // gdn_module_info_store_append (_self->modules, module_info);
   return SCM_UNSPECIFIED;
 }
 
