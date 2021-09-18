@@ -155,12 +155,14 @@ gdn_lisp_class_init (GdnLispClass *klass)
                 "%gdn-load-handler", "%gdn-module-defined-handler", NULL);
   gui_thread = scm_current_thread ();
 
+#if 0
   // Loading this library sets up the GTK->Guile port mapping and defines our spawn functions.
   contents = g_resource_lookup_data (guidance_get_resource (),
                                      "/com/lonelycactus/Guidance/gdn/lib.scm",
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   scm_c_eval_string (g_bytes_get_data (contents, NULL));
   g_bytes_unref (contents);
+#endif
 
 #if 0
   run_repl_func = scm_variable_ref (scm_c_lookup ("gdn-run-repl"));

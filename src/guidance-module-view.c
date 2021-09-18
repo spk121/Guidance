@@ -48,7 +48,7 @@ struct _GdnModuleView
   GtkScrolledWindow *scrolled_window;
   GtkListView *      list_view;
 
-  GListStore *model;
+  GtkTreeListModel *model;
 };
 
 G_DEFINE_TYPE (GdnModuleView, gdn_module_view, GTK_TYPE_BOX)
@@ -122,6 +122,8 @@ gdn_module_view_init (GdnModuleView *self)
 static void
 module_open_activate (GtkButton *self, gpointer user_data)
 {
+  g_assert (self != NULL);
+  g_assert (user_data == NULL);
 #if 1
   g_debug ("activate module open");
 #else
@@ -137,6 +139,9 @@ module_open_activate (GtkButton *self, gpointer user_data)
 static void
 procedure_open_activate (GtkButton *self, gpointer user_data)
 {
+  g_assert (self != NULL);
+  g_assert (user_data == NULL);
+
 #if 1
   g_debug ("activate procedure open");
 #else
@@ -152,6 +157,8 @@ procedure_open_activate (GtkButton *self, gpointer user_data)
 static void
 procedure_trap_activate (GtkButton *self, gpointer user_data)
 {
+  g_assert (self != NULL);
+  g_assert (user_data == NULL);
 #if 1
   g_debug ("activate procedure trap");
 #else
@@ -173,25 +180,27 @@ entry_setup (GtkListItemFactory *factory,
   GtkLabel *   label;
   GtkBox *         box;
   GtkButton *      button;
-  GtkImage *       image;
 
-  expander = gtk_tree_expander_new ();
-  gtk_list_item_set_child (list_item, expander);
+  g_assert (factory != NULL);
+  g_assert (user_data == NULL);
 
-  box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
-  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), box);
+  expander = GTK_TREE_EXPANDER (gtk_tree_expander_new ());
+  gtk_list_item_set_child (list_item, GTK_WIDGET (expander));
 
-  label = gtk_label_new (NULL);
-  gtk_widget_set_margin_start (label, 5);
-  gtk_widget_set_margin_end (label, 5);
-  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
-  gtk_box_append (box, label);
+  box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10));
+  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), GTK_WIDGET (box));
 
-  button = gtk_button_new_from_icon_name ("document-open");
-  gtk_box_append (box, button);
+  label = GTK_LABEL (gtk_label_new (NULL));
+  gtk_widget_set_margin_start (GTK_WIDGET (label), 5);
+  gtk_widget_set_margin_end (GTK_WIDGET (label), 5);
+  gtk_label_set_xalign (label, 0.0);
+  gtk_box_append (box, GTK_WIDGET (label));
 
-  button = gtk_button_new_from_icon_name ("process-stop");
-  gtk_box_append (box, button);
+  button = GTK_BUTTON (gtk_button_new_from_icon_name ("document-open"));
+  gtk_box_append (box, GTK_WIDGET (button));
+
+  button = GTK_BUTTON (gtk_button_new_from_icon_name ("process-stop"));
+  gtk_box_append (box, GTK_WIDGET (button));
 }
 
 static void
@@ -207,6 +216,9 @@ entry_bind (GtkListItemFactory *factory,
   GtkLabel *       label;
   GtkButton *      open_button, *trap_button;
 
+  g_assert (factory != NULL);
+  g_assert (user_data == NULL);
+
   list_row = gtk_list_item_get_item (list_item);
   item = gtk_tree_list_row_get_item (list_row);
   info = GDN_MODULE_INFO (item);
@@ -214,30 +226,34 @@ entry_bind (GtkListItemFactory *factory,
   expander = GTK_TREE_EXPANDER (gtk_list_item_get_child (list_item));
   gtk_tree_expander_set_list_row (expander, list_row);
   box = GTK_BOX (gtk_tree_expander_get_child (expander));
-  label = GTK_LABEL (gtk_widget_get_first_child (box));
-  open_button = gtk_widget_get_next_sibling (label);
-  trap_button = gtk_widget_get_next_sibling (open_button);
+  label = GTK_LABEL (gtk_widget_get_first_child (GTK_WIDGET (box)));
+  open_button = GTK_BUTTON (gtk_widget_get_next_sibling (GTK_WIDGET (label)));
+  trap_button =
+      GTK_BUTTON (gtk_widget_get_next_sibling (GTK_WIDGET (open_button)));
 
   gtk_label_set_label (GTK_LABEL (label), gdn_module_info_get_name (info));
   gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
 
   if (gdn_module_info_is_top_level (info))
     {
-      gtk_widget_hide (open_button);
-      gtk_widget_hide (trap_button);
+      gtk_widget_hide (GTK_WIDGET (open_button));
+      gtk_widget_hide (GTK_WIDGET (trap_button));
     }
   else if (gdn_module_info_is_module (info))
     {
-      gtk_widget_show (open_button);
-      gtk_widget_hide (trap_button);
-      g_signal_connect (open_button, "activate", module_open_activate, info);
+      gtk_widget_show (GTK_WIDGET (open_button));
+      gtk_widget_hide (GTK_WIDGET (trap_button));
+      g_signal_connect (open_button, "activate",
+                        G_CALLBACK (module_open_activate), info);
     }
   else if (gdn_module_info_is_procedure (info))
     {
-      gtk_widget_show (open_button);
-      gtk_widget_show (trap_button);
-      g_signal_connect (open_button, "activate", procedure_open_activate, info);
-      g_signal_connect (trap_button, "activate", procedure_trap_activate, info);
+      gtk_widget_show (GTK_WIDGET (open_button));
+      gtk_widget_show (GTK_WIDGET (trap_button));
+      g_signal_connect (open_button, "activate",
+                        G_CALLBACK (procedure_open_activate), info);
+      g_signal_connect (trap_button, "activate",
+                        G_CALLBACK (procedure_trap_activate), info);
     }
 }
 
@@ -246,6 +262,9 @@ entry_unbind (GtkListItemFactory *factory,
               GtkListItem *       list_item,
               gpointer            user_data)
 {
+  g_assert (factory != NULL);
+  g_assert (list_item != NULL);
+  g_assert (user_data == NULL);
 #if 0
   GtkButton *button;
   GtkLabel * label;

@@ -74,6 +74,7 @@ GListStore *          gdn_lisp_get_environment (GdnLisp *lisp);
 GListStore *          gdn_lisp_get_threads (GdnLisp *lisp);
 GListStore *          gdn_lisp_get_modules (GdnLisp *lisp);
 GListStore *          gdn_lisp_get_backtrace (GdnLisp *lisp);
+char **               gdn_lisp_get_paths (GdnLisp *lisp);
 
 /*
  * Requests an update of the environment info store.

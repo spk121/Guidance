@@ -48,7 +48,8 @@ gdn_environment_info_finalize (GObject *object)
     }
   if (self->list)
     {
-      g_slist_free_full (self->list, gdn_environment_info_finalize);
+      g_slist_free_full (self->list,
+                         (GDestroyNotify) gdn_environment_info_finalize);
       self->list = NULL;
     }
 
@@ -123,14 +124,14 @@ static GListModel *
 get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
 {
   GdnEnvironmentInfo *info;
-  GListModel *        entries;
+  GListStore *        entries;
 
   info = GDN_ENVIRONMENT_INFO (item);
   if (info->list)
     {
       entries = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
       g_slist_foreach (info->list, pack_entries, entries);
-      return entries;
+      return G_LIST_MODEL (entries);
     }
 
   return NULL;
@@ -154,10 +155,10 @@ gdn_environment_info_update_all (SCM all_info)
 }
 
 static gboolean
-info_key_eq (gconstpointer *a, gconstpointer *b)
+info_key_eq (gconstpointer a, gconstpointer b)
 {
-  GdnEnvironmentInfo *ia = GDN_ENVIRONMENT_INFO (a);
-  GdnEnvironmentInfo *ib = GDN_ENVIRONMENT_INFO (b);
+  const GdnEnvironmentInfo *ia = GDN_ENVIRONMENT_INFO (a);
+  const GdnEnvironmentInfo *ib = GDN_ENVIRONMENT_INFO (b);
   return (g_strcmp0 (ia->key, ib->key) == 0);
 }
 
@@ -173,7 +174,7 @@ gdn_environment_info_update_one (const char *category,
   gboolean found;
   guint    position;
 
-  temp_info->key = category;
+  temp_info->key = g_strdup (category);
 
   /* First check to see if there exists a top-level category by this
    * name, otherwise create one. */

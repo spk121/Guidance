@@ -104,6 +104,12 @@ static SCM scm_module_filename (SCM module);
 static SCM scm_module_name (SCM module);
 static SCM scm_module_obarray (SCM module);
 
+static void module_info_add_module_to_store (gpointer key,
+                                             gpointer value,
+                                             gpointer user_data);
+static int  module_info_compare (const void *a, const void *b, void *user_data);
+
+GHashTable *      _scm_modules = NULL;
 GListStore *      _store = NULL;
 GtkTreeListModel *_model = NULL;
 
@@ -386,10 +392,62 @@ get_path_category (const char *path)
   return OTHER_DIR;
 }
 
+void
+gdn_module_info_store_update (void)
+{
+  if (_scm_modules == NULL)
+    return;
+
+  g_list_store_remove_all (_store);
+  g_hash_table_foreach (_scm_modules, module_info_add_module_to_store, _store);
+}
+
+static void
+module_info_add_module_to_store (gpointer key,
+                                 gpointer value,
+                                 gpointer user_data)
+{
+  GListStore *   store = G_LIST_STORE (user_data);
+  const char *   name = key;
+  GdnModuleInfo *entry = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
+  entry->name = g_strdup (name);
+  entry->pack = GPOINTER_TO_SIZE (value);
+  g_list_store_insert_sorted (store, entry, module_info_compare, NULL);
+}
+
+static int
+module_info_compare (const void *a, const void *b, void *user_data)
+{
+  g_assert (user_data == NULL);
+  const GdnModuleInfo *entry_a = a;
+  const GdnModuleInfo *entry_b = b;
+  return strcmp (entry_a->name, entry_b->name);
+}
+
 ////////////////////////////////////////////////////////////////
 // GUILE API
 ////////////////////////////////////////////////////////////////
 
+static SCM
+scm_add_module (SCM module)
+{
+  SCM      s_name_symbol_list, s_name;
+  char *   name;
+  gboolean ret;
+
+  SCM_ASSERT (scm_is_module (module), module, SCM_ARG1, "gdn-add-module");
+  s_name_symbol_list = scm_module_name (module);
+  s_name = scm_object_to_string (s_name_symbol_list, SCM_UNDEFINED);
+  name = scm_to_utf8_string (s_name);
+
+  ret = g_hash_table_insert (_scm_modules, name, module);
+  if (ret)
+    g_debug ("added new module %s", name);
+  gdn_module_info_store_update ();
+  return SCM_UNSPECIFIED;
+}
+
+#if 0
 static SCM
 scm_add_module (SCM module)
 {
@@ -431,6 +489,7 @@ scm_add_module (SCM module)
   g_list_model_items_changed (_store, position, 0, 0);
   return SCM_UNSPECIFIED;
 }
+#endif
 
 static SCM
 scm_module_p (SCM x)
@@ -465,6 +524,7 @@ scm_module_obarray (SCM module)
 void
 gdn_module_info_guile_init (void)
 {
+  _scm_modules = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   gdn_module_info_get_tree_model ();
 
   module_p_var = scm_c_lookup ("module?");
@@ -473,10 +533,12 @@ gdn_module_info_guile_init (void)
   module_defined_hook_var = scm_c_lookup ("module-defined-hook");
   module_obarray_var = scm_c_lookup ("module-obarray");
 
-  make_info_from_binding_proc = scm_c_define_gsubr (
-      "gdn-make-info-from-binding", 2, 0, 0, make_info_from_binding);
+  make_info_from_binding_proc =
+      scm_c_define_gsubr ("gdn-make-info-from-binding", 2, 0, 0,
+                          (scm_t_subr) make_info_from_binding);
 
-  SCM proc = scm_c_define_gsubr ("gdn-add-module", 1, 0, 0, scm_add_module);
+  SCM proc = scm_c_define_gsubr ("gdn-add-module", 1, 0, 0,
+                                 (scm_t_subr) scm_add_module);
   scm_add_hook_x (scm_variable_ref (module_defined_hook_var), proc, SCM_BOOL_F);
 }
 

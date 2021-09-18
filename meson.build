@@ -6,6 +6,17 @@ project('guidance', 'c',
                    ],
 )
 
+if meson.get_compiler('c').get_id() == 'gcc'
+  add_global_arguments(['-O2', '-D_FORTIFY_SOURCE=2',
+  '-fstack-protector-strong',
+  '-fstack-clash-protection',
+  '-fcf-protection',
+  '-Werror=shadow',
+  '-fexceptions',
+  '-fvar-tracking',
+  '-fanalyzer'], language : 'c')
+endif
+
 i18n = import('i18n')
 
 config_h = configuration_data()

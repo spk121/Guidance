@@ -36,7 +36,7 @@ typedef enum gdn_module_info_category_t
 #define GDN_MODULE_INFO_TYPE (gdn_module_info_get_type ())
 G_DECLARE_FINAL_TYPE (GdnModuleInfo, gdn_module_info, GDN, MODULE_INFO, GObject)
 
-void gdn_module_info_store_append (GListStore *store, SCM entry);
+void gdn_module_info_store_update (void);
 void gdn_module_info_guile_init (void);
 
 GtkTreeListModel *gdn_module_info_get_tree_model (void);

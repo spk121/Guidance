@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="4.2.1"/>
+  <template class="GdnModuleView" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow" id="scrolled_window">
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkListView" id="list_view">
+            <property name="single-click-activate">True</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -426,8 +426,8 @@ gdn_backtrace_view_init (GtkColumnView *      stack_view,
   _type_col = g_object_ref (type_col);
   _name_col = g_object_ref (name_col);
   _representation_col = g_object_ref (representation_col);
-  _value_col = g_object_ref (_value_col);
-  _info_col = g_object_ref (_info_col);
+  _value_col = g_object_ref (value_col);
+  _info_col = g_object_ref (info_col);
   _main_stack = main_stack;
 
   _frames = g_list_store_new (GDN_FRAME_INFO_TYPE);
@@ -475,6 +475,7 @@ scm_update_backtrace (SCM frame)
 void
 gdn_backtrace_view_guile_init (void)
 {
-  _get_backtrace_func = scm_variable_ref (scm_c_lookup ("gdn-get-backtrace"));
+  // _get_backtrace_func = scm_variable_ref (scm_c_lookup
+  // ("gdn-get-backtrace"));
   scm_c_define_gsubr ("gdn-update-backtrace", 1, 0, 0, scm_update_backtrace);
 }

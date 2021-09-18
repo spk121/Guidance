@@ -89,7 +89,7 @@ gdn_frame_info_finalize (GObject *object)
   GdnFrameInfo *self = GDN_FRAME_INFO (object);
   g_assert (self->name != NULL);
 
-  printf ("Freeing frame info %p name %s ref %d\n", object, self->name);
+  printf ("Freeing frame info %p name %s\n", object, self->name);
   free (self->name);
   self->name = NULL;
   free (self->filename);
@@ -192,7 +192,7 @@ gdn_frame_info_store_update (GListStore *store, SCM frames)
     {
       SCM           entry = scm_c_vector_ref (frames, i);
       GdnFrameInfo *info = frame_info_new_from_scm (entry);
-      if (g_list_model_get_object (store, i) != NULL)
+      if (g_list_model_get_object (G_LIST_MODEL (store), i) != NULL)
         {
           GdnFrameInfo *old_info =
               GDN_FRAME_INFO (g_list_model_get_object (store, i));

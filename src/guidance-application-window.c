@@ -18,6 +18,7 @@
 
 #include "guidance-application-window.h"
 #include "guidance-application.h"
+#include "guidance-backtrace-view.h"
 #include "guidance-binding-info.h"
 #include "guidance-config.h"
 #include "guidance-environment-info.h"
@@ -288,7 +289,7 @@ application_window_init_backtrace_tab (GdnApplicationWindow *self)
       self->backtrace_variables_name_column,
       self->backtrace_variables_representation_column,
       self->backtrace_variables_value_column,
-      self->backtrace_variables_info_column, self->main_stack);
+      self->backtrace_variables_info_column, GTK_WIDGET (self->main_stack));
 }
 
 static void
@@ -303,7 +304,7 @@ gdn_application_window_init (GdnApplicationWindow *self)
   gtk_css_provider_load_from_resource (
       provider, "/com/lonelycactus/Guidance/gtk/guidance-window.css");
   gtk_style_context_add_provider_for_display (
-      gdk_display_get_default (), provider,
+      gdk_display_get_default (), GTK_STYLE_PROVIDER (provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
   application_window_init_lisp_and_terminal_tab (self);
@@ -390,12 +391,17 @@ handle_css_parsing_error (GtkCssProvider *provider,
                           GError *        error,
                           gpointer        user_data)
 {
+  g_assert (provider != NULL);
+  g_assert (section != NULL);
+  g_assert (user_data == NULL);
+
   g_error ("CSS parsing error: %s", error->message);
 }
 
 static gboolean
 clear_gc (gpointer user_data)
 {
+  g_assert (user_data == NULL);
   gtk_widget_set_visible (GTK_WIDGET (_self->gc_image), FALSE);
   return G_SOURCE_REMOVE;
 }
@@ -403,6 +409,9 @@ clear_gc (gpointer user_data)
 static void
 handle_after_gc (GdnLisp *lisp, gpointer user_data)
 {
+  g_assert (lisp != NULL);
+  g_assert (user_data == NULL);
+
   /* When called, we reveal the sweep image for a second. */
   gtk_widget_set_visible (GTK_WIDGET (_self->gc_image), TRUE);
   g_timeout_add (2000, clear_gc, NULL);
@@ -411,6 +420,7 @@ handle_after_gc (GdnLisp *lisp, gpointer user_data)
 static gboolean
 clear_sweep (gpointer user_data)
 {
+  g_assert (user_data == NULL);
   gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), FALSE);
   return G_SOURCE_REMOVE;
 }
@@ -418,6 +428,8 @@ clear_sweep (gpointer user_data)
 static void
 handle_after_sweep (GdnLisp *lisp, gpointer user_data)
 {
+  g_assert (lisp != NULL);
+  g_assert (user_data == NULL);
   /* When called, we reveal the sweep image for a second. */
   gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), TRUE);
   g_timeout_add (2000, clear_gc, NULL);
