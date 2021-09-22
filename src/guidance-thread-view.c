@@ -31,7 +31,6 @@ struct _GdnThreadView
   GtkColumnViewColumn *emoji_col;
   GtkColumnViewColumn *active_col;
 
-  GListStore *model;
 };
 
 G_DEFINE_TYPE (GdnThreadView, gdn_thread_view, GTK_TYPE_BOX)
@@ -111,9 +110,9 @@ gdn_thread_view_init (GdnThreadView *self)
   gtk_widget_init_template (GTK_WIDGET (self));
 
   _self = self;
-  self->model = g_list_store_new (GDN_THREAD_INFO_TYPE);
+  GdnThreadInfo *model = gdn_thread_info_get_model ();
 
-  set_column_view_model (self->column_view, G_LIST_MODEL (self->model));
+  set_column_view_model (self->column_view, G_LIST_MODEL (model));
   add_column_factory (self->name_col, name_setup, name_bind, name_unbind);
   add_column_factory (self->emoji_col, emoji_setup, emoji_bind, emoji_unbind);
   add_column_factory (self->active_col, active_setup, active_bind,
@@ -301,18 +300,3 @@ add_column_factory (GtkColumnViewColumn *col,
   gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
 }
 
-////////////////////////////////////////////////////////////////
-// Guile API
-////////////////////////////////////////////////////////////////
-
-static SCM
-scm_update_threads (void)
-{
-  gdn_thread_info_store_update (_self->model);
-}
-
-void
-gdn_thread_view_guile_init (void)
-{
-  scm_c_define_gsubr ("gdn-update-threads", 0, 0, 0, scm_update_threads);
-}

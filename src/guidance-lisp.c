@@ -20,7 +20,6 @@
 #include "guidance-lisp.h"
 #include "guidance-environment-info.h"
 #include "guidance-frame-info.h"
-#include "guidance-module-info.h"
 #include "guidance-resources.h"
 #include "guidance-thread-info.h"
 #include "guidance-trap-info.h"
@@ -33,11 +32,12 @@
 #include "guidance-backtrace-view.h"
 #include "guidance-source-view.h"
 
-static SCM   update_thread_info (void);
 static SCM   update_trap_info (SCM trap_cur);
 static SCM   update_environment_info (SCM env_vec);
 static void *after_gc_handler (void *hook_data, void *fn_data, void *data);
 static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
+static SCM   trap_thunk_store[9], trap_func_store[9];
+static int   trap_thunk_index = 1;
 
 /* This GObject structure holds the interface between Guile and Gtk.
  */
@@ -66,11 +66,9 @@ struct _GdnLisp
   GCond  response_condition; /* Used in signalling operator responses */
   GMutex response_mutex;     /* Used in signalling operator responses */
 
-  GListStore *modules;        /* Holds the current list of modules as a list of `GdnModuleInfo` */
   GListStore *traps;          /* Holds the current list of traps as a list of `GdnTrapInfo` */
   GtkTreeListModel *environment; /* Holds the last-computed environment info as
                                   * a list of `GdnEnvironmentInfo` */
-  GListStore *threads;        /* Holds the last-computed list of active Guile threads. */
 
   SCM         default_thread; /* The Guile representation of this interpreter's main thread */
 };
@@ -102,7 +100,6 @@ static SCM         get_trap_response (void);
 
 static SCM exit_handler (void);
 static SCM load_handler (SCM filename);
-static SCM module_defined_handler (SCM module);
 /////////////////////////////////////////////////////////////////
 
 static void
@@ -139,20 +136,16 @@ gdn_lisp_class_init (GdnLispClass *klass)
  * bug in Guile. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-  scm_c_define_gsubr ("%gdn-update-thread-info", 0, 0, 0, update_thread_info);
   scm_c_define_gsubr ("%gdn-update-trap-info", 1, 0, 0, update_trap_info);
   scm_c_define_gsubr ("%gdn-update-environment-info", 1, 0, 0,
                       update_environment_info);
   scm_c_define_gsubr ("%gdn-exit-handler", 0, 0, 0, exit_handler);
   scm_c_define_gsubr ("%gdn-load-handler", 1, 0, 0, load_handler);
-  scm_c_define_gsubr ("%gdn-module-defined-handler", 1, 0, 0,
-                      module_defined_handler);
   scm_c_define_gsubr ("%gdn-get-trap-response", 0, 0, 0, get_trap_response);
 
 #pragma GCC diagnostic pop
-  scm_c_export ("%gdn-update-thread-info", "%gdn-update-trap-info",
-                "%gdn-update-environment-info", "%gdn-exit-handler",
-                "%gdn-load-handler", "%gdn-module-defined-handler", NULL);
+  scm_c_export ("%gdn-update-trap-info", "%gdn-update-environment-info",
+                "%gdn-exit-handler", "%gdn-load-handler", NULL);
   gui_thread = scm_current_thread ();
 
 #if 0
@@ -172,8 +165,26 @@ gdn_lisp_class_init (GdnLispClass *klass)
 #endif
   gdn_source_view_guile_init ();
   gdn_backtrace_view_guile_init ();
-  gdn_thread_view_guile_init ();
+  gdn_thread_info_guile_init ();
   gdn_module_info_guile_init ();
+  gdn_trap_info_guile_init ();
+
+  trap_thunk_store[1] =
+      scm_c_define_gsubr ("trap-thunk-1", 0, 0, 0, scm_trap_thunk_1);
+  trap_thunk_store[2] =
+      scm_c_define_gsubr ("trap-thunk-2", 0, 0, 0, scm_trap_thunk_2);
+  trap_thunk_store[3] =
+      scm_c_define_gsubr ("trap-thunk-3", 0, 0, 0, scm_trap_thunk_3);
+  trap_thunk_store[4] =
+      scm_c_define_gsubr ("trap-thunk-4", 0, 0, 0, scm_trap_thunk_4);
+  trap_thunk_store[5] =
+      scm_c_define_gsubr ("trap-thunk-5", 0, 0, 0, scm_trap_thunk_5);
+  trap_thunk_store[6] =
+      scm_c_define_gsubr ("trap-thunk-6", 0, 0, 0, scm_trap_thunk_6);
+  trap_thunk_store[7] =
+      scm_c_define_gsubr ("trap-thunk-7", 0, 0, 0, scm_trap_thunk_7);
+  trap_thunk_store[8] =
+      scm_c_define_gsubr ("trap-thunk-8", 0, 0, 0, scm_trap_thunk_8);
 }
 
 static GdnLisp *_self = NULL;
@@ -221,10 +232,8 @@ gdn_lisp_init (GdnLisp *self)
   g_mutex_init (&(self->response_mutex));
 
   /* The list stores all require special member types. */
-  self->modules = g_list_store_new (GDN_MODULE_INFO_TYPE);
   self->traps = g_list_store_new (GDN_TRAP_INFO_TYPE);
   self->environment = gdn_environment_info_get_tree_model ();
-  self->threads = g_list_store_new (GDN_THREAD_INFO_TYPE);
 
   /* A couple of the garbage collection hooks use the c_hook interface. */
   scm_c_hook_add (&scm_after_gc_c_hook, after_gc_handler, self, 0);
@@ -431,27 +440,6 @@ load_handler (SCM filename)
 }
 
 /*
- * This callback is used in the gdn-module-defined-hook, which is
- * called on each new module by the module-defined-hook.
- */
-static SCM
-module_defined_handler (SCM module_info)
-{
-  g_assert (scm_is_vector (module_info));
-  g_assert_cmpint (scm_c_vector_length (module_info), ==, 4);
-  g_assert (scm_is_string (scm_c_vector_ref (module_info, 0)));
-  g_assert (scm_is_string (scm_c_vector_ref (module_info, 1)));
-  g_assert (scm_is_string (scm_c_vector_ref (module_info, 2)));
-  g_assert (scm_is_symbol (scm_c_vector_ref (module_info, 3)));
-
-  g_assert (_self != NULL);
-  g_assert (_self->modules != NULL);
-
-  // gdn_module_info_store_append (_self->modules, module_info);
-  return SCM_UNSPECIFIED;
-}
-
-/*
  * A scm_t_c_hook function that emits an "after-gc" signal
  */
 static void *
@@ -482,13 +470,6 @@ exit_handler (void)
 {
   g_assert (_self != NULL);
   g_signal_emit (_self, signals[SIGNAL_EXIT], 0);
-  return SCM_UNSPECIFIED;
-}
-
-static SCM
-update_thread_info (void)
-{
-  gdn_thread_info_store_update (_self->threads);
   return SCM_UNSPECIFIED;
 }
 
@@ -818,18 +799,6 @@ open_scm_ports(int *input_file_descriptor_master,
 #endif
 
 GListStore *
-gdn_lisp_get_threads (GdnLisp *self)
-{
-  return self->threads;
-}
-
-GListStore *
-gdn_lisp_get_modules (GdnLisp *self)
-{
-  return self->modules;
-}
-
-GListStore *
 gdn_lisp_get_environment (GdnLisp *self)
 {
   return G_LIST_STORE (self->environment);
@@ -862,4 +831,56 @@ gdn_lisp_get_paths (GdnLisp *lisp)
 void
 gdm_lisp_scm_shell (void)
 {
+}
+
+int
+gdn_lisp_add_proc_trap_async (SCM proc)
+{
+  trap_func_store[trap_thunk_index] = proc;
+  scm_system_async_mark_for_thread (trap_thunk_store[trap_thunk_index],
+                                    default_thread);
+  trap_thunk_index++;
+  if (trap_thunk_index > 8)
+    trap_thunk_index = 1;
+}
+
+SCM
+scm_trap_thunk_1 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[1]);
+}
+SCM
+scm_trap_thunk_2 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[2]);
+}
+SCM
+scm_trap_thunk_3 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[3]);
+}
+SCM
+scm_trap_thunk_4 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[4]);
+}
+SCM
+scm_trap_thunk_5 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[5]);
+}
+SCM
+scm_trap_thunk_6 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[6]);
+}
+SCM
+scm_trap_thunk_7 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[7]);
+}
+SCM
+scm_trap_thunk_8 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[8]);
 }

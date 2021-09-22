@@ -27,5 +27,6 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE (GdnTrapInfo, gdn_trap_info, GDN, TRAP_INFO, GObject)
 
 void gdn_trap_info_store_update (GListStore *store, int trap_cur);
+void gdn_trap_info_guile_init (void);
 
 G_END_DECLS

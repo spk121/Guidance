@@ -43,7 +43,10 @@ enum
 static GParamSpec *properties[N_PROPS] = {
   NULL,
 };
+
 static SCM list_traps_func, trap_name_func, trap_enabled_func;
+static SCM trap_thunk_store[9], trap_func_store[9];
+static int trap_thunk_index = 1;
 
 static void
 gdn_trap_info_get_property (GObject *object, unsigned int property_id, GValue *value, GParamSpec *pspec)
@@ -121,9 +124,6 @@ gdn_trap_info_class_init (GdnTrapInfoClass *klass)
   properties[PROP_CURRENT] =
       g_param_spec_boolean ("current", "current", "current flag", FALSE, G_PARAM_READWRITE);
 
-  list_traps_func = scm_c_public_ref ("system vm trap-state", "list-traps");
-  trap_name_func = scm_c_public_ref ("system vm trap-state", "trap-name");
-  trap_enabled_func = scm_c_public_ref ("system vm trap-state", "trap-enabled?");
 }
 
 static void
@@ -145,8 +145,12 @@ trap_info_new_from_trap_id (int trap, int current)
   return self;
 }
 
-void
-gdn_trap_info_store_update (GListStore *store, int trap_cur)
+/* GUILE THREAD: This updates the trap info store with information
+ * about the current traps. Since the list of traps is thread
+ * specific, this procedure must be called from the current Guile
+ * thread. */
+SCM
+scm_update_traps (void)
 {
   SCM all_traps = scm_vector (scm_call_0 (list_traps_func));
 
@@ -166,4 +170,87 @@ gdn_trap_info_store_update (GListStore *store, int trap_cur)
       info = trap_info_new_from_trap_id (trap, current);
       g_list_store_append (store, info);
     }
+}
+
+/* GTK THREAD: This sends sends an async request to Guile to add a
+ * trap at a given Guile procedure, at the next async opportunity. */
+int
+gdn_lisp_add_proc_trap_async (SCM proc)
+{
+  SCM default_thread = gdn_lisp_get_default_thread ();
+
+  trap_func_store[trap_thunk_index] = proc;
+  scm_system_async_mark_for_thread (trap_thunk_store[trap_thunk_index],
+                                    default_thread);
+  trap_thunk_index++;
+  if (trap_thunk_index > 8)
+    trap_thunk_index = 1;
+}
+
+SCM
+scm_trap_thunk_1 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[1]);
+}
+SCM
+scm_trap_thunk_2 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[2]);
+}
+SCM
+scm_trap_thunk_3 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[3]);
+}
+SCM
+scm_trap_thunk_4 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[4]);
+}
+SCM
+scm_trap_thunk_5 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[5]);
+}
+SCM
+scm_trap_thunk_6 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[6]);
+}
+SCM
+scm_trap_thunk_7 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[7]);
+}
+SCM
+scm_trap_thunk_8 (void)
+{
+  return scm_call_1 (add_trap_proc, trap_func_store[8]);
+}
+
+void
+gdn_trap_info_guile_init (void)
+{
+  list_traps_func = scm_c_public_ref ("system vm trap-state", "list-traps");
+  trap_name_func = scm_c_public_ref ("system vm trap-state", "trap-name");
+  trap_enabled_func =
+      scm_c_public_ref ("system vm trap-state", "trap-enabled?");
+
+  scm_c_define_gsubr ("gdn-update-traps", 0, 0, 0, scm_update_traps);
+  trap_thunk_store[1] =
+      scm_c_define_gsubr ("trap-thunk-1", 0, 0, 0, scm_trap_thunk_1);
+  trap_thunk_store[2] =
+      scm_c_define_gsubr ("trap-thunk-2", 0, 0, 0, scm_trap_thunk_2);
+  trap_thunk_store[3] =
+      scm_c_define_gsubr ("trap-thunk-3", 0, 0, 0, scm_trap_thunk_3);
+  trap_thunk_store[4] =
+      scm_c_define_gsubr ("trap-thunk-4", 0, 0, 0, scm_trap_thunk_4);
+  trap_thunk_store[5] =
+      scm_c_define_gsubr ("trap-thunk-5", 0, 0, 0, scm_trap_thunk_5);
+  trap_thunk_store[6] =
+      scm_c_define_gsubr ("trap-thunk-6", 0, 0, 0, scm_trap_thunk_6);
+  trap_thunk_store[7] =
+      scm_c_define_gsubr ("trap-thunk-7", 0, 0, 0, scm_trap_thunk_7);
+  trap_thunk_store[8] =
+      scm_c_define_gsubr ("trap-thunk-8", 0, 0, 0, scm_trap_thunk_8);
 }

@@ -383,10 +383,10 @@
     (unless (char-ready?)
       (display "poop>" %gdn-prompt-port))
     (force-output)
-    (run-hook before-read-hook)
-    (%gdn-update-thread-info)
-    (%gdn-update-environment-info (gdn-get-environment))
-    (gdn-update-backtrace
+    ;; (run-hook before-read-hook)
+    ;; (%gdn-update-thread-info)
+    ;; (%gdn-update-environment-info (gdn-get-environment))
+    #;(gdn-update-backtrace
      (vector-ref (__stack->vector (make-stack #t
                                               8 ; layers to get out of repl-reader
                                               )) 0))
@@ -426,7 +426,7 @@ interpreter."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Module handlers
 
-(define (gdn-module-defined-hook directory)
+#;(define (gdn-module-defined-hook directory)
   "Inform Guidance every time a module is loaded"
   (let* ((name (module-name directory))
          ;; NAME is a list of symbols, e.g. '(srfi srfi-1)

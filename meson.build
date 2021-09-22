@@ -14,6 +14,9 @@ if meson.get_compiler('c').get_id() == 'gcc'
   '-Werror=shadow',
   '-fexceptions',
   '-fvar-tracking',
+  '-fsanitize=address',
+  '-fsanitize=leak',
+  '-fsanitize=undefined',
   '-fanalyzer'], language : 'c')
 endif
 

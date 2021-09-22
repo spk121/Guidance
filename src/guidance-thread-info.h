@@ -30,8 +30,10 @@ G_BEGIN_DECLS
 #define GDN_THREAD_INFO_TYPE (gdn_thread_info_get_type ())
 G_DECLARE_FINAL_TYPE (GdnThreadInfo, gdn_thread_info, GDN, THREAD_INFO, GObject)
 
-void gdn_thread_info_store_update (GListStore *store);
 const char *gdn_thread_info_get_name (GdnThreadInfo *info);
 gboolean    gdn_thread_info_get_active (GdnThreadInfo *info);
+GListStore *gdn_thread_info_get_model (void);
+
+void gdn_thread_info_guile_init (void);
 
 G_END_DECLS

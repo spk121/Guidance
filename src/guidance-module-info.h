@@ -23,20 +23,9 @@
 
 G_BEGIN_DECLS
 
-typedef enum gdn_module_info_category_t
-{
-  GDN_MODULE_INFO_CATEGORY_UNKNOWN = 0,
-  GDN_MODULE_INFO_CATEGORY_LIBRARY,
-  GDN_MODULE_INFO_CATEGORY_MODULE,
-  GDN_MODULE_INFO_CATEGORY_PROCEDURE,
-} GdnModuleInfoCategory;
-
-#define GDN_MODULE_INFO_CATEGORY_TYPE (gdn_module_info_category_get_type ())
-
 #define GDN_MODULE_INFO_TYPE (gdn_module_info_get_type ())
 G_DECLARE_FINAL_TYPE (GdnModuleInfo, gdn_module_info, GDN, MODULE_INFO, GObject)
 
-void gdn_module_info_store_update (void);
 void gdn_module_info_guile_init (void);
 
 GtkTreeListModel *gdn_module_info_get_tree_model (void);
@@ -44,4 +33,7 @@ gboolean          gdn_module_info_is_top_level (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_module (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_procedure (GdnModuleInfo *info);
 const char *      gdn_module_info_get_name (GdnModuleInfo *info);
+void              gdn_module_info_add_trap (GdnModuleInfo *info);
+char *            gdn_module_info_get_abs_path (GdnModuleInfo *info);
+
 G_END_DECLS

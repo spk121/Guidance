@@ -108,29 +108,18 @@ static void add_simple_action (GdnApplicationWindow *self,
                                GCallback             callback);
 static char *xread (int fd);
 
-static void module_setup (GtkListItemFactory *factory, GtkListItem *list_item);
-static void module_teardown (GtkListItemFactory *factory,
-                             GtkListItem *       list_item);
-static void module_bind (GtkListItemFactory *factory, GtkListItem *list_item);
-static void
-module_activate (GtkListView *list, guint position, gpointer unused);
-
 static void environment_key_setup (GtkListItemFactory *factory,
                                    GtkListItem *       list_item);
 static void environment_key_bind (GtkListItemFactory *factory,
                                   GtkListItem *       list_item);
 static void environment_key_unbind (GtkListItemFactory *factory,
                                     GtkListItem *       list_item);
-static void environment_key_teardown (GtkListItemFactory *factory,
-                                      GtkListItem *       list_item);
 static void environment_value_setup (GtkListItemFactory *factory,
                                      GtkListItem *       list_item);
 static void environment_value_bind (GtkListItemFactory *factory,
                                     GtkListItem *       list_item);
 static void environment_value_unbind (GtkListItemFactory *factory,
                                       GtkListItem *       list_item);
-static void environment_value_teardown (GtkListItemFactory *factory,
-                                        GtkListItem *       list_item);
 
 // static void environment_activate(GtkListView *list, guint position, gpointer
 // unused);
@@ -256,8 +245,6 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
                     G_CALLBACK (environment_key_bind), self);
   g_signal_connect (environment_key_column_factory, "unbind",
                     G_CALLBACK (environment_key_unbind), self);
-  g_signal_connect (environment_key_column_factory, "teardown",
-                    G_CALLBACK (environment_key_teardown), self);
   gtk_column_view_column_set_factory (
       self->environment_key_column,
       GTK_LIST_ITEM_FACTORY (environment_key_column_factory));
@@ -271,8 +258,6 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
                     G_CALLBACK (environment_value_bind), self);
   g_signal_connect (environment_value_column_factory, "unbind",
                     G_CALLBACK (environment_value_unbind), self);
-  g_signal_connect (environment_value_column_factory, "teardown",
-                    G_CALLBACK (environment_value_teardown), self);
   gtk_column_view_column_set_factory (
       self->environment_value_column,
       GTK_LIST_ITEM_FACTORY (environment_value_column_factory));
@@ -432,12 +417,14 @@ handle_after_sweep (GdnLisp *lisp, gpointer user_data)
   g_assert (user_data == NULL);
   /* When called, we reveal the sweep image for a second. */
   gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), TRUE);
-  g_timeout_add (2000, clear_gc, NULL);
+  g_timeout_add (2000, clear_sweep, NULL);
 }
 
 gboolean
 poll_terminal_text2 (gint fd, GIOCondition condition, gpointer user_data)
 {
+  g_assert (user_data != NULL);
+
   GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
   // g_critical ("POLL TERMINAL");
   GtkTextView *  view = self->terminal_text_view;
@@ -526,48 +513,10 @@ poll_terminal_prompt2 (gint fd, GIOCondition condition, gpointer user_data)
 }
 
 static void
-module_setup (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  GtkLabel *label;
-
-  label = gtk_label_new (NULL);
-  gtk_list_item_set_child (list_item, label);
-}
-
-static void
-module_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  GtkLabel *label;
-
-  label = gtk_list_item_get_child (list_item);
-  if (label)
-    g_object_unref (label);
-}
-
-static void
-module_bind (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  GtkLabel *     label;
-  GdnModuleInfo *info;
-
-  label = gtk_list_item_get_child (list_item);
-  GObject *obj = gtk_list_item_get_item (list_item);
-  if (list_item)
-    {
-      info = GDN_MODULE_INFO (obj);
-      // gtk_label_set_text (label, gdn_module_info_get_name (info));
-    }
-}
-
-static void
-module_activate (GtkListView *list, guint position, gpointer unused)
-{
-  // gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
-}
-
-static void
 environment_key_setup (GtkListItemFactory *factory, GtkListItem *list_item)
 {
+  g_assert (factory != NULL);
+
   GtkExpander *expander;
   GtkLabel *   label;
 
@@ -584,6 +533,8 @@ environment_key_setup (GtkListItemFactory *factory, GtkListItem *list_item)
 static void
 environment_key_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
+  g_assert (factory != NULL);
+
   GtkTreeListRow *list_row;
   GtkWidget *     expander;
   GtkWidget *     label;
@@ -602,25 +553,21 @@ environment_key_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 static void
 environment_key_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
-  GtkTreeListRow *list_row;
+  g_assert (factory != NULL);
+
   GtkWidget *     expander;
   GtkWidget *     label;
 
-  list_row = gtk_list_item_get_item (list_item);
   expander = gtk_list_item_get_child (list_item);
   label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
   gtk_label_set_label (GTK_LABEL (label), "");
 }
 
 static void
-environment_key_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_debug ("environment_key_teardown");
-}
-
-static void
 environment_value_setup (GtkListItemFactory *factory, GtkListItem *list_item)
 {
+  g_assert (factory != NULL);
+
   GtkLabel *label;
 
   label = gtk_label_new (NULL);
@@ -633,8 +580,9 @@ environment_value_setup (GtkListItemFactory *factory, GtkListItem *list_item)
 static void
 environment_value_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
+  g_assert (factory != NULL);
+
   GtkTreeListRow *list_row;
-  GtkWidget *     expander;
   GtkLabel *      label;
   gpointer        item;
 
@@ -648,18 +596,12 @@ environment_value_bind (GtkListItemFactory *factory, GtkListItem *list_item)
 static void
 environment_value_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
 {
-  GtkTreeListRow *list_row;
+  g_assert (factory != NULL);
+
   GtkWidget *     label;
 
-  list_row = gtk_list_item_get_item (list_item);
   label = gtk_list_item_get_child (list_item);
   gtk_label_set_label (GTK_LABEL (label), "");
-}
-
-static void
-environment_value_teardown (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_debug ("environment_value_teardown");
 }
 
 ////////////////////////////////////////////////////////////////

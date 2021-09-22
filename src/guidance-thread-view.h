@@ -26,5 +26,4 @@ G_BEGIN_DECLS
 
 G_DECLARE_FINAL_TYPE (GdnThreadView, gdn_thread_view, GDN, THREAD_VIEW, GtkBox)
 
-void gdn_thread_view_guile_init (void);
 G_END_DECLS

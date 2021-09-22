@@ -211,7 +211,7 @@ gdn_environment_info_update_one (const char *category,
       temp_info->key = g_strdup (key);
       temp_info->value = g_strdup (value);
       temp_info->list = NULL;
-      g_slist_append (category_info->list, temp_info);
+      category_info->list = g_slist_append (category_info->list, temp_info);
     }
 }
 
