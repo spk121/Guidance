@@ -143,7 +143,6 @@ procedure_trap_activate (GtkButton *self, gpointer user_data)
   GdnModuleInfo *info = GDN_MODULE_INFO (user_data);
 
   // FIXME: add a confirmation dialog
-
   gdn_module_info_add_trap (info);
 }
 

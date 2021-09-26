@@ -1,0 +1,48 @@
+  <template class="GtkStackPage" parent="GtkApplicationWindow">
+                          <object class="GtkStackPage">
+                            <property name="name">terminal</property>
+                            <property name="title">Terminal</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <child>
+                                      <object class="GtkTextView" id="terminal_text_view">
+                                        <property name="hexpand">True</property>
+                                        <property name="vexpand">True</property>
+                                        <property name="wrap-mode">char</property>
+                                        <property name="buffer">terminal_text_buffer</property>
+                                        <style>
+                                          <class name="terminal_text_buffer" />
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <child>
+                                      <object class="GtkLabel" id="terminal_prompt_label">
+                                        <property name="label">prompt&gt;</property>
+                                        <style>
+                                          <class name="terminal_prompt" />
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkEntry" id="terminal_input_entry">
+                                        <property name="hexpand">True</property>
+                                        <property name="placeholder-text">Enter Guile commands here</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkMenuButton">
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </child>

@@ -1,35 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk+" version="4.2.1"/>
-  <object class="GtkTextTagTable" id="terminal_text_tag_table">
-    <child type="tag">
-      <object class="GtkTextTag">
-        <property name="name">input</property>
-        <property name="weight">500</property>
-        <property name="weight-set">True</property>
-        <property name="family">monospace</property>
-      </object>
-    </child>
-    <child type="tag">
-      <object class="GtkTextTag">
-        <property name="name">error</property>
-        <property name="weight">500</property>
-        <property name="weight-set">True</property>
-        <property name="foreground">saddlebrown</property>
-      </object>
-    </child>
-    <child type="tag">
-      <object class="GtkTextTag">
-        <property name="name">warning</property>
-        <property name="weight">500</property>
-        <property name="weight-set">True</property>
-        <property name="background">rosybrown</property>
-      </object>
-    </child>
-  </object>
-  <object class="GtkTextBuffer" id="terminal_text_buffer">
-    <property name="tag-table">terminal_text_tag_table</property>
-  </object>
   <template class="GdnApplicationWindow" parent="GtkApplicationWindow">
     <property name="default-width">600</property>
     <property name="default-height">300</property>
@@ -210,45 +181,7 @@
                             <property name="name">terminal</property>
                             <property name="title">Terminal</property>
                             <property name="child">
-                              <object class="GtkBox">
-                                <property name="orientation">vertical</property>
-                                <child>
-                                  <object class="GtkScrolledWindow">
-                                    <child>
-                                      <object class="GtkTextView" id="terminal_text_view">
-                                        <property name="hexpand">True</property>
-                                        <property name="vexpand">True</property>
-                                        <property name="wrap-mode">char</property>
-                                        <property name="buffer">terminal_text_buffer</property>
-                                        <style>
-                                          <class name="terminal_text_buffer" />
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <child>
-                                      <object class="GtkLabel" id="terminal_prompt_label">
-                                        <property name="label">prompt&gt;</property>
-                                        <style>
-                                          <class name="terminal_prompt" />
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkEntry" id="terminal_input_entry">
-                                        <property name="hexpand">True</property>
-                                        <property name="placeholder-text">Enter Guile commands here</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkMenuButton">
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
+                              <object class="GtkBox" id="terminal_box">
                               </object>
                             </property>
                           </object>
@@ -258,70 +191,7 @@
                             <property name="name">backtrace</property>
                             <property name="title">Backtrace</property>
                             <property name="child">
-                              <object class="GtkPaned">
-                                <property name="wide-handle">True</property>
-                                <child>
-                                  <object class="GtkFrame">
-                                    <child>
-                                      <object class="GtkScrolledWindow" id="backtrace_window">
-                                        <property name="hexpand">True</property>
-                                        <property name="vexpand">True</property>
-                                        <child>
-                                          <object class="GtkColumnView" id="backtrace_stack_column_view">
-                                            <property name="single-click-activate">True</property>
-                                            <child>
-                                              <object class="GtkColumnViewColumn" id="backtrace_stack_frame_column">
-                                                <property name="title">Frame</property>
-                                                
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkColumnViewColumn" id="backtrace_stack_location_column">
-                                                <property name="title">Location</property>
-                                              </object>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkScrolledWindow" id="backtrace_variables_window">
-                                    <property name="hexpand">True</property>
-                                    <property name="vexpand">True</property>
-                                    <child>
-                                      <object class="GtkColumnView" id="backtrace_variables_column_view">
-                                        <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_variables_type_column">
-                                            <property name="title">Type</property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_variables_name_column">
-                                            <property name="title">Name</property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_variables_representation_column">
-                                            <property name="title">Representation</property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_variables_value_column">
-                                            <property name="title">Value</property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="GtkColumnViewColumn" id="backtrace_variables_info_column">
-                                            <property name="title">Info</property>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
+                              <object class="GtkBox" id="backtrace_box"/>
                             </property>
                           </object>
                         </child>                        
@@ -353,9 +223,9 @@
                         <child>
                           <object class="GtkStackPage">
                             <property name="name">traps</property>
-                            <property name="title">Breakpoints</property>
+                            <property name="title">Traps</property>
                             <property name="child">
-                              <object class="GtkScrolledWindow">
+                              <object class="GtkScrolledWindow" id="trap_window">
                                 <property name="hexpand">True</property>
                                 <property name="vexpand">True</property>
                                 <child>

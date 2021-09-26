@@ -188,6 +188,9 @@ gdn_module_info_get_abs_path (GdnModuleInfo *info)
   return get_module_abs_path (module, NULL);
 }
 
+/* This procedure is activated by clicking on a procedure in the
+ * module viewer.  Unfortunately, we need to add the trap in the main
+ * Guile thread. Adding the trap in the GTK thread doesn't work. */
 void
 gdn_module_info_add_trap (GdnModuleInfo *info)
 {
@@ -198,8 +201,10 @@ gdn_module_info_add_trap (GdnModuleInfo *info)
       if (1 || scm_is_true (scm_procedure_p (scm_variable_ref (procvar))))
         {
           SCM ret;
-          ret = scm_call_1 (add_trap_proc, scm_variable_ref (procvar));
-          g_debug ("added trap for %s %d", info->name, scm_to_int32 (ret));
+          /* Enqueue adding this trap in the primary Guile thread. A trap
+           * added in the GTK thread won't get hit. */
+          gdn_trap_info_add_proc_trap_async (scm_variable_ref (procvar));
+          g_debug ("added trap for %s", info->name);
         }
       else
         g_debug ("failed to add trap for %s, not a module", info->name);
@@ -422,8 +427,6 @@ gdn_module_info_guile_init (void)
   add_binding_key_value_proc =
       scm_c_define_gsubr ("%gdn-add-binding-key-value", 2, 0, 0,
                           (scm_t_subr) scm_add_binding_key_value);
-  add_trap_proc =
-      scm_c_public_ref ("system vm trap-state", "add-trap-at-procedure-call!");
   module_filename_proc = scm_variable_ref (scm_c_lookup ("module-filename"));
   module_name_proc = scm_variable_ref (scm_c_lookup ("module-name"));
   module_obarray_proc = scm_variable_ref (scm_c_lookup ("module-obarray"));

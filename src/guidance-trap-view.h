@@ -1,4 +1,4 @@
-/* guidance-application-window.h
+/* guidance-trap-view.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -19,20 +19,11 @@
 #pragma once
 
 #include <gtk/gtk.h>
+#include <libguile.h>
 
 G_BEGIN_DECLS
+#define GDN_TYPE_TRAP_VIEW (gdn_trap_view_get_type ())
 
-#define GDN_TYPE_APPLICTION_WINDOW (gdn_application_window_get_type ())
+G_DECLARE_FINAL_TYPE (GdnTrapView, gdn_trap_view, GDN, TRAP_VIEW, GtkBox)
 
-G_DECLARE_FINAL_TYPE (GdnApplicationWindow,
-                      gdn_application_window,
-                      GDN,
-                      APPLICATION_WINDOW,
-                      GtkApplicationWindow)
-
-void setup_thread_name (GtkSignalListItemFactory *factory,
-                        GtkListItem *             list_item);
-void bind_thread_name (GtkSignalListItemFactory *factory,
-                       GtkListItem *             list_item);
-void gdn_application_window_show_page (const char *name);
 G_END_DECLS

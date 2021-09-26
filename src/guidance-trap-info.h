@@ -28,5 +28,10 @@ G_DECLARE_FINAL_TYPE (GdnTrapInfo, gdn_trap_info, GDN, TRAP_INFO, GObject)
 
 void gdn_trap_info_store_update (GListStore *store, int trap_cur);
 void gdn_trap_info_guile_init (void);
+GListStore *gdn_trap_info_get_model (void);
+void        gdn_trap_info_add_proc_trap_async (SCM proc);
+int         gdn_trap_info_get_index (GdnTrapInfo *info);
+const char *gdn_trap_info_get_name (GdnTrapInfo *info);
+gboolean *  gdn_trap_info_get_active (GdnTrapInfo *info);
 
 G_END_DECLS

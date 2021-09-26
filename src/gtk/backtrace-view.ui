@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="4.2.1"/>
+  <template class="GdnBacktraceView" parent="GtkBox">
+    <child>                  
+      <object class="GtkPaned">
+        <property name="wide-handle">True</property>
+        <child>
+          <object class="GtkFrame">
+            <child>
+              <object class="GtkScrolledWindow" id="stack_window">
+                <property name="hexpand">True</property>
+                <property name="vexpand">True</property>
+                <child>
+                  <object class="GtkColumnView" id="stack_column_view">
+                    <property name="single-click-activate">True</property>
+                    <child>
+                      <object class="GtkColumnViewColumn" id="stack_frame_column">
+                        <property name="title">Frame</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkColumnViewColumn" id="stack_location_column">
+                        <property name="title">Location</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow" id="variables_window">
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkColumnView" id="variables_column_view">
+                <child>
+                  <object class="GtkColumnViewColumn" id="variables_type_column">
+                    <property name="title">Type</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkColumnViewColumn" id="variables_name_column">
+                    <property name="title">Name</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkColumnViewColumn" id="variables_representation_column">
+                    <property name="title">Representation</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkColumnViewColumn" id="variables_value_column">
+                    <property name="title">Value</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkColumnViewColumn" id="variables_info_column">
+                    <property name="title">Info</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

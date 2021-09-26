@@ -27,7 +27,9 @@
 #include "guidance-module-info.h"
 #include "guidance-module-view.h"
 #include "guidance-source-view.h"
+#include "guidance-terminal-view.h"
 #include "guidance-thread-view.h"
+#include "guidance-trap-view.h"
 #include <glib-unix.h>
 
 struct _GdnApplicationWindow
@@ -36,17 +38,14 @@ struct _GdnApplicationWindow
 
   GtkStack *main_stack;
 
-  /* Interpreter and terminal tab */
-  GdnLisp *      lisp;
-  GList *        history;
-  GList *        history_cur;
-  GtkTextView *  terminal_text_view;
-  GtkTextBuffer *terminal_text_buffer;
-  GtkLabel *     terminal_prompt_label;
-  GtkEntry *     terminal_input_entry;
+  /* Terminal tab */
+  GtkBox *terminal_box;
 
   /* Threads tab */
   GtkScrolledWindow *thread_window;
+
+  /* Traps tab */
+  GtkScrolledWindow *trap_window;
 
   /* Module tab */
   GtkScrolledWindow *module_window;
@@ -57,15 +56,7 @@ struct _GdnApplicationWindow
   GtkColumnViewColumn *environment_value_column;
 
   /* Backtrace tab */
-  GtkColumnView *      backtrace_stack_column_view;
-  GtkColumnViewColumn *backtrace_stack_frame_column;
-  GtkColumnViewColumn *backtrace_stack_location_column;
-  GtkColumnView *      backtrace_variables_column_view;
-  GtkColumnViewColumn *backtrace_variables_type_column;
-  GtkColumnViewColumn *backtrace_variables_name_column;
-  GtkColumnViewColumn *backtrace_variables_representation_column;
-  GtkColumnViewColumn *backtrace_variables_value_column;
-  GtkColumnViewColumn *backtrace_variables_info_column;
+  GtkBox *backtrace_box;
 
   /* Source tab */
   GtkTextView *source_view;
@@ -88,7 +79,6 @@ GdnApplicationWindow *_self;
 static void     activate_launch (GSimpleAction *simple,
                                  GVariant *     parameter,
                                  gpointer       user_data);
-static void     activate_terminal_entry (GtkEntry *entry, gpointer user_data);
 static void     handle_css_parsing_error (GtkCssProvider *provider,
                                           GtkCssSection * section,
                                           GError *        error,
@@ -96,17 +86,9 @@ static void     handle_css_parsing_error (GtkCssProvider *provider,
 static void     handle_after_gc (GdnLisp *lisp, gpointer user_data);
 static void     handle_after_sweep (GdnLisp *lisp, gpointer user_data);
 
-static gboolean
-poll_terminal_text2 (gint fd, GIOCondition condition, gpointer user_data);
-static gboolean
-poll_terminal_prompt2 (gint fd, GIOCondition condition, gpointer user_data);
-static gboolean
-poll_terminal_error2 (gint fd, GIOCondition condition, gpointer user_data);
-
 static void add_simple_action (GdnApplicationWindow *self,
                                const char *          name,
                                GCallback             callback);
-static char *xread (int fd);
 
 static void environment_key_setup (GtkListItemFactory *factory,
                                    GtkListItem *       list_item);
@@ -141,13 +123,13 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   BIND (main_stack);
 
   /* Terminal tab */
-  BIND (terminal_text_view);
-  BIND (terminal_text_buffer);
-  BIND (terminal_prompt_label);
-  BIND (terminal_input_entry);
+  BIND (terminal_box);
 
   /* Threads tab */
   BIND (thread_window);
+
+  /* Trap tab */
+  BIND (trap_window);
 
   /* Modules tab */
   BIND (module_window);
@@ -158,15 +140,7 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   BIND (environment_value_column);
 
   /* Backtrace tab */
-  BIND (backtrace_stack_column_view);
-  BIND (backtrace_stack_frame_column);
-  BIND (backtrace_stack_location_column);
-  BIND (backtrace_variables_column_view);
-  BIND (backtrace_variables_type_column);
-  BIND (backtrace_variables_name_column);
-  BIND (backtrace_variables_representation_column);
-  BIND (backtrace_variables_value_column);
-  BIND (backtrace_variables_info_column);
+  BIND (backtrace_box);
 
   /* Source Tab */
   BIND (source_label);
@@ -177,25 +151,6 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 }
 
 static void
-application_window_init_lisp_and_terminal_tab (GdnApplicationWindow *self)
-{
-  self->lisp = gdn_lisp_new ();
-  self->history = NULL;
-  self->history_cur = NULL;
-
-  g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_fd (self->lisp),
-                      G_IO_IN, poll_terminal_text2, self, NULL);
-  g_unix_fd_add_full (G_PRIORITY_DEFAULT,
-                      gdn_lisp_get_input_prompt_fd (self->lisp), G_IO_IN,
-                      poll_terminal_prompt2, self, NULL);
-  g_unix_fd_add_full (G_PRIORITY_DEFAULT,
-                      gdn_lisp_get_input_error_fd (self->lisp), G_IO_IN,
-                      poll_terminal_error2, self, NULL);
-  g_signal_connect (self->terminal_input_entry, "activate",
-                    G_CALLBACK (activate_terminal_entry), self);
-}
-
-static void
 application_window_init_threads_tab (GdnApplicationWindow *self)
 {
   GdnThreadView *thread_view;
@@ -203,6 +158,15 @@ application_window_init_threads_tab (GdnApplicationWindow *self)
   thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
                                  GTK_WIDGET (thread_view));
+}
+
+static void
+application_window_init_terminal_tab (GdnApplicationWindow *self)
+{
+  GdnTerminalView *terminal_view;
+
+  terminal_view = g_object_new (GDN_TYPE_TERMINAL_VIEW, NULL);
+  gtk_box_append (self->terminal_box, terminal_view);
 }
 
 static void
@@ -266,15 +230,10 @@ application_window_init_environment_tab (GdnApplicationWindow *self)
 static void
 application_window_init_backtrace_tab (GdnApplicationWindow *self)
 {
-  gdn_backtrace_view_init (
-      self->backtrace_stack_column_view, self->backtrace_stack_frame_column,
-      self->backtrace_stack_location_column,
-      self->backtrace_variables_column_view,
-      self->backtrace_variables_type_column,
-      self->backtrace_variables_name_column,
-      self->backtrace_variables_representation_column,
-      self->backtrace_variables_value_column,
-      self->backtrace_variables_info_column, GTK_WIDGET (self->main_stack));
+  GdnBacktraceView *backtrace_view;
+
+  backtrace_view = g_object_new (GDN_TYPE_BACKTRACE_VIEW, NULL);
+  gtk_box_append (self->backtrace_box, backtrace_view);
 }
 
 static void
@@ -292,19 +251,20 @@ gdn_application_window_init (GdnApplicationWindow *self)
       gdk_display_get_default (), GTK_STYLE_PROVIDER (provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  application_window_init_lisp_and_terminal_tab (self);
   application_window_init_threads_tab (self);
+  application_window_init_terminal_tab (self);
   application_window_init_modules_tab (self);
   application_window_init_environment_tab (self);
   application_window_init_backtrace_tab (self);
 
-  gdn_source_view_set_paths (gdn_lisp_get_paths (self->lisp));
+  gdn_source_view_set_paths (gdn_lisp_get_paths ());
   gdn_source_view_init (self->source_view, self->source_label);
 
-  g_signal_connect (self->lisp, "after-gc", G_CALLBACK (handle_after_gc), NULL);
-  g_signal_connect (self->lisp, "after-sweep", G_CALLBACK (handle_after_sweep),
-                    NULL);
-  gdn_lisp_spawn_argv_thread (self->lisp, NULL, FALSE);
+  g_signal_connect (gdn_lisp_get_lisp (), "after-gc",
+                    G_CALLBACK (handle_after_gc), NULL);
+  g_signal_connect (gdn_lisp_get_lisp (), "after-sweep",
+                    G_CALLBACK (handle_after_sweep), NULL);
+  gdn_lisp_run ();
   _self = self;
 }
 
@@ -312,63 +272,6 @@ gdn_application_window_init (GdnApplicationWindow *self)
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
 
-/* The operater has hit enter on the GtkEntry in the Terminal widget.
- * Send that text to the Lisp interpreter. */
-static void
-activate_terminal_entry (GtkEntry *entry, gpointer user_data)
-{
-  GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
-  const char *          text;
-
-  text = gtk_entry_buffer_get_text (gtk_entry_get_buffer (entry));
-  int fd = gdn_lisp_get_output_fd (self->lisp);
-  int bytes_written = write (fd, text, strlen (text));
-  if (bytes_written == -1)
-    g_critical ("Could not push text to the Guile interpreter");
-  if (write (fd, "\n", 1) == -1)
-    g_critical ("Could not push newline to the Guile interpreter");
-  fsync (fd);
-
-  /* Write the prompt and the text from the input GtkEntry box onto the main
-   * output widget */
-  GtkTextView *  view = self->terminal_text_view;
-  GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-  GtkTextIter    iter_start, iter_end;
-  GtkTextMark *  mark_start;
-  const char *   prompt = gtk_label_get_text (self->terminal_prompt_label);
-
-  /* Store the 'before' location */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  mark_start =
-      gtk_text_buffer_create_mark (text_buffer, NULL, &iter_start, TRUE);
-
-  /* Write the prompt and the input text to the main output widget */
-  gtk_text_buffer_insert_at_cursor (text_buffer, prompt, strlen (prompt));
-  gtk_text_buffer_insert_at_cursor (text_buffer, text, strlen (text));
-  gtk_text_buffer_insert_at_cursor (text_buffer, "\n", 1);
-
-  /* Change the presentation for the prompt and entry text */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_end,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  gtk_text_buffer_apply_tag_by_name (text_buffer, "input", &iter_start,
-                                     &iter_end);
-  gtk_text_buffer_delete_mark (text_buffer, mark_start);
-
-  gtk_text_view_scroll_mark_onscreen (view,
-                                      gtk_text_buffer_get_insert (text_buffer));
-
-  /* Append the entry to the history */
-  if (!self->history || strncmp (text, self->history->data, strlen (text)) != 0)
-    self->history =
-        g_list_prepend (self->history, strndup (text, strlen (text)));
-  self->history_cur = self->history;
-
-  /* Then clear the entry box. */
-  gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->terminal_input_entry),
-                             "", 0);
-}
 
 static void
 handle_css_parsing_error (GtkCssProvider *provider,
@@ -418,98 +321,6 @@ handle_after_sweep (GdnLisp *lisp, gpointer user_data)
   /* When called, we reveal the sweep image for a second. */
   gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), TRUE);
   g_timeout_add (2000, clear_sweep, NULL);
-}
-
-gboolean
-poll_terminal_text2 (gint fd, GIOCondition condition, gpointer user_data)
-{
-  g_assert (user_data != NULL);
-
-  GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
-  // g_critical ("POLL TERMINAL");
-  GtkTextView *  view = self->terminal_text_view;
-  GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-
-  /* Get all the text from the read port. */
-  char *buf = xread (fd);
-  int   len = strlen (buf);
-
-  /* Copy it over to the GtkTextView output widget. */
-  if (len > 0)
-    gtk_text_buffer_insert_at_cursor (text_buffer, buf, len);
-  gtk_text_view_scroll_mark_onscreen (view,
-                                      gtk_text_buffer_get_insert (text_buffer));
-  g_free (buf);
-
-  return TRUE;
-}
-
-gboolean
-poll_terminal_error2 (gint fd, GIOCondition condition, gpointer user_data)
-{
-  GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
-
-  GtkTextView *  view = self->terminal_text_view;
-  GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-  char *         buf = xread (fd);
-  int            len = strlen (buf);
-
-  GtkTextIter  iter_start, iter_end;
-  GtkTextMark *mark_start;
-
-  /* Store the 'before' location */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  mark_start =
-      gtk_text_buffer_create_mark (text_buffer, NULL, &iter_start, TRUE);
-
-  /* Copy it over to the GtkTextView output widget. */
-  gtk_text_buffer_insert_at_cursor (text_buffer, buf, len);
-  gtk_text_view_scroll_mark_onscreen (view,
-                                      gtk_text_buffer_get_insert (text_buffer));
-
-  /* Change the presentation for the error text */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_end,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  gtk_text_buffer_apply_tag_by_name (text_buffer, "error", &iter_start,
-                                     &iter_end);
-  gtk_text_buffer_delete_mark (text_buffer, mark_start);
-  g_free (buf);
-
-  return TRUE;
-}
-
-gboolean
-poll_terminal_prompt2 (gint fd, GIOCondition condition, gpointer user_data)
-{
-#define MAX_PROMPT_CODEPOINTS 80
-#define MAX_PROMPT_BYTES (MAX_PROMPT_CODEPOINTS * 3)
-
-  GdnApplicationWindow *self = GDN_APPLICATION_WINDOW (user_data);
-  char *                buf;
-
-  /* Clear out the old label */
-  gtk_label_set_text (self->terminal_prompt_label, "");
-
-  /* Read from the port */
-  buf = xread (fd);
-
-  /* How big a prompt should we handle? */
-  glong u8_len;
-  u8_len = g_utf8_strlen (buf, MAX_PROMPT_BYTES);
-  if (u8_len > MAX_PROMPT_CODEPOINTS)
-    {
-      gchar *substr = g_utf8_substring (buf, 0, MAX_PROMPT_CODEPOINTS);
-      gtk_label_set_text (self->terminal_prompt_label, substr);
-      g_free (substr);
-    }
-  else if (u8_len > 0)
-    gtk_label_set_text (self->terminal_prompt_label, buf);
-
-  g_free (buf);
-
-  return TRUE;
 }
 
 static void
@@ -620,46 +431,10 @@ add_simple_action (GdnApplicationWindow *self,
   g_action_map_add_action (G_ACTION_MAP (self), G_ACTION (action));
 }
 
-static char *
-xread (int fd)
+void
+gdn_application_window_show_page (const char *name)
 {
-#define BLOCK_LEN 1024
-#define MAX_LEN 10 * BLOCK_LEN
-  ssize_t     len, total_len;
-  guint8      buf[BLOCK_LEN];
-  guint8      nullbuf[1] = { '\0' };
-  guint8      badbuf[] = "■\n";
-  GByteArray *gbarray;
-
-  total_len = 0;
-  gbarray = g_byte_array_new ();
-  do
-    {
-      memset (buf, 0, BLOCK_LEN);
-      len = read (fd, buf, BLOCK_LEN);
-      if (len == -1)
-        {
-          g_critical ("reading from Lisp file descriptor failed: %s",
-                      strerror (errno));
-          break;
-        }
-      else if (len == 0)
-        {
-          g_critical ("EOF detected when reading from Lisp file descriptor");
-          break;
-        }
-      else if (total_len <= MAX_LEN)
-        {
-          g_byte_array_append (gbarray, buf, len);
-        }
-      total_len += len;
-    }
-  while (len == BLOCK_LEN);
-  if (total_len > MAX_LEN)
-    {
-      g_critical ("truncating excessive input read from Lisp file descriptor");
-      g_byte_array_append (gbarray, badbuf, sizeof (badbuf));
-    }
-  g_byte_array_append (gbarray, nullbuf, 1);
-  return (char *) g_byte_array_free (gbarray, FALSE);
+  GtkWidget *wigz = gtk_stack_get_child_by_name (_self->main_stack, name);
+  if (wigz != NULL)
+    gtk_stack_set_visible_child (_self->main_stack, wigz);
 }

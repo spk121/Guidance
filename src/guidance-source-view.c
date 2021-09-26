@@ -57,6 +57,10 @@ find_file (const char *rel_path)
 {
   GSList *prefix = _prefixes;
   char *  abs_path;
+
+  if (g_file_test (rel_path, G_FILE_TEST_IS_REGULAR))
+    return rel_path;
+
   while (prefix != NULL)
     {
       abs_path = g_build_filename (prefix->data, rel_path, NULL);

@@ -17,6 +17,7 @@
  */
 
 #include "guidance-trap-info.h"
+#include "guidance-lisp.h"
 
 struct _GdnTrapInfo
 {
@@ -44,9 +45,11 @@ static GParamSpec *properties[N_PROPS] = {
   NULL,
 };
 
+static SCM  add_trap_proc;
 static SCM list_traps_func, trap_name_func, trap_enabled_func;
 static SCM trap_thunk_store[9], trap_func_store[9];
 static int trap_thunk_index = 1;
+GListStore *_store = NULL;
 
 static void
 gdn_trap_info_get_property (GObject *object, unsigned int property_id, GValue *value, GParamSpec *pspec)
@@ -154,7 +157,10 @@ scm_update_traps (void)
 {
   SCM all_traps = scm_vector (scm_call_0 (list_traps_func));
 
-  g_list_store_remove_all (store);
+  if (_store == NULL)
+    _store = g_list_store_new (GDN_TRAP_INFO_TYPE);
+  else
+    g_list_store_remove_all (_store);
 
   for (size_t i = 0; i < scm_c_vector_length (all_traps); i++)
     {
@@ -163,21 +169,20 @@ scm_update_traps (void)
       int          current;
 
       trap = scm_to_int (scm_c_vector_ref (all_traps, i));
-      if (trap == trap_cur)
-        current = TRUE;
-      else
-        current = FALSE;
+      current = FALSE;
       info = trap_info_new_from_trap_id (trap, current);
-      g_list_store_append (store, info);
+      g_list_store_append (_store, info);
     }
+  return scm_vector_length (all_traps);
 }
 
 /* GTK THREAD: This sends sends an async request to Guile to add a
  * trap at a given Guile procedure, at the next async opportunity. */
-int
-gdn_lisp_add_proc_trap_async (SCM proc)
+void
+gdn_trap_info_add_proc_trap_async (SCM proc)
 {
   SCM default_thread = gdn_lisp_get_default_thread ();
+  g_assert (default_thread != NULL);
 
   trap_func_store[trap_thunk_index] = proc;
   scm_system_async_mark_for_thread (trap_thunk_store[trap_thunk_index],
@@ -190,41 +195,64 @@ gdn_lisp_add_proc_trap_async (SCM proc)
 SCM
 scm_trap_thunk_1 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[1] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[1]);
 }
+
 SCM
 scm_trap_thunk_2 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[2] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[2]);
 }
+
 SCM
 scm_trap_thunk_3 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[3] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[3]);
 }
+
 SCM
 scm_trap_thunk_4 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[4] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[4]);
 }
+
 SCM
 scm_trap_thunk_5 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[5] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[5]);
 }
+
 SCM
 scm_trap_thunk_6 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[6] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[6]);
 }
+
 SCM
 scm_trap_thunk_7 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[7] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[7]);
 }
+
 SCM
 scm_trap_thunk_8 (void)
 {
+  g_assert (add_trap_proc != NULL);
+  g_assert (trap_func_store[8] != NULL);
   return scm_call_1 (add_trap_proc, trap_func_store[8]);
 }
 
@@ -253,4 +281,30 @@ gdn_trap_info_guile_init (void)
       scm_c_define_gsubr ("trap-thunk-7", 0, 0, 0, scm_trap_thunk_7);
   trap_thunk_store[8] =
       scm_c_define_gsubr ("trap-thunk-8", 0, 0, 0, scm_trap_thunk_8);
+  add_trap_proc =
+      scm_c_public_ref ("system vm trap-state", "add-trap-at-procedure-call!");
+}
+
+GListStore *
+gdn_trap_info_get_model (void)
+{
+  if (!_store)
+    _store = g_list_store_new (GDN_TRAP_INFO_TYPE);
+  return _store;
+}
+int
+gdn_trap_info_get_index (GdnTrapInfo *info)
+{
+  return info->index;
+}
+
+const char *
+gdn_trap_info_get_name (GdnTrapInfo *info)
+{
+  return info->name;
+}
+gboolean *
+gdn_trap_info_get_active (GdnTrapInfo *info)
+{
+  return info->enabled;
 }

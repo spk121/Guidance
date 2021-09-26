@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="4.2.1"/>
+  <object class="GtkTextTagTable" id="text_tag_table">
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">input</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="family">monospace</property>
+      </object>
+    </child>
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">error</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="foreground">saddlebrown</property>
+      </object>
+    </child>
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">warning</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="background">rosybrown</property>
+      </object>
+    </child>
+  </object>
+  <object class="GtkTextBuffer" id="text_buffer">
+    <property name="tag-table">text_tag_table</property>
+  </object>
+  <template class="GdnTerminalView" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="GtkScrolledWindow">
+        <child>
+          <object class="GtkTextView" id="text_view">
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
+            <property name="wrap-mode">char</property>
+            <property name="buffer">text_buffer</property>
+            <style>
+              <class name="terminal_text_buffer" />
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox">
+        <child>
+          <object class="GtkLabel" id="prompt_label">
+            <property name="label">prompt&gt;</property>
+            <style>
+              <class name="terminal_prompt" />
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="input_entry">
+            <property name="hexpand">True</property>
+            <property name="placeholder-text">Enter Guile commands here</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkMenuButton">
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

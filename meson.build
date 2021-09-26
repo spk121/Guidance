@@ -1,8 +1,11 @@
 project('guidance', 'c',
           version: '0.1.0',
     meson_version: '>= 0.50.0',
-  default_options: [ 'warning_level=3',
+  default_options: [ 'warning_level=1',
                      'c_std=c2x',
+                     'b_sanitize=address',
+                     'b_sanitize=leak',
+                     'b_sanitize=undefined'
                    ],
 )
 
@@ -14,9 +17,6 @@ if meson.get_compiler('c').get_id() == 'gcc'
   '-Werror=shadow',
   '-fexceptions',
   '-fvar-tracking',
-  '-fsanitize=address',
-  '-fsanitize=leak',
-  '-fsanitize=undefined',
   '-fanalyzer'], language : 'c')
 endif
 

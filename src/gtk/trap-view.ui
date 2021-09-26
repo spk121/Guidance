@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="4.2.1"/>
+  <template class="GdnTrapView" parent="GtkBox">
+    <child>
+      <object class="GtkScrolledWindow" id="scrolled_window">
+        <property name="hexpand">True</property>
+        <property name="vexpand">True</property>
+        <child>
+          <object class="GtkColumnView" id="column_view">
+            <property name="single-click-activate">True</property>
+            <child>
+              <object class="GtkColumnViewColumn" id="name_col">
+                <property name="title">Thread ID</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkColumnViewColumn" id="index_col">
+                <property name="title">ID</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkColumnViewColumn" id="active_col">
+                <property name="title">Active</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

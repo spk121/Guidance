@@ -50,22 +50,17 @@ typedef enum
 G_DECLARE_FINAL_TYPE (GdnLisp, gdn_lisp, GDN, LISP, GObject)
 
 GdnLisp *             gdn_lisp_new (void);
-void                  gdn_lisp_spawn_repl_thread (GdnLisp *lisp);
-void                  gdn_lisp_spawn_argv_thread (GdnLisp *lisp,
-                                                  char **  argv,
-                                                  gboolean break_on_entry);
-void                  gdn_lisp_spawn_args_thread (GdnLisp *   lisp,
-                                                  const char *args,
-                                                  gboolean    break_on_entry);
+GdnLisp *             gdn_lisp_get_lisp (void);
+void                  gdn_lisp_run (void);
 void                  gdn_lisp_cancel_thread (GdnLisp *lisp);
 gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
 void                  gdn_lisp_exit (GdnLisp *lisp);
 void                  gdn_lisp_break (GdnLisp *lisp);
 void                  gdn_lisp_continue (GdnLisp *lisp, GdnLispCommand command);
-int                   gdn_lisp_get_input_fd (GdnLisp *lisp);
-int                   gdn_lisp_get_input_error_fd (GdnLisp *lisp);
-int                   gdn_lisp_get_input_prompt_fd (GdnLisp *lisp);
-int                   gdn_lisp_get_output_fd (GdnLisp *lisp);
+int                   gdn_lisp_get_input_fd (void);
+int                   gdn_lisp_get_input_error_fd (void);
+int                   gdn_lisp_get_input_prompt_fd (void);
+int                   gdn_lisp_get_output_fd (void);
 int                   gdn_lisp_set_input_callback (GdnLisp *            lisp,
                                                    GMainContext *       ctx,
                                                    GPollableSourceFunc *func,
@@ -74,7 +69,8 @@ GListStore *          gdn_lisp_get_environment (GdnLisp *lisp);
 GListStore *          gdn_lisp_get_threads (GdnLisp *lisp);
 GListStore *          gdn_lisp_get_modules (GdnLisp *lisp);
 GListStore *          gdn_lisp_get_backtrace (GdnLisp *lisp);
-char **               gdn_lisp_get_paths (GdnLisp *lisp);
+char **               gdn_lisp_get_paths (void);
+SCM                   gdn_lisp_get_default_thread (void);
 
 /*
  * Requests an update of the environment info store.

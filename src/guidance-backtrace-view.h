@@ -22,16 +22,9 @@
 #include <libguile.h>
 
 G_BEGIN_DECLS
-void gdn_backtrace_view_init (GtkColumnView *      stack_view,
-                              GtkColumnViewColumn *stack_frame_col,
-                              GtkColumnViewColumn *location_col,
-                              GtkColumnView *      variable_view,
-                              GtkColumnViewColumn *type_col,
-                              GtkColumnViewColumn *name_col,
-                              GtkColumnViewColumn *representation_col,
-                              GtkColumnViewColumn *value_col,
-                              GtkColumnViewColumn *info_col,
-                              GtkWidget *          main_stack);
+#define GDN_TYPE_BACKTRACE_VIEW (gdn_backtrace_view_get_type ())
+G_DECLARE_FINAL_TYPE (
+    GdnBacktraceView, gdn_backtrace_view, GDN, BACKTRACE_VIEW, GtkBox)
 
 void gdn_backtrace_view_guile_init (void);
 G_END_DECLS

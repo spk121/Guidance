@@ -100,6 +100,8 @@
 ;; It does the trick where it builds it upside-down then reverses at
 ;; the end.
 (define (gdn-get-backtrace frame)
+  (unless frame
+    (set! frame (vector-ref (__stack->vector (make-stack #t 1)) 0)))
   (let loop ((frame frame)
              (backtrace '()))
     (cond
