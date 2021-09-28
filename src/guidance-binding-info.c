@@ -31,8 +31,6 @@ struct _GdnBindingInfo
 
 G_DEFINE_TYPE (GdnBindingInfo, gdn_binding_info, G_TYPE_OBJECT)
 
-static GListStore *_store = NULL;
-
 enum
 {
   PROP_0,
@@ -47,6 +45,16 @@ enum
 static GParamSpec *properties[N_PROPS] = {
   NULL,
 };
+
+////////////////////////////////////////////////////////////////
+// DECLARATIONS
+////////////////////////////////////////////////////////////////
+
+static GdnBindingInfo *info_new_from_scm (SCM info);
+
+////////////////////////////////////////////////////////////////
+// INITIALIZATION
+////////////////////////////////////////////////////////////////
 
 static void
 gdn_binding_info_get_property (GObject *object, unsigned int property_id, GValue *value, GParamSpec *pspec)
@@ -111,7 +119,6 @@ gdn_binding_info_class_init (GdnBindingInfoClass *klass)
                                                 NULL, G_PARAM_READABLE);
   properties[PROP_EXTRA] = g_param_spec_string ("value", "value", "extra info",
                                                 NULL, G_PARAM_READABLE);
-
 }
 
 static void
@@ -119,47 +126,9 @@ gdn_binding_info_init (G_GNUC_UNUSED GdnBindingInfo *self)
 {
 }
 
-static GdnBindingInfo *
-info_new_from_scm (SCM info)
-{
-  GdnBindingInfo *self = g_object_new (GDN_BINDING_INFO_TYPE, NULL);
-
-  self->name = scm_to_utf8_string (scm_c_vector_ref (info, 0));
-  self->argument = scm_is_true (scm_c_vector_ref (info, 1));
-  self->representation = scm_to_utf8_string (scm_c_vector_ref (info, 2));
-  self->value = scm_to_utf8_string (scm_c_vector_ref (info, 3));
-  self->extra = scm_to_utf8_string (scm_c_vector_ref (info, 4));
-
-  return self;
-}
-
-void
-gdn_binding_info_update_all (SCM all_bindings)
-{
-  SCM             entry;
-  GdnBindingInfo *info;
-  size_t          i;
-
-  if (_store == NULL)
-    _store = g_list_store_new (GDN_BINDING_INFO_TYPE);
-
-  g_list_store_remove_all (_store);
-
-  for (i = 0; i < scm_c_vector_length (all_bindings); i++)
-    {
-      entry = scm_c_vector_ref (all_bindings, i);
-      info = info_new_from_scm (entry);
-      g_list_store_append (_store, info);
-    }
-}
-
-GListStore *
-gdn_binding_info_get_list_store (void)
-{
-  if (_store == NULL)
-    _store = g_list_store_new (GDN_BINDING_INFO_TYPE);
-  return _store;
-}
+////////////////////////////////////////////////////////////////
+// METHODS
+////////////////////////////////////////////////////////////////
 
 gboolean
 gdn_binding_info_get_argument (GdnBindingInfo *self)
@@ -189,4 +158,46 @@ const char *
 gdn_binding_info_get_extra (GdnBindingInfo *self)
 {
   return self->extra;
+}
+
+void
+gdn_binding_info_list_store_update_all (GListStore *store, SCM all_bindings)
+{
+  g_assert_cmpuint (G_OBJECT_TYPE (store), ==, G_TYPE_LIST_STORE);
+  g_assert (scm_is_vector (all_bindings));
+
+  SCM             entry;
+  GdnBindingInfo *info;
+  size_t          i;
+
+  g_list_store_remove_all (store);
+
+  for (i = 0; i < scm_c_vector_length (all_bindings); i++)
+    {
+      entry = scm_c_vector_ref (all_bindings, i);
+      info = info_new_from_scm (entry);
+      g_list_store_append (store, info);
+    }
+}
+
+////////////////////////////////////////////////////////////////
+// SIGNAL HANDLERS
+////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////
+// HELPER FUNCTIONS
+////////////////////////////////////////////////////////////////
+
+static GdnBindingInfo *
+info_new_from_scm (SCM info)
+{
+  GdnBindingInfo *self = g_object_new (GDN_BINDING_INFO_TYPE, NULL);
+
+  self->name = scm_to_utf8_string (scm_c_vector_ref (info, 0));
+  self->argument = scm_is_true (scm_c_vector_ref (info, 1));
+  self->representation = scm_to_utf8_string (scm_c_vector_ref (info, 2));
+  self->value = scm_to_utf8_string (scm_c_vector_ref (info, 3));
+  self->extra = scm_to_utf8_string (scm_c_vector_ref (info, 4));
+
+  return self;
 }

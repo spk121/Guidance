@@ -17,6 +17,7 @@
  */
 
 #include "guidance-terminal-view.h"
+#include "guidance-lisp.h"
 #include <glib-unix.h>
 
 struct _GdnTerminalView
@@ -32,8 +33,6 @@ struct _GdnTerminalView
 };
 
 G_DEFINE_TYPE (GdnTerminalView, gdn_terminal_view, GTK_TYPE_BOX)
-
-static GdnTerminalView *_self;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
@@ -76,18 +75,17 @@ gdn_terminal_view_init (GdnTerminalView *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
 
-  _self = self;
-  _self->history = NULL;
-  _self->history_cur = NULL;
+  self->history = NULL;
+  self->history_cur = NULL;
 
   g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_fd (), G_IO_IN,
-                      poll_terminal_text, NULL, NULL);
+                      poll_terminal_text, self, NULL);
   g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_prompt_fd (),
-                      G_IO_IN, poll_terminal_prompt, NULL, NULL);
+                      G_IO_IN, poll_terminal_prompt, self, NULL);
   g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_error_fd (),
-                      G_IO_IN, poll_terminal_error, NULL, NULL);
+                      G_IO_IN, poll_terminal_error, self, NULL);
   g_signal_connect (self->input_entry, "activate",
-                    G_CALLBACK (activate_terminal_entry), NULL);
+                    G_CALLBACK (activate_terminal_entry), self);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -99,7 +97,12 @@ gdn_terminal_view_init (GdnTerminalView *self)
 static void
 activate_terminal_entry (GtkEntry *entry, gpointer user_data)
 {
+  g_assert_cmpuint (G_OBJECT_TYPE (entry), ==, GTK_TYPE_ENTRY);
+  g_assert_nonnull (user_data);
+  g_assert_cmpuint (G_OBJECT_TYPE (user_data), ==, GDN_TYPE_TERMINAL_VIEW);
+
   const char *text;
+  GdnTerminalView *self = user_data;
 
   text = gtk_entry_buffer_get_text (gtk_entry_get_buffer (entry));
   int fd = gdn_lisp_get_output_fd ();
@@ -112,11 +115,11 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
 
   /* Write the prompt and the text from the input GtkEntry box onto the main
    * output widget */
-  GtkTextView *  view = _self->text_view;
+  GtkTextView *  view = self->text_view;
   GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
   GtkTextIter    iter_start, iter_end;
   GtkTextMark *  mark_start;
-  const char *   prompt = gtk_label_get_text (_self->prompt_label);
+  const char *   prompt = gtk_label_get_text (self->prompt_label);
 
   /* Store the 'before' location */
   gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start,
@@ -141,22 +144,21 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
                                       gtk_text_buffer_get_insert (text_buffer));
 
   /* Append the entry to the history */
-  if (!_self->history ||
-      strncmp (text, _self->history->data, strlen (text)) != 0)
-    _self->history =
-        g_list_prepend (_self->history, strndup (text, strlen (text)));
-  _self->history_cur = _self->history;
+  if (!self->history || strncmp (text, self->history->data, strlen (text)) != 0)
+    self->history =
+        g_list_prepend (self->history, strndup (text, strlen (text)));
+  self->history_cur = self->history;
 
   /* Then clear the entry box. */
-  gtk_entry_buffer_set_text (gtk_entry_get_buffer (_self->input_entry), "", 0);
+  gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
 }
 
 gboolean
 poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data)
 {
-  g_assert (user_data == NULL);
+  GdnTerminalView *self = user_data;
 
-  GtkTextView *  view = _self->text_view;
+  GtkTextView *  view = self->text_view;
   GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
 
   /* Get all the text from the read port. */
@@ -176,7 +178,8 @@ poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data)
 gboolean
 poll_terminal_error (gint fd, GIOCondition condition, gpointer user_data)
 {
-  GtkTextView *  view = _self->text_view;
+  GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
+  GtkTextView *    view = self->text_view;
   GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
   char *         buf = xread (fd);
   int            len = strlen (buf);
@@ -213,10 +216,11 @@ poll_terminal_prompt (gint fd, GIOCondition condition, gpointer user_data)
 #define MAX_PROMPT_CODEPOINTS 80
 #define MAX_PROMPT_BYTES (MAX_PROMPT_CODEPOINTS * 3)
 
+  GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
   char *buf;
 
   /* Clear out the old label */
-  gtk_label_set_text (_self->prompt_label, "");
+  gtk_label_set_text (self->prompt_label, "");
 
   /* Read from the port */
   buf = xread (fd);
@@ -227,11 +231,11 @@ poll_terminal_prompt (gint fd, GIOCondition condition, gpointer user_data)
   if (u8_len > MAX_PROMPT_CODEPOINTS)
     {
       gchar *substr = g_utf8_substring (buf, 0, MAX_PROMPT_CODEPOINTS);
-      gtk_label_set_text (_self->prompt_label, substr);
+      gtk_label_set_text (self->prompt_label, substr);
       g_free (substr);
     }
   else if (u8_len > 0)
-    gtk_label_set_text (_self->prompt_label, buf);
+    gtk_label_set_text (self->prompt_label, buf);
 
   g_free (buf);
 

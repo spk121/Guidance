@@ -36,16 +36,32 @@ struct _GdnBacktraceView
   GtkColumnViewColumn *variables_representation_column;
   GtkColumnViewColumn *variables_value_column;
   GtkColumnViewColumn *variables_info_column;
+
+  GListStore *frames;
+  GListStore *bindings;
 };
 
 G_DEFINE_TYPE (GdnBacktraceView, gdn_backtrace_view, GTK_TYPE_BOX)
 
-static GdnBacktraceView *_self;
-static SCM               _get_backtrace_func = SCM_BOOL_F;
+enum
+{
+  LOCATION = 0,
+  N_SIGNALS
+};
+
+typedef struct _GdnBacktraceViewAndListItem
+{
+  GdnBacktraceView *view;
+  GtkListItem *     item;
+} GdnBacktraceViewAndListItem;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
+
+static SCM      _get_backtrace_func = SCM_BOOL_F;
+static unsigned signals[N_SIGNALS];
+
 typedef void (*factory_func_t) (GtkSignalListItemFactory *self,
                                 GtkListItem *             listitem,
                                 gpointer                  user_data);
@@ -53,10 +69,11 @@ static void set_column_view_model (GtkColumnView *view, GListModel *model);
 static void add_column_factory (GtkColumnViewColumn *col,
                                 factory_func_t *     setup,
                                 factory_func_t *     bind,
-                                factory_func_t *     unbind);
+                                factory_func_t *     unbind,
+                                gpointer             user_data);
 
-static void frame_button_activate (GtkButton *self, gpointer user_data);
-static void location_button_activate (GtkButton *self, gpointer user_data);
+static void frame_button_clicked (GtkButton *self, gpointer user_data);
+static void location_button_clicked (GtkButton *self, gpointer user_data);
 
 static void frame_setup (GtkListItemFactory *factory,
                          GtkListItem *       list_item,
@@ -122,6 +139,11 @@ static void info_unbind (GtkListItemFactory *factory,
                          GtkListItem *       list_item,
                          gpointer            user_data);
 
+static GdnBacktraceViewAndListItem *create_pair (GdnBacktraceView *view,
+                                                 GtkListItem *     item);
+static void free_pair (GdnBacktraceViewAndListItem *bvli);
+static void free_pair_closure_notify (gpointer data, GClosure *closure);
+
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
 ////////////////////////////////////////////////////////////////
@@ -147,67 +169,79 @@ gdn_backtrace_view_class_init (GdnBacktraceViewClass *klass)
   BIND (variables_value_column);
   BIND (variables_info_column);
 #undef BIND
-}
 
-GdnFrameInfo *  _frames = NULL;
-GdnBindingInfo *_bindings = NULL;
+  signals[LOCATION] = g_signal_new ("location", G_TYPE_FROM_CLASS (klass),
+                                    G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0,
+                                    NULL, NULL, NULL, G_TYPE_NONE, 3,
+                                    G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
+}
 
 static void
 gdn_backtrace_view_init (GdnBacktraceView *self)
 {
   gtk_widget_init_template (self);
-  _self = self;
 
-  _frames = g_list_store_new (GDN_FRAME_INFO_TYPE);
-  _bindings = gdn_binding_info_get_list_store ();
+  g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_BACKTRACE_VIEW);
 
-  set_column_view_model (self->stack_column_view, _frames);
-  set_column_view_model (self->variables_column_view, _bindings);
+  self->frames = g_list_store_new (GDN_FRAME_INFO_TYPE);
+  self->bindings = g_list_store_new (GDN_BINDING_INFO_TYPE);
+
+  set_column_view_model (self->stack_column_view, self->frames);
+  set_column_view_model (self->variables_column_view, self->bindings);
   add_column_factory (self->stack_frame_column, frame_setup, frame_bind,
-                      frame_unbind);
+                      frame_unbind, self);
   add_column_factory (self->stack_location_column, location_setup,
-                      location_bind, location_unbind);
+                      location_bind, location_unbind, self);
   add_column_factory (self->variables_type_column, type_setup, type_bind,
-                      type_unbind);
+                      type_unbind, self);
   add_column_factory (self->variables_name_column, name_setup, name_bind,
-                      name_unbind);
+                      name_unbind, self);
   add_column_factory (self->variables_representation_column,
                       representation_setup, representation_bind,
-                      representation_unbind);
+                      representation_unbind, self);
   add_column_factory (self->variables_value_column, value_setup, value_bind,
-                      value_unbind);
+                      value_unbind, self);
   add_column_factory (self->variables_info_column, info_setup, info_bind,
-                      info_unbind);
+                      info_unbind, self);
 }
 
 ////////////////////////////////////////////////////////////////
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
 
+/* This GtkButton::clicked handler updates GdnBacktraceView.bindings
+ * based on which of the frame info entries was selected */
 static void
-frame_button_activate (GtkButton *self, gpointer user_data)
+frame_button_clicked (GtkButton *button, gpointer user_data)
 {
-  GtkListItem *list_item = user_data;
+  GdnBacktraceViewAndListItem *bvli = user_data;
+  GdnBacktraceView *           self = bvli->view;
+  g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_BACKTRACE_VIEW);
+  GdnFrameInfo *info = gtk_list_item_get_item (bvli->item);
+  g_assert_cmpuint (G_OBJECT_TYPE (info), ==, GDN_FRAME_INFO_TYPE);
+  SCM bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
 
-  GObject *     obj = gtk_list_item_get_item (list_item);
-  GdnFrameInfo *info = GDN_FRAME_INFO (obj);
-  SCM           bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
-  gdn_binding_info_update_all (bindings);
+  gdn_binding_info_list_store_update_all (self->bindings, bindings);
 }
 
+/* This GtkButton::clicked handler */
 static void
-location_button_activate (GtkButton *self, gpointer user_data)
+location_button_clicked (GtkButton *button, gpointer user_data)
 {
-  GtkListItem *list_item = user_data;
-
-  GObject *     obj = gtk_list_item_get_item (list_item);
-  GdnFrameInfo *info = GDN_FRAME_INFO (obj);
+  GdnBacktraceViewAndListItem *bvli = user_data;
+  GdnBacktraceView *           self = bvli->view;
+  GdnFrameInfo *               info = gtk_list_item_get_item (bvli->item);
 
   const char *filename = gdn_frame_info_get_filename (info);
-  int         line = gdn_frame_info_get_line (info);
-  int         col = gdn_frame_info_get_column (info);
-  gdn_source_view_show_location (filename, line, col);
-  gdn_application_window_show_page ("source");
+
+  if (filename != NULL)
+    {
+      int line = gdn_frame_info_get_line (info);
+      int col = gdn_frame_info_get_column (info);
+      // FIXME: do I need to strdup here. How do I free?
+      g_signal_emit (bvli->view, signals[LOCATION], 0, g_strdup (filename),
+                     line, col);
+    }
 }
 
 static void
@@ -215,6 +249,8 @@ frame_setup (GtkListItemFactory *factory,
              GtkListItem *       list_item,
              gpointer            user_data)
 {
+  g_assert_cmpuint (G_OBJECT_TYPE (user_data), ==, GDN_TYPE_BACKTRACE_VIEW);
+
   GtkButton *button;
   GtkLabel * label;
 
@@ -224,8 +260,11 @@ frame_setup (GtkListItemFactory *factory,
   gtk_label_set_width_chars (label, 30);
   gtk_list_item_set_child (list_item, button);
 
-  g_signal_connect (G_OBJECT (button), "clicked",
-                    G_CALLBACK (frame_button_activate), list_item);
+  GdnBacktraceViewAndListItem *bvli;
+  bvli = create_pair (user_data, list_item);
+  g_signal_connect_data (G_OBJECT (button), "clicked",
+                         G_CALLBACK (frame_button_clicked), bvli,
+                         free_pair_closure_notify, 0);
 }
 
 static void
@@ -254,8 +293,6 @@ frame_unbind (GtkListItemFactory *factory,
 {
   GtkButton *   button;
   GtkLabel *    label;
-  GdnFrameInfo *info;
-  GObject *     obj;
 
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
   label = gtk_button_get_child (button);
@@ -275,8 +312,11 @@ location_setup (GtkListItemFactory *factory,
   gtk_label_set_xalign (label, 0);
   gtk_list_item_set_child (list_item, button);
 
-  g_signal_connect (G_OBJECT (button), "clicked",
-                    G_CALLBACK (location_button_activate), list_item);
+  GdnBacktraceViewAndListItem *bvli;
+  bvli = create_pair (user_data, list_item);
+  g_signal_connect_data (G_OBJECT (button), "clicked",
+                         G_CALLBACK (location_button_clicked), bvli,
+                         free_pair_closure_notify, 0);
 }
 
 static void
@@ -297,11 +337,19 @@ location_bind (GtkListItemFactory *factory,
     {
 
       info = GDN_FRAME_INFO (obj);
-      location = g_strdup_printf (
-          "%s:%d:%d", gdn_frame_info_get_filename (info),
-          gdn_frame_info_get_line (info), gdn_frame_info_get_column (info));
-      gtk_label_set_text (label, location);
-      g_free (location);
+      if (gdn_frame_info_get_filename (info) != NULL)
+        {
+          location = g_strdup_printf (
+              "%s:%d:%d", gdn_frame_info_get_filename (info),
+              gdn_frame_info_get_line (info), gdn_frame_info_get_column (info));
+          gtk_label_set_text (label, location);
+          g_free (location);
+        }
+      else
+        {
+          gtk_label_set_text (label, "N/A");
+          gtk_widget_set_sensitive (button, FALSE);
+        }
     }
 }
 
@@ -312,8 +360,6 @@ location_unbind (GtkListItemFactory *factory,
 {
   GtkButton *   button;
   GtkLabel *    label;
-  GObject *     obj;
-  GdnFrameInfo *info;
 
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
   label = gtk_button_get_child (button);
@@ -340,7 +386,6 @@ type_bind (GtkListItemFactory *factory,
   GtkLabel *      label;
   GObject *       obj;
   GdnBindingInfo *info;
-  char *          location;
 
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   obj = gtk_list_item_get_item (list_item);
@@ -357,8 +402,6 @@ type_unbind (GtkListItemFactory *factory,
              gpointer            user_data)
 {
   GtkLabel *    label;
-  GObject *     obj;
-  GdnFrameInfo *info;
 
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   gtk_label_set_text (label, "");
@@ -397,8 +440,6 @@ name_unbind (GtkListItemFactory *factory,
              gpointer            user_data)
 {
   GtkLabel *    label;
-  GObject *     obj;
-  GdnFrameInfo *info;
 
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   gtk_label_set_text (label, "");
@@ -437,8 +478,6 @@ representation_unbind (GtkListItemFactory *factory,
                        gpointer            user_data)
 {
   GtkLabel *    label;
-  GObject *     obj;
-  GdnFrameInfo *info;
 
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   gtk_label_set_text (label, "");
@@ -477,8 +516,6 @@ value_unbind (GtkListItemFactory *factory,
               gpointer            user_data)
 {
   GtkLabel *    label;
-  GObject *     obj;
-  GdnFrameInfo *info;
 
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   gtk_label_set_text (label, "");
@@ -517,8 +554,6 @@ info_unbind (GtkListItemFactory *factory,
              gpointer            user_data)
 {
   GtkLabel *    label;
-  GObject *     obj;
-  GdnFrameInfo *info;
 
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   gtk_label_set_text (label, "");
@@ -541,26 +576,65 @@ static void
 add_column_factory (GtkColumnViewColumn *col,
                     factory_func_t *     setup,
                     factory_func_t *     bind,
-                    factory_func_t *     unbind)
+                    factory_func_t *     unbind,
+                    gpointer             user_data)
 {
   GtkSignalListItemFactory *factory;
   factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (factory, "setup", G_CALLBACK (setup), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (bind), NULL);
-  g_signal_connect (factory, "unbind", G_CALLBACK (unbind), NULL);
+  g_signal_connect (factory, "setup", G_CALLBACK (setup), user_data);
+  g_signal_connect (factory, "bind", G_CALLBACK (bind), user_data);
+  g_signal_connect (factory, "unbind", G_CALLBACK (unbind), user_data);
   gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
+}
+
+static GdnBacktraceViewAndListItem *
+create_pair (GdnBacktraceView *view, GtkListItem *item)
+{
+  GdnBacktraceViewAndListItem *bvli;
+
+  g_assert_cmpuint (G_OBJECT_TYPE (view), ==, GDN_TYPE_BACKTRACE_VIEW);
+  g_assert_cmpuint (G_OBJECT_TYPE (item), ==, GTK_TYPE_LIST_ITEM);
+
+  bvli = g_new0 (GdnBacktraceViewAndListItem, 1);
+  bvli->view = g_object_ref (view);
+  bvli->item = g_object_ref (item);
+  return bvli;
+}
+
+static void
+free_pair (GdnBacktraceViewAndListItem *bvli)
+{
+  g_object_unref (bvli->view);
+  g_object_unref (bvli->item);
+  free (bvli);
+}
+
+static void
+free_pair_closure_notify (gpointer data, G_GNUC_UNUSED GClosure *closure)
+{
+  free_pair (data);
 }
 
 ////////////////////////////////////////////////////////////////
 // GUILE API
 ////////////////////////////////////////////////////////////////
 
-static SCM
-scm_update_backtrace (SCM frame)
+static SCM scm_backtrace_view_type;
+
+SCM
+gdn_backtrace_view_to_scm (GdnBacktraceView *self)
 {
-  if (SCM_UNBNDP (frame))
-    frame = SCM_BOOL_F;
-  SCM frames = scm_call_1 (_get_backtrace_func, frame);
+  g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_BACKTRACE_VIEW);
+  return scm_make_foreign_object_1 (scm_backtrace_view_type, self);
+}
+
+static SCM
+scm_update_backtrace_x (SCM s_self, SCM s_frame)
+{
+  scm_assert_foreign_object_type (scm_backtrace_view_type, s_self);
+  if (SCM_UNBNDP (s_frame))
+    s_frame = SCM_BOOL_F;
+  SCM frames = scm_call_1 (_get_backtrace_func, s_frame);
 #ifndef G_DISABLE_ASSERT
   g_assert (scm_is_vector (frames));
   for (size_t i = 0; i < scm_c_vector_length (frames); i++)
@@ -577,14 +651,22 @@ scm_update_backtrace (SCM frame)
     }
 #endif
 
-  gdn_frame_info_store_update (_frames, frames);
+  GdnBacktraceView *self = scm_foreign_object_ref (s_self, 0);
+  gdn_frame_info_store_update (self->frames, frames);
   return SCM_UNSPECIFIED;
 }
 
 void
 gdn_backtrace_view_guile_init (void)
 {
+  SCM name, slots;
+
+  name = scm_from_utf8_symbol ("gdn-backtrace-view");
+  slots = scm_list_1 (scm_from_utf8_symbol ("data"));
+  scm_backtrace_view_type = scm_make_foreign_object_type (name, slots, NULL);
+
   _get_backtrace_func = scm_variable_ref (scm_c_lookup ("gdn-get-backtrace"));
 
-  scm_c_define_gsubr ("gdn-update-backtrace", 0, 1, 0, scm_update_backtrace);
+  scm_c_define_gsubr ("gdn-update-backtrace!", 1, 1, 0,
+                      (scm_t_subr) scm_update_backtrace_x);
 }

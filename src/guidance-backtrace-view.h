@@ -27,4 +27,5 @@ G_DECLARE_FINAL_TYPE (
     GdnBacktraceView, gdn_backtrace_view, GDN, BACKTRACE_VIEW, GtkBox)
 
 void gdn_backtrace_view_guile_init (void);
+SCM  gdn_backtrace_view_to_scm (GdnBacktraceView *self);
 G_END_DECLS

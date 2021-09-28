@@ -59,8 +59,7 @@ struct _GdnApplicationWindow
   GtkBox *backtrace_box;
 
   /* Source tab */
-  GtkTextView *source_view;
-  GtkLabel *   source_label;
+  GtkBox *source_box;
 
   GtkImage *sweep_image;
   GtkImage *gc_image;
@@ -102,7 +101,10 @@ static void environment_value_bind (GtkListItemFactory *factory,
                                     GtkListItem *       list_item);
 static void environment_value_unbind (GtkListItemFactory *factory,
                                       GtkListItem *       list_item);
-
+static void handle_backtrace_view_location (const char *filename,
+                                            int         line,
+                                            int         col,
+                                            gpointer    user_data);
 // static void environment_activate(GtkListView *list, guint position, gpointer
 // unused);
 ////////////////////////////////////////////////////////////////
@@ -143,11 +145,20 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   BIND (backtrace_box);
 
   /* Source Tab */
-  BIND (source_label);
-  BIND (source_view);
+  BIND (source_box);
 
   BIND (sweep_image);
   BIND (gc_image);
+}
+
+static void
+application_window_init_source_tab (GdnApplicationWindow *self)
+{
+  GdnSourceView *source_view;
+
+  source_view = g_object_new (GDN_TYPE_SOURCE_VIEW, NULL);
+  gtk_box_append (self->source_box, source_view);
+  scm_c_define ("*gdn-source-view*", gdn_source_view_to_scm (source_view));
 }
 
 static void
@@ -234,6 +245,11 @@ application_window_init_backtrace_tab (GdnApplicationWindow *self)
 
   backtrace_view = g_object_new (GDN_TYPE_BACKTRACE_VIEW, NULL);
   gtk_box_append (self->backtrace_box, backtrace_view);
+  scm_c_define ("*gdn-backtrace-view*",
+                gdn_backtrace_view_to_scm (backtrace_view));
+  g_signal_connect_data (backtrace_view, "location",
+                         G_CALLBACK (handle_backtrace_view_location), self,
+                         NULL, 0);
 }
 
 static void
@@ -253,12 +269,10 @@ gdn_application_window_init (GdnApplicationWindow *self)
 
   application_window_init_threads_tab (self);
   application_window_init_terminal_tab (self);
+  application_window_init_source_tab (self);
   application_window_init_modules_tab (self);
   application_window_init_environment_tab (self);
   application_window_init_backtrace_tab (self);
-
-  gdn_source_view_set_paths (gdn_lisp_get_paths ());
-  gdn_source_view_init (self->source_view, self->source_label);
 
   g_signal_connect (gdn_lisp_get_lisp (), "after-gc",
                     G_CALLBACK (handle_after_gc), NULL);
@@ -321,6 +335,20 @@ handle_after_sweep (GdnLisp *lisp, gpointer user_data)
   /* When called, we reveal the sweep image for a second. */
   gtk_widget_set_visible (GTK_WIDGET (_self->sweep_image), TRUE);
   g_timeout_add (2000, clear_sweep, NULL);
+}
+
+static void
+handle_backtrace_view_location (const char *filename,
+                                int         line,
+                                int         col,
+                                gpointer    user_data)
+{
+  g_assert_cmpstr (G_OBJECT_TYPE_NAME (user_data), ==, "GdnApplicationWindow");
+
+  GdnApplicationWindow *self = user_data;
+  GdnSourceView *       view = gtk_widget_get_first_child (self->source_box);
+  gdn_source_view_show_location (view, filename, line, col);
+  gdn_application_window_show_page ("terminal");
 }
 
 static void

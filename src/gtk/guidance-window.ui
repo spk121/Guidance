@@ -200,22 +200,7 @@
                             <property name="name">source</property>
                             <property name="title">Source</property>
                             <property name="child">
-                              <object class="GtkBox">
-                                <child>
-                                  <object class="GtkLabel" id="source_label" />
-                                </child>
-                                <child>
-                                  <object class="GtkScrolledWindow">
-                                    <property name="hexpand">True</property>
-                                    <property name="vexpand">True</property>
-                                    <child>
-                                      <object class="GtkTextView" id="source_view">
-                                        <property name="editable">False</property>
-                                        <property name="monospace">True</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
+                              <object class="GtkBox" id="source_box">
                               </object>
                             </property>
                           </object>

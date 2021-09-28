@@ -22,9 +22,16 @@
 #include <libguile.h>
 
 G_BEGIN_DECLS
-void gdn_source_view_init (GtkTextView *view, GtkLabel *label);
-void gdn_source_view_set_paths (char **paths);
-gboolean
-gdn_source_view_show_location (const char *rel_path, int line, int col);
+#define GDN_TYPE_SOURCE_VIEW (gdn_source_view_get_type ())
+
+G_DECLARE_FINAL_TYPE (GdnSourceView, gdn_source_view, GDN, SOURCE_VIEW, GtkBox)
+
+void     gdn_source_view_set_paths (GdnSourceView *self, const char **paths);
+gboolean gdn_source_view_show_location (GdnSourceView *self,
+                                        const char *   rel_path,
+                                        int            line,
+                                        int            col);
+
+SCM  gdn_source_view_to_scm (GdnSourceView *self);
 void gdn_source_view_guile_init (void);
 G_END_DECLS

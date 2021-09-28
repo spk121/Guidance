@@ -1,28 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <gresource prefix="/com/lonelycactus/Guidance">
+    <file>gdn/lib.scm</file>
+    <file>gtk/backtrace-view.ui</file>
     <file>gtk/guidance-window.css</file>
     <file>gtk/guidance-window.ui</file>
     <file>gtk/help-overlay.ui</file>
     <file>gtk/menus.ui</file>
-    <file>gtk/backtrace-view.ui</file>
     <file>gtk/module-view.ui</file>
+    <file>gtk/source-view.ui</file>
     <file>gtk/terminal-view.ui</file>
     <file>gtk/thread-view.ui</file>
     <file>gtk/trap-view.ui</file>
-    <file>gdn/lib.scm</file>
-    <file>icons/launch.png</file>
-    <file>icons/edit-shred.png</file>
-    <file>icons/edit-trash.png</file>
-    <file>icons/document-open.png</file>
-    <file>icons/process-stop.png</file>
+    <file>icons/debug-next-instruction.png</file>
+    <file>icons/debug-next.png</file>
     <file>icons/debug-restart.png</file>
     <file>icons/debug-run.png</file>
     <file>icons/debug-step-instruction.png</file>
-    <file>icons/debug-next-instruction.png</file>
-    <file>icons/debug-step.png</file>
-    <file>icons/debug-next.png</file>
     <file>icons/debug-step-out.png</file>
+    <file>icons/debug-step.png</file>
+    <file>icons/document-open.png</file>
+    <file>icons/edit-shred.png</file>
+    <file>icons/edit-trash.png</file>
+    <file>icons/launch.png</file>
+    <file>icons/process-stop.png</file>
     <!-- file>icons/open-menu.png</file -->
   </gresource>
 </gresources>

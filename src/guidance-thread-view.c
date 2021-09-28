@@ -35,7 +35,7 @@ struct _GdnThreadView
 
 G_DEFINE_TYPE (GdnThreadView, gdn_thread_view, GTK_TYPE_BOX)
 
-static GdnThreadView *_self;
+static GdnThreadView *_self = NULL;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS

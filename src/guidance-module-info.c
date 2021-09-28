@@ -78,7 +78,6 @@ static GListStore *_store = NULL;
 static GtkTreeListModel *_model = NULL;
 
 static SCM add_binding_key_value_proc;
-static SCM add_trap_proc;
 static SCM module_p_proc;
 static SCM module_name_proc;
 static SCM module_filename_proc;
@@ -433,7 +432,8 @@ gdn_module_info_guile_init (void)
   module_p_proc = scm_variable_ref (scm_c_lookup ("module?"));
 
   /* The public API */
-  scm_c_define_gsubr ("gdn-add-module", 1, 0, 0, scm_add_module);
-  scm_c_define_gsubr ("gdn-clear-modules", 0, 0, 0, scm_clear_modules);
+  scm_c_define_gsubr ("gdn-add-module", 1, 0, 0, (scm_t_subr) scm_add_module);
+  scm_c_define_gsubr ("gdn-clear-modules", 0, 0, 0,
+                      (scm_t_subr) scm_clear_modules);
 }
 

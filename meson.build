@@ -10,7 +10,7 @@ project('guidance', 'c',
 )
 
 if meson.get_compiler('c').get_id() == 'gcc'
-  add_global_arguments(['-O2', '-D_FORTIFY_SOURCE=2',
+  add_global_arguments([
   '-fstack-protector-strong',
   '-fstack-clash-protection',
   '-fcf-protection',
