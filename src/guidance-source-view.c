@@ -36,8 +36,6 @@ G_DEFINE_TYPE (GdnSourceView, gdn_source_view, GTK_TYPE_BOX)
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 
-static GdnSourceView *_self = NULL;
-
 static char *   find_file (GSList *prefixes, const char *rel_path);
 static gboolean scroll_onscreen (gpointer user_data);
 
@@ -64,14 +62,13 @@ static void
 gdn_source_view_init (GdnSourceView *self)
 {
   gtk_widget_init_template (self);
-  _self = self;
+  self->contents =
+      g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+  self->rel_path = NULL;
+
   char **paths = gdn_lisp_get_paths ();
   gdn_source_view_set_paths (self, paths);
   g_strfreev (paths);
-  self->contents =
-      g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
-  self->prefixes = NULL;
-  self->rel_path = NULL;
 
   GtkTextBuffer *buf;
   buf = gtk_text_view_get_buffer (self->source_view);

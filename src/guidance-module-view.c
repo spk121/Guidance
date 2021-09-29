@@ -39,11 +39,20 @@ struct _GdnModuleView
 
 G_DEFINE_TYPE (GdnModuleView, gdn_module_view, GTK_TYPE_BOX)
 
+enum
+{
+  TRAP = 0,
+  N_SIGNALS
+};
+
 static GdnModuleView *_self;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
+
+static unsigned signals[N_SIGNALS];
+
 static void entry_setup (GtkListItemFactory *factory,
                          GtkListItem *       list_item,
                          void *              user_data);
@@ -76,6 +85,11 @@ gdn_module_view_class_init (GdnModuleViewClass *klass)
   BIND (scrolled_window);
   BIND (list_view);
 #undef BIND
+
+  signals[TRAP] =
+      g_signal_new ("trap", G_TYPE_FROM_CLASS (klass),
+                    G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0, NULL, NULL,
+                    NULL, G_TYPE_NONE, 1, G_TYPE_UINT64);
 }
 
 static void
@@ -143,7 +157,9 @@ procedure_trap_activate (GtkButton *self, gpointer user_data)
   GdnModuleInfo *info = GDN_MODULE_INFO (user_data);
 
   // FIXME: add a confirmation dialog
-  gdn_module_info_add_trap (info);
+  SCM proc = gdn_module_info_get_procedure (info);
+  if (scm_is_true (scm_procedure_p (proc)))
+    g_signal_emit (self, signals[TRAP], 0, SCM_UNPACK (proc));
 }
 
 static void

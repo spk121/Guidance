@@ -187,29 +187,10 @@ gdn_module_info_get_abs_path (GdnModuleInfo *info)
   return get_module_abs_path (module, NULL);
 }
 
-/* This procedure is activated by clicking on a procedure in the
- * module viewer.  Unfortunately, we need to add the trap in the main
- * Guile thread. Adding the trap in the GTK thread doesn't work. */
-void
-gdn_module_info_add_trap (GdnModuleInfo *info)
+SCM
+gdn_module_info_get_procedure (GdnModuleInfo *info)
 {
-  g_assert (info != NULL);
-  SCM procvar = uint64_pack_to_scm (info->pack);
-  if (scm_is_true (scm_variable_p (procvar)))
-    {
-      if (1 || scm_is_true (scm_procedure_p (scm_variable_ref (procvar))))
-        {
-          SCM ret;
-          /* Enqueue adding this trap in the primary Guile thread. A trap
-           * added in the GTK thread won't get hit. */
-          gdn_trap_info_add_proc_trap_async (scm_variable_ref (procvar));
-          g_debug ("added trap for %s", info->name);
-        }
-      else
-        g_debug ("failed to add trap for %s, not a module", info->name);
-    }
-  else
-    g_debug ("failed to add trap for %s, not a module variable", info->name);
+  return uint64_pack_to_scm (info->pack);
 }
 
 ////////////////////////////////////////////////////////////////

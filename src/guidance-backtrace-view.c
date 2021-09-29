@@ -59,7 +59,7 @@ typedef struct _GdnBacktraceViewAndListItem
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 
-static SCM      _get_backtrace_func = SCM_BOOL_F;
+static SCM      get_backtrace_func = SCM_BOOL_F;
 static unsigned signals[N_SIGNALS];
 
 typedef void (*factory_func_t) (GtkSignalListItemFactory *self,
@@ -634,7 +634,7 @@ scm_update_backtrace_x (SCM s_self, SCM s_frame)
   scm_assert_foreign_object_type (scm_backtrace_view_type, s_self);
   if (SCM_UNBNDP (s_frame))
     s_frame = SCM_BOOL_F;
-  SCM frames = scm_call_1 (_get_backtrace_func, s_frame);
+  SCM frames = scm_call_1 (get_backtrace_func, s_frame);
 #ifndef G_DISABLE_ASSERT
   g_assert (scm_is_vector (frames));
   for (size_t i = 0; i < scm_c_vector_length (frames); i++)
@@ -665,7 +665,7 @@ gdn_backtrace_view_guile_init (void)
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_backtrace_view_type = scm_make_foreign_object_type (name, slots, NULL);
 
-  _get_backtrace_func = scm_variable_ref (scm_c_lookup ("gdn-get-backtrace"));
+  get_backtrace_func = scm_variable_ref (scm_c_lookup ("gdn-get-backtrace"));
 
   scm_c_define_gsubr ("gdn-update-backtrace!", 1, 1, 0,
                       (scm_t_subr) scm_update_backtrace_x);

@@ -34,5 +34,6 @@ void setup_thread_name (GtkSignalListItemFactory *factory,
                         GtkListItem *             list_item);
 void bind_thread_name (GtkSignalListItemFactory *factory,
                        GtkListItem *             list_item);
-void gdn_application_window_show_page (const char *name);
+void gdn_application_window_show_page (GdnApplicationWindow *self,
+                                       const char *          name);
 G_END_DECLS

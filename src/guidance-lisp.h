@@ -50,33 +50,28 @@ typedef enum
 G_DECLARE_FINAL_TYPE (GdnLisp, gdn_lisp, GDN, LISP, GObject)
 
 GdnLisp *             gdn_lisp_new (void);
-GdnLisp *             gdn_lisp_get_lisp (void);
-void                  gdn_lisp_run (void);
-void                  gdn_lisp_cancel_thread (GdnLisp *lisp);
+void                  gdn_lisp_run (GdnLisp *self);
+void                  gdn_lisp_cancel_thread_async (GdnLisp *lisp);
+void                  gdn_lisp_exit_async (GdnLisp *self);
+void                  gdn_lisp_break_async (GdnLisp *lisp);
 gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
-void                  gdn_lisp_exit (GdnLisp *lisp);
-void                  gdn_lisp_break (GdnLisp *lisp);
+SCM                   gdn_lisp_get_default_thread (GdnLisp *lisp);
+int                   gdn_lisp_get_input_fd (GdnLisp *self);
+int                   gdn_lisp_get_input_error_fd (GdnLisp *self);
+int                   gdn_lisp_get_input_prompt_fd (GdnLisp *self);
+int                   gdn_lisp_get_output_fd (GdnLisp *self);
+
+char **gdn_lisp_get_paths (void);
+
+void
+gdn_lisp_trap_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data);
+void gdn_lisp_add_proc_trap_async (GdnLisp *self, SCM proc);
+
 void                  gdn_lisp_continue (GdnLisp *lisp, GdnLispCommand command);
-int                   gdn_lisp_get_input_fd (void);
-int                   gdn_lisp_get_input_error_fd (void);
-int                   gdn_lisp_get_input_prompt_fd (void);
-int                   gdn_lisp_get_output_fd (void);
 int                   gdn_lisp_set_input_callback (GdnLisp *            lisp,
                                                    GMainContext *       ctx,
                                                    GPollableSourceFunc *func,
                                                    gpointer             data);
-GListStore *          gdn_lisp_get_environment (GdnLisp *lisp);
-GListStore *          gdn_lisp_get_threads (GdnLisp *lisp);
-GListStore *          gdn_lisp_get_modules (GdnLisp *lisp);
-GListStore *          gdn_lisp_get_backtrace (GdnLisp *lisp);
-char **               gdn_lisp_get_paths (void);
-SCM                   gdn_lisp_get_default_thread (void);
-
-/*
- * Requests an update of the environment info store.
- * @param lisp The object pointer.
- */
-void gdn_lisp_update_environment (GdnLisp *lisp);
 
 /*
  * Returns the store that holds Guile thread info.

@@ -419,11 +419,7 @@ interpreter."
 
 ;; Note that the GC and Sweep handlers are created with the C API
 
-(define (gdn-load-hook filename)
-  "Inform Guidance every time a file is loaded"
-  (%gdn-load-handler filename))
-
-(set! %load-hook gdn-load-hook)
+(set! %load-hook gdn-load-handler)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Module handlers
@@ -451,11 +447,13 @@ interpreter."
 
 ;;  (add-hook! module-defined-hook gdn-add-module)
 
+#|
 (define (gdn-exit-hook)
   "Inform Guidance that this repl is about to quit"
   (%gdn-exit-handler))
 
 (add-hook! exit-hook gdn-exit-hook)
+|#
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Reader

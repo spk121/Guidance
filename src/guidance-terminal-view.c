@@ -30,6 +30,10 @@ struct _GdnTerminalView
   GtkTextBuffer *text_buffer;
   GtkLabel *     prompt_label;
   GtkEntry *     input_entry;
+  guint          input_source;
+  guint          prompt_source;
+  guint          error_source;
+  int            output_fd;
 };
 
 G_DEFINE_TYPE (GdnTerminalView, gdn_terminal_view, GTK_TYPE_BOX)
@@ -77,15 +81,41 @@ gdn_terminal_view_init (GdnTerminalView *self)
 
   self->history = NULL;
   self->history_cur = NULL;
+  self->output_fd = STDOUT_FILENO;
 
-  g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_fd (), G_IO_IN,
-                      poll_terminal_text, self, NULL);
-  g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_prompt_fd (),
-                      G_IO_IN, poll_terminal_prompt, self, NULL);
-  g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_error_fd (),
-                      G_IO_IN, poll_terminal_error, self, NULL);
   g_signal_connect (self->input_entry, "activate",
                     G_CALLBACK (activate_terminal_entry), self);
+}
+
+////////////////////////////////////////////////////////////////
+// METHODS
+////////////////////////////////////////////////////////////////
+
+void
+gdn_terminal_view_connect_lisp_ports (GdnTerminalView *self, GdnLisp *lisp)
+{
+  self->input_source =
+      g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_fd (lisp),
+                          G_IO_IN, poll_terminal_text, self, NULL);
+  self->prompt_source = g_unix_fd_add_full (
+      G_PRIORITY_DEFAULT, gdn_lisp_get_input_prompt_fd (lisp), G_IO_IN,
+      poll_terminal_prompt, self, NULL);
+  self->error_source = g_unix_fd_add_full (
+      G_PRIORITY_DEFAULT, gdn_lisp_get_input_error_fd (lisp), G_IO_IN,
+      poll_terminal_error, self, NULL);
+  self->output_fd = gdn_lisp_get_output_fd (lisp);
+}
+
+void
+gdn_terminal_view_disconnect_lisp_port (GdnTerminalView *self)
+{
+  g_source_remove (self->input_source);
+  self->input_source = 0;
+  g_source_remove (self->prompt_source);
+  self->prompt_source = 0;
+  g_source_remove (self->error_source);
+  self->error_source = 0;
+  self->output_fd = STDOUT_FILENO;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -105,13 +135,12 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
   GdnTerminalView *self = user_data;
 
   text = gtk_entry_buffer_get_text (gtk_entry_get_buffer (entry));
-  int fd = gdn_lisp_get_output_fd ();
-  int bytes_written = write (fd, text, strlen (text));
+  int bytes_written = write (self->output_fd, text, strlen (text));
   if (bytes_written == -1)
     g_critical ("Could not push text to the Guile interpreter");
-  if (write (fd, "\n", 1) == -1)
+  if (write (self->output_fd, "\n", 1) == -1)
     g_critical ("Could not push newline to the Guile interpreter");
-  fsync (fd);
+  fsync (self->output_fd);
 
   /* Write the prompt and the text from the input GtkEntry box onto the main
    * output widget */

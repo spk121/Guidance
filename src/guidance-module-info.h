@@ -33,7 +33,7 @@ gboolean          gdn_module_info_is_top_level (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_module (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_procedure (GdnModuleInfo *info);
 const char *      gdn_module_info_get_name (GdnModuleInfo *info);
-void              gdn_module_info_add_trap (GdnModuleInfo *info);
+SCM               gdn_module_info_get_procedure (GdnModuleInfo *info);
 char *            gdn_module_info_get_abs_path (GdnModuleInfo *info);
 
 G_END_DECLS

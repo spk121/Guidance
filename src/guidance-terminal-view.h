@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "guidance-lisp.h"
 #include <gtk/gtk.h>
 #include <libguile.h>
 
@@ -26,5 +27,8 @@ G_BEGIN_DECLS
 
 G_DECLARE_FINAL_TYPE (
     GdnTerminalView, gdn_terminal_view, GDN, TERMINAL_VIEW, GtkBox)
+void gdn_terminal_view_connect_lisp_ports (GdnTerminalView *self,
+                                           GdnLisp *        lisp);
+void gdn_terminal_view_disconnect_lisp_port (GdnTerminalView *view);
 
 G_END_DECLS
