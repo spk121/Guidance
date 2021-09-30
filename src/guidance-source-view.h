@@ -22,16 +22,19 @@
 #include <libguile.h>
 
 G_BEGIN_DECLS
-#define GDN_TYPE_SOURCE_VIEW (gdn_source_view_get_type ())
 
+// TYPE
+#define GDN_TYPE_SOURCE_VIEW (gdn_source_view_get_type ())
 G_DECLARE_FINAL_TYPE (GdnSourceView, gdn_source_view, GDN, SOURCE_VIEW, GtkBox)
 
+// METHODS
 void     gdn_source_view_set_paths (GdnSourceView *self, const char **paths);
 gboolean gdn_source_view_show_location (GdnSourceView *self,
                                         const char *   rel_path,
                                         int            line,
                                         int            col);
 
+// GUILE API
 SCM  gdn_source_view_to_scm (GdnSourceView *self);
 void gdn_source_view_guile_init (void);
 G_END_DECLS

@@ -22,8 +22,12 @@
 #include <libguile.h>
 
 G_BEGIN_DECLS
-#define GDN_TYPE_TRAP_VIEW (gdn_trap_view_get_type ())
 
+// TYPE
+#define GDN_TYPE_TRAP_VIEW (gdn_trap_view_get_type ())
 G_DECLARE_FINAL_TYPE (GdnTrapView, gdn_trap_view, GDN, TRAP_VIEW, GtkBox)
+
+SCM  gdn_trap_view_to_scm (GdnTrapView *self);
+void gdn_trap_view_guile_init (void);
 
 G_END_DECLS

@@ -23,6 +23,7 @@
 #include "guidance-resources.h"
 #include "guidance-thread-info.h"
 #include "guidance-trap-info.h"
+#include "guidance-trap-view.h"
 #include <fcntl.h>
 #include <gio/gio.h>
 #include <glib.h>
@@ -90,15 +91,14 @@ static int         unix_pty_input_fd_new (void);
 static int         unix_pty_output_fd_new (void);
 static SCM         port_from_unix_output_fd (int fd);
 static SCM         port_from_unix_input_fd (int fd);
-static SCM         get_trap_response (void);
 
-static SCM exit_handler (void);
 static void clear_response_data (GdnLisp *self);
 static SCM  response_data_to_scm (GdnLisp *self);
 static SCM  scm_load_handler (SCM filename);
 static SCM  spawn_top_repl (G_GNUC_UNUSED void *data);
 static SCM  spawn_handler (void *data, SCM key, SCM args);
 static void set_response_data (GdnLisp *self, GdnLispCommand cmd, void *data);
+static void gdn_lisp_guile_init (void);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -152,6 +152,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
   gdn_backtrace_view_guile_init ();
   gdn_thread_info_guile_init ();
   gdn_module_info_guile_init ();
+  gdn_trap_view_guile_init ();
   gdn_trap_info_guile_init ();
 }
 

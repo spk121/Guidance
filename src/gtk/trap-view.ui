@@ -11,7 +11,7 @@
             <property name="single-click-activate">True</property>
             <child>
               <object class="GtkColumnViewColumn" id="name_col">
-                <property name="title">Thread ID</property>
+                <property name="title">Trap Name</property>
               </object>
             </child>
             <child>
@@ -22,6 +22,11 @@
             <child>
               <object class="GtkColumnViewColumn" id="active_col">
                 <property name="title">Active</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkColumnViewColumn" id="delete_col">
+                <property name="title">Delete</property>
               </object>
             </child>
           </object>

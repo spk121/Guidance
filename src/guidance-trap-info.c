@@ -45,8 +45,7 @@ static GParamSpec *properties[N_PROPS] = {
   NULL,
 };
 
-static SCM list_traps_func, trap_name_func, trap_enabled_func;
-GListStore *_store = NULL;
+static SCM trap_name_func, trap_enabled_func;
 
 static void
 gdn_trap_info_get_property (GObject *object, unsigned int property_id, GValue *value, GParamSpec *pspec)
@@ -131,7 +130,7 @@ gdn_trap_info_init (G_GNUC_UNUSED GdnTrapInfo *self)
 {
 }
 
-static GdnTrapInfo *
+GdnTrapInfo *
 trap_info_new_from_trap_id (int trap, int current)
 {
   GdnTrapInfo *self = g_object_new (GDN_TRAP_INFO_TYPE, NULL);
@@ -145,53 +144,15 @@ trap_info_new_from_trap_id (int trap, int current)
   return self;
 }
 
-/* GUILE THREAD: This updates the trap info store with information
- * about the current traps. Since the list of traps is thread
- * specific, this procedure must be called from the current Guile
- * thread. */
-SCM
-scm_update_traps (void)
-{
-  SCM all_traps = scm_vector (scm_call_0 (list_traps_func));
-
-  if (_store == NULL)
-    _store = g_list_store_new (GDN_TRAP_INFO_TYPE);
-  else
-    g_list_store_remove_all (_store);
-
-  for (size_t i = 0; i < scm_c_vector_length (all_traps); i++)
-    {
-      int          trap;
-      GdnTrapInfo *info;
-      int          current;
-
-      trap = scm_to_int (scm_c_vector_ref (all_traps, i));
-      current = FALSE;
-      info = trap_info_new_from_trap_id (trap, current);
-      g_list_store_append (_store, info);
-    }
-  return scm_vector_length (all_traps);
-}
-
-
 void
 gdn_trap_info_guile_init (void)
 {
-  list_traps_func = scm_c_public_ref ("system vm trap-state", "list-traps");
+  // list_traps_func = scm_c_public_ref ("system vm trap-state", "list-traps");
   trap_name_func = scm_c_public_ref ("system vm trap-state", "trap-name");
   trap_enabled_func =
       scm_c_public_ref ("system vm trap-state", "trap-enabled?");
-
-  scm_c_define_gsubr ("gdn-update-traps", 0, 0, 0, scm_update_traps);
 }
 
-GListStore *
-gdn_trap_info_get_model (void)
-{
-  if (!_store)
-    _store = g_list_store_new (GDN_TRAP_INFO_TYPE);
-  return _store;
-}
 int
 gdn_trap_info_get_index (GdnTrapInfo *info)
 {
@@ -203,7 +164,8 @@ gdn_trap_info_get_name (GdnTrapInfo *info)
 {
   return info->name;
 }
-gboolean *
+
+gboolean
 gdn_trap_info_get_active (GdnTrapInfo *info)
 {
   return info->enabled;

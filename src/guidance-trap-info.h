@@ -32,6 +32,7 @@ GListStore *gdn_trap_info_get_model (void);
 void        gdn_trap_info_add_proc_trap_async (SCM proc);
 int         gdn_trap_info_get_index (GdnTrapInfo *info);
 const char *gdn_trap_info_get_name (GdnTrapInfo *info);
-gboolean *  gdn_trap_info_get_active (GdnTrapInfo *info);
+gboolean     gdn_trap_info_get_active (GdnTrapInfo *info);
+GdnTrapInfo *trap_info_new_from_trap_id (int trap, int current);
 
 G_END_DECLS

@@ -47,6 +47,7 @@ struct _GdnApplicationWindow
 
   /* Traps tab */
   GtkScrolledWindow *trap_window;
+  GdnTrapView *      trap_view;
 
   /* Module tab */
   GtkScrolledWindow *module_window;
@@ -258,6 +259,10 @@ gdn_application_window_init (GdnApplicationWindow *self)
   gtk_box_append (self->source_box, self->source_view);
   scm_c_define ("*gdn-source-view*",
                 gdn_source_view_to_scm (self->source_view));
+
+  self->trap_view = g_object_new (GDN_TYPE_TRAP_VIEW, NULL);
+  gtk_scrolled_window_set_child (self->trap_window, self->trap_view);
+  scm_c_define ("*gdn-trap-view*", gdn_trap_view_to_scm (self->trap_view));
 
   self->module_view = g_object_new (GDN_TYPE_MODULE_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->module_window),
