@@ -1,4 +1,4 @@
-/* guidance-environment-info.h
+/* guidance-environment-view.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -17,27 +17,19 @@
  */
 
 #pragma once
+
 #include <gtk/gtk.h>
 #include <libguile.h>
 
 G_BEGIN_DECLS
 
-#define GDN_ENVIRONMENT_INFO_TYPE (gdn_environment_info_get_type ())
+// TYPE
+#define GDN_TYPE_ENVIRONMENT_VIEW (gdn_environment_view_get_type ())
 G_DECLARE_FINAL_TYPE (
-    GdnEnvironmentInfo, gdn_environment_info, GDN, ENVIRONMENT_INFO, GObject)
+    GdnEnvironmentView, gdn_environment_view, GDN, ENVIRONMENT_VIEW, GtkBox)
 
-struct _GdnEnvironmentInfo
-{
-  GObject parent;
+SCM  gdn_environment_view_to_scm (GdnEnvironmentView *self);
+void gdn_environment_view_guile_init (void);
+SCM  gdn_environment_view_to_scm (GdnEnvironmentView *self);
 
-  char *  key;
-  char *  value;
-  GSList *list;
-};
-
-GdnEnvironmentInfo *gdn_environment_info_new_from_scm (SCM info);
-
-const char *gdn_environment_info_get_key (GdnEnvironmentInfo *info);
-const char *gdn_environment_info_get_value (GdnEnvironmentInfo *info);
-GListStore *gdn_environment_info_get_child_model (GdnEnvironmentInfo *info);
 G_END_DECLS

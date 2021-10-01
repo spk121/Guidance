@@ -3,6 +3,7 @@ guidance_sources = [
   'guidance-application-window.c',
   'guidance-application.c',
   'guidance-binding-info.c',
+  'guidance-environment-view.c',
   'guidance-environment-info.c',
   'guidance-emoji.c',
   'guidance-frame-info.c',

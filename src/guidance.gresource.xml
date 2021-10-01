@@ -12,6 +12,7 @@
     <file>gtk/terminal-view.ui</file>
     <file>gtk/thread-view.ui</file>
     <file>gtk/trap-view.ui</file>
+    <file>gtk/environment-view.ui</file>
     <file>icons/debug-next-instruction.png</file>
     <file>icons/debug-next.png</file>
     <file>icons/debug-restart.png</file>

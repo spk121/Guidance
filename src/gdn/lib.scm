@@ -312,13 +312,13 @@
 (define (gdn-get-environment)
   "Lots of info about the current running environment."
   (vector
-   (vector "system" (gdn-get-system-information))
-   (vector "memory" (gdn-get-gc-stats))
-   (vector "environment" (gdn-get-environment-variables))
-   (vector "locale" (gdn-get-locale-information))
-   (vector "process" (gdn-get-process-information))
-   (vector "time" (gdn-get-time-entries))
-   (vector "user" (gdn-get-user-information-entries))
+   (vector "system" "" (gdn-get-system-information))
+   (vector "memory" "" (gdn-get-gc-stats))
+   (vector "environment" "" (gdn-get-environment-variables))
+   (vector "locale" "" (gdn-get-locale-information))
+   (vector "process" "" (gdn-get-process-information))
+   (vector "time" "" (gdn-get-time-entries))
+   (vector "user" "" (gdn-get-user-information-entries))
    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

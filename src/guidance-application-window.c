@@ -21,7 +21,7 @@
 #include "guidance-backtrace-view.h"
 #include "guidance-binding-info.h"
 #include "guidance-config.h"
-#include "guidance-environment-info.h"
+#include "guidance-environment-view.h"
 #include "guidance-frame-info.h"
 #include "guidance-lisp.h"
 #include "guidance-module-info.h"
@@ -54,9 +54,8 @@ struct _GdnApplicationWindow
   GdnModuleView *    module_view;
 
   /* Environment tab */
-  GtkColumnView *      environment_column_view;
-  GtkColumnViewColumn *environment_key_column;
-  GtkColumnViewColumn *environment_value_column;
+  GtkScrolledWindow * environment_window;
+  GdnEnvironmentView *environment_view;
 
   /* Backtrace tab */
   GtkBox *backtrace_box;
@@ -98,25 +97,11 @@ static void add_simple_action (GdnApplicationWindow *self,
                                const char *          name,
                                GCallback             callback);
 
-static void environment_key_setup (GtkListItemFactory *factory,
-                                   GtkListItem *       list_item);
-static void environment_key_bind (GtkListItemFactory *factory,
-                                  GtkListItem *       list_item);
-static void environment_key_unbind (GtkListItemFactory *factory,
-                                    GtkListItem *       list_item);
-static void environment_value_setup (GtkListItemFactory *factory,
-                                     GtkListItem *       list_item);
-static void environment_value_bind (GtkListItemFactory *factory,
-                                    GtkListItem *       list_item);
-static void environment_value_unbind (GtkListItemFactory *factory,
-                                      GtkListItem *       list_item);
 static void handle_backtrace_view_location (GdnBacktraceView *view,
                                             const char *      filename,
                                             int               line,
                                             int               col,
                                             gpointer          user_data);
-// static void environment_activate(GtkListView *list, guint position, gpointer
-// unused);
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
 ////////////////////////////////////////////////////////////////
@@ -147,9 +132,7 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   BIND (module_window);
 
   /* Environment tab */
-  BIND (environment_column_view);
-  BIND (environment_key_column);
-  BIND (environment_value_column);
+  BIND (environment_window);
 
   /* Backtrace tab */
   BIND (backtrace_box);
@@ -172,53 +155,6 @@ application_window_init_threads_tab (GdnApplicationWindow *self)
                                  GTK_WIDGET (thread_view));
 }
 
-static void
-application_window_init_environment_tab (GdnApplicationWindow *self)
-{
-  GtkTreeListModel *tree_model;
-  tree_model = gdn_environment_info_get_tree_model ();
-
-  /* Here we create the a list viewer with columns. It needs to know
-   * up front how we're handling selections. We want to be able to
-   * handle a single line at a time. The selection model tries to own
-   * the tree model, but we ref it since we're freeing it a different
-   * way. */
-  GtkSingleSelection *selection_model;
-  selection_model = gtk_single_selection_new (
-      G_LIST_MODEL (g_object_ref (G_OBJECT (tree_model))));
-  // g_signal_connect(selection_model, "selection-changed",
-  // environment_selection_changed, self);
-  gtk_column_view_set_model (self->environment_column_view,
-                             GTK_SELECTION_MODEL (selection_model));
-
-  /* This column view has a key and a value column. We need to set up
-   * factories to create the cells in each column. */
-  GtkSignalListItemFactory *environment_key_column_factory;
-  environment_key_column_factory =
-      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (environment_key_column_factory, "setup",
-                    G_CALLBACK (environment_key_setup), self);
-  g_signal_connect (environment_key_column_factory, "bind",
-                    G_CALLBACK (environment_key_bind), self);
-  g_signal_connect (environment_key_column_factory, "unbind",
-                    G_CALLBACK (environment_key_unbind), self);
-  gtk_column_view_column_set_factory (
-      self->environment_key_column,
-      GTK_LIST_ITEM_FACTORY (environment_key_column_factory));
-
-  GtkSignalListItemFactory *environment_value_column_factory;
-  environment_value_column_factory =
-      GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (environment_value_column_factory, "setup",
-                    G_CALLBACK (environment_value_setup), self);
-  g_signal_connect (environment_value_column_factory, "bind",
-                    G_CALLBACK (environment_value_bind), self);
-  g_signal_connect (environment_value_column_factory, "unbind",
-                    G_CALLBACK (environment_value_unbind), self);
-  gtk_column_view_column_set_factory (
-      self->environment_value_column,
-      GTK_LIST_ITEM_FACTORY (environment_value_column_factory));
-}
 
 static void
 application_window_init_backtrace_tab (GdnApplicationWindow *self)
@@ -268,7 +204,12 @@ gdn_application_window_init (GdnApplicationWindow *self)
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->module_window),
                                  GTK_WIDGET (self->module_view));
 
-  application_window_init_environment_tab (self);
+  self->environment_view = g_object_new (GDN_TYPE_ENVIRONMENT_VIEW, NULL);
+  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->environment_window),
+                                 GTK_WIDGET (self->environment_view));
+  scm_c_define ("*gdn-environment-view*",
+                gdn_environment_view_to_scm (self->environment_view));
+
   application_window_init_backtrace_tab (self);
 
   gdn_terminal_view_connect_lisp_ports (self->terminal_view, self->lisp);
@@ -374,97 +315,6 @@ handle_module_view_trap (GdnModuleView *view,
   gdn_lisp_add_proc_trap_async (self->lisp, proc);
 }
 
-static void
-environment_key_setup (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_assert (factory != NULL);
-
-  GtkExpander *expander;
-  GtkLabel *   label;
-
-  expander = gtk_tree_expander_new ();
-  gtk_list_item_set_child (list_item, expander);
-
-  label = gtk_label_new (NULL);
-  gtk_widget_set_margin_start (label, 5);
-  gtk_widget_set_margin_end (label, 5);
-  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
-  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), label);
-}
-
-static void
-environment_key_bind (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_assert (factory != NULL);
-
-  GtkTreeListRow *list_row;
-  GtkWidget *     expander;
-  GtkWidget *     label;
-  gpointer        item;
-
-  list_row = gtk_list_item_get_item (list_item);
-  item = gtk_tree_list_row_get_item (list_row);
-
-  expander = gtk_list_item_get_child (list_item);
-  gtk_tree_expander_set_list_row (GTK_TREE_EXPANDER (expander), list_row);
-  label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
-
-  gtk_label_set_label (GTK_LABEL (label), gdn_environment_info_get_key (item));
-}
-
-static void
-environment_key_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_assert (factory != NULL);
-
-  GtkWidget *     expander;
-  GtkWidget *     label;
-
-  expander = gtk_list_item_get_child (list_item);
-  label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
-  gtk_label_set_label (GTK_LABEL (label), "");
-}
-
-static void
-environment_value_setup (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_assert (factory != NULL);
-
-  GtkLabel *label;
-
-  label = gtk_label_new (NULL);
-  gtk_widget_set_margin_start (label, 5);
-  gtk_widget_set_margin_end (label, 5);
-  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
-  gtk_list_item_set_child (list_item, label);
-}
-
-static void
-environment_value_bind (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_assert (factory != NULL);
-
-  GtkTreeListRow *list_row;
-  GtkLabel *      label;
-  gpointer        item;
-
-  list_row = gtk_list_item_get_item (list_item);
-  item = gtk_tree_list_row_get_item (list_row);
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  gtk_label_set_label (label, gdn_environment_info_get_value (item));
-}
-
-static void
-environment_value_unbind (GtkListItemFactory *factory, GtkListItem *list_item)
-{
-  g_assert (factory != NULL);
-
-  GtkWidget *     label;
-
-  label = gtk_list_item_get_child (list_item);
-  gtk_label_set_label (GTK_LABEL (label), "");
-}
 
 ////////////////////////////////////////////////////////////////
 // HELPER FUNCTIONS

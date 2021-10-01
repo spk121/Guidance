@@ -258,24 +258,7 @@
                               <object class="GtkScrolledWindow" id="environment_window">
                                 <property name="hexpand">True</property>
                                 <property name="vexpand">True</property>
-                                <child>
-                                  <object class="GtkColumnView" id="environment_column_view">
-                                    <style>
-                                      <class name="data-table" />
-                                    </style>
-                                    <child>
-                                      <object class="GtkColumnViewColumn" id="environment_key_column">
-                                        <property name="title">Key</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkColumnViewColumn" id="environment_value_column">
-                                        <property name="title">Value</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
+                             </object>
                             </property>
                           </object>
                         </child>

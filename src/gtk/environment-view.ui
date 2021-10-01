@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="4.2.1"/>
+  <template class="GdnEnvironmentView" parent="GtkBox">
+    <child>
+      <object class="GtkColumnView" id="column_view">
+        <style>
+          <class name="data-table" />
+        </style>
+        <child>
+          <object class="GtkColumnViewColumn" id="key_col">
+            <property name="title">Key</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkColumnViewColumn" id="value_col">
+            <property name="title">Value</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

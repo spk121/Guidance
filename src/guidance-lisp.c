@@ -18,6 +18,7 @@
 
 #define _GNU_SOURCE
 #include "guidance-lisp.h"
+#include "guidance-environment-view.h"
 #include "guidance-frame-info.h"
 #include "guidance-module-info.h"
 #include "guidance-resources.h"
@@ -154,6 +155,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
   gdn_module_info_guile_init ();
   gdn_trap_view_guile_init ();
   gdn_trap_info_guile_init ();
+  gdn_environment_view_guile_init ();
 }
 
 /* This initializes an instance of the lisp interpreter */

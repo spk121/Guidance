@@ -18,27 +18,51 @@
 
 #include "guidance-environment-info.h"
 
-////////////////////////////////////////////////////////////////
-// GDN_ENVIRONMENT_CATEGORY
-
-struct _GdnEnvironmentInfo
-{
-  GObject parent;
-
-  char *key;
-  char *  value;
-  GSList *list;
-};
-
 G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT)
+
+////////////////////////////////////////////////////////////////
+// DECLARATIONS
+////////////////////////////////////////////////////////////////
 
 static GtkTreeListModel *_model = NULL;
 static GListStore *      _store = NULL;
 
+static void                finalize (GdnEnvironmentInfo *self);
+static GdnEnvironmentInfo *info_new_from_scm (SCM info);
+static GListModel *        get_child_model (GObject *item, gpointer user_data);
+
+////////////////////////////////////////////////////////////////
+// INITIALIZATION
+////////////////////////////////////////////////////////////////
+
 static void
-gdn_environment_info_finalize (GObject *object)
+gdn_environment_info_class_init (GdnEnvironmentInfoClass *klass)
 {
-  GdnEnvironmentInfo *self = GDN_ENVIRONMENT_INFO (object);
+  GObjectClass *gobj_class = G_OBJECT_CLASS (klass);
+
+  gobj_class->finalize = finalize;
+}
+
+static void
+gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
+{
+}
+
+////////////////////////////////////////////////////////////////
+// METHODS
+////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////
+// SIGNAL HANDLERS
+////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////
+// HELPER FUNCTIONS
+////////////////////////////////////////////////////////////////
+
+static void
+finalize (GdnEnvironmentInfo *self)
+{
   g_free (self->key);
   self->key = NULL;
   if (self->value)
@@ -48,33 +72,16 @@ gdn_environment_info_finalize (GObject *object)
     }
   if (self->list)
     {
-      g_slist_free_full (self->list,
-                         (GDestroyNotify) gdn_environment_info_finalize);
+      g_slist_free_full (self->list, (GDestroyNotify) finalize);
       self->list = NULL;
     }
 
   /* Don't forget to chain up. */
-  G_OBJECT_CLASS (gdn_environment_info_parent_class)->finalize (object);
+  G_OBJECT_CLASS (gdn_environment_info_parent_class)->finalize (self);
 }
 
-static void
-gdn_environment_info_class_init (GdnEnvironmentInfoClass *klass)
-{
-  GObjectClass *gobj_class = G_OBJECT_CLASS (klass);
-
-  gobj_class->finalize = gdn_environment_info_finalize;
-}
-
-static void
-gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
-{
-}
-
-////////////////////////////////////////////////////////////////
-// POPULATE THE G_LIST_MODEL
-
-static GdnEnvironmentInfo *
-info_new_from_scm (SCM info)
+GdnEnvironmentInfo *
+gdn_environment_info_new_from_scm (SCM info)
 {
   GdnEnvironmentInfo *self = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
   SCM                 entries;
@@ -107,38 +114,34 @@ info_new_from_scm (SCM info)
   return self;
 }
 
-// A GFunc
-// Pushes each entry of a GdnEnvironmentCategories's entry list
-// into a list store of type GDN_ENVIRONMENT_ENTRY_TYPE
-static void
-pack_entries (gpointer data, gpointer user_data)
+GListStore *
+gdn_environment_info_get_child_model (GdnEnvironmentInfo *info)
 {
-  GListStore *        store = G_LIST_STORE (user_data);
-  GdnEnvironmentInfo *entry = GDN_ENVIRONMENT_INFO (data);
-  g_list_store_append (store, entry);
-}
-
-// A GtkTreeListModelCreateModelFunc
-// Creates the 1st level children of an GdnEnvironmentCategory
-static GListModel *
-get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
-{
-  GdnEnvironmentInfo *info;
   GListStore *        entries;
-
-  info = GDN_ENVIRONMENT_INFO (item);
+  GSList *            lst;
   if (info->list)
     {
       entries = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
-      g_slist_foreach (info->list, pack_entries, entries);
-      return G_LIST_MODEL (entries);
+      lst = info->list;
+      while (1)
+        {
+          g_list_store_append (entries, lst->data);
+          if (lst->next == NULL)
+            break;
+          lst = lst->next;
+        }
+      return entries;
     }
 
   return NULL;
 }
 
-void
-gdn_environment_info_update_all (SCM all_info)
+////////////////////////////////////////////////////////////////
+// GUILE API
+////////////////////////////////////////////////////////////////
+#if 0
+SCM
+gdn_environment_info_update_all (SCM SCM all_info)
 {
   SCM                 entry;
   GdnEnvironmentInfo *info;
@@ -214,17 +217,7 @@ gdn_environment_info_update_one (const char *category,
       category_info->list = g_slist_append (category_info->list, temp_info);
     }
 }
-
-GtkTreeListModel *
-gdn_environment_info_get_tree_model (void)
-{
-  if (_store == NULL)
-    _store = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
-  if (_model == NULL)
-    _model = gtk_tree_list_model_new (_store, FALSE, FALSE, get_child_model,
-                                      NULL, NULL);
-  return _model;
-}
+#endif
 
 const char *
 gdn_environment_info_get_key (GdnEnvironmentInfo *info)
