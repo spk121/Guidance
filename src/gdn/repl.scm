@@ -71,6 +71,7 @@ signal handler has been set up."
   (run-repl))
 
 (define (repl-welcome)
+  "A friendly welcome message printed to the console."
   (format #t "Welcome to Guidance, an alternative Guile REPL.~%")
   (format #t "This is linked to Guile ~a.~%" (version))
   (newline))
@@ -83,6 +84,10 @@ signal handler has been set up."
 up and that the language is available."
   (call-with-prompt *outer-prompt-tag*
     (while #t
+      ;; We're at the REPL. We're expecting either the
+      ;; GtkEntry::activate with a string to be evaluated, or the
+      ;; GtkButton::clicked from the run button.
+      (let ((input (gdn-get-user-input)))
       (let ((input-str (string-trim-both (read-line))))
         ;; Evaluate the input string in the current language
         ;; catching errors and traps.

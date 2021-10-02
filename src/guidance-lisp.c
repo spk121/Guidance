@@ -88,6 +88,15 @@ static SCM      add_trap_proc;
 static SCM      trap_thunk_store[9], trap_func_store[9];
 static int      trap_thunk_index = 1;
 
+static SCM step_into_instruction_sym =
+    scm_from_utf8_symbol ("step-into-instruction");
+static SCM step_into_sym = scm_from_utf8_symbol ("step-into");
+static SCM step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
+static SCM step_sym = scm_from_utf8_symbol ("step");
+static SCM step_out_sym = scm_from_utf8_symbol ("step-out");
+static SCM continue_sym = scm_from_utf8_symbol ("continue");
+static SCM eval_sym = scm_from_utf8_symbol ("eval");
+
 static int         unix_pty_input_fd_new (void);
 static int         unix_pty_output_fd_new (void);
 static SCM         port_from_unix_output_fd (int fd);
@@ -328,7 +337,7 @@ gdn_lisp_get_output_fd (GdnLisp *self)
  * has activated a debugging action.
  */
 void
-gdn_lisp_trap_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data)
+gdn_lisp_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data)
 {
   g_assert_cmpstr (G_OBJECT_TYPE_NAME (self), ==, "GdnLisp");
 
@@ -479,7 +488,6 @@ port_from_unix_output_fd (int master_fd)
   return scm_fdopen (scm_from_int (slave_fd), mode);
 }
 
-
 static void
 clear_response_data (GdnLisp *self)
 {
@@ -502,15 +510,6 @@ set_response_data (GdnLisp *self, GdnLispCommand cmd, void *data)
 static SCM
 response_data_to_scm (GdnLisp *self)
 {
-  SCM step_into_instruction_sym =
-      scm_from_utf8_symbol ("step-into-instruction");
-  SCM step_into_sym = scm_from_utf8_symbol ("step-into");
-  SCM step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
-  SCM step_sym = scm_from_utf8_symbol ("step");
-  SCM step_out_sym = scm_from_utf8_symbol ("step-out");
-  SCM continue_sym = scm_from_utf8_symbol ("continue");
-  SCM eval_sym = scm_from_utf8_symbol ("eval");
-
   SCM response;
   SCM response_data;
 
@@ -545,23 +544,24 @@ response_data_to_scm (GdnLisp *self)
 /* GUILE THREAD: This function, which is running the Guile thread, is
  * a blocking wait for the Gtk thread to give the user's response. */
 static SCM
-scm_get_trap_response (SCM s_self)
+scm_get_user_input (SCM s_self)
 {
   scm_assert_foreign_object_type (scm_lisp_type, s_self);
-  GdnLisp *self = scm_foreign_object_ref (s_self, 0);
-  g_assert_cmpstr (G_OBJECT_TYPE_NAME (self), ==, "GdnLisp");
 
-  SCM      response;
+  GdnLisp *self;
+  SCM      input;
+
+  self = scm_foreign_object_ref (s_self, 0);
 
   g_mutex_lock (&(self->response_mutex));
   while (self->response != GDN_LISP_COMMAND_UNKNOWN)
     g_cond_wait (&(self->response_condition), &(self->response_mutex));
 
-  response = response_data_to_scm (self);
+  input = response_data_to_scm (self);
   clear_response_data (self);
   g_mutex_unlock (&(self->response_mutex));
 
-  return response;
+  return input;
 }
 
 /*
@@ -653,8 +653,8 @@ gdn_lisp_guile_init (void)
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_lisp_type = scm_make_foreign_object_type (name, slots, NULL);
 
-  scm_c_define_gsubr ("gdn-get-trap-response", 1, 0, 0,
-                      (scm_t_subr) scm_get_trap_response);
+  scm_c_define_gsubr ("gdn-get-user-input", 1, 0, 0,
+                      (scm_t_subr) scm_get_user_input);
   scm_c_define_gsubr ("gdn-load-handler", 1, 0, 0,
                       (scm_t_subr) scm_load_handler);
   trap_thunk_store[1] =

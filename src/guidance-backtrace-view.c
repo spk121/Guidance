@@ -59,8 +59,9 @@ typedef struct _GdnBacktraceViewAndListItem
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 
-static SCM      get_backtrace_func = SCM_BOOL_F;
 static unsigned signals[N_SIGNALS];
+static SCM      get_backtrace_func = SCM_BOOL_F;
+static SCM      scm_backtrace_view_type;
 
 typedef void (*factory_func_t) (GtkSignalListItemFactory *self,
                                 GtkListItem *             listitem,
@@ -618,8 +619,6 @@ free_pair_closure_notify (gpointer data, G_GNUC_UNUSED GClosure *closure)
 ////////////////////////////////////////////////////////////////
 // GUILE API
 ////////////////////////////////////////////////////////////////
-
-static SCM scm_backtrace_view_type;
 
 SCM
 gdn_backtrace_view_to_scm (GdnBacktraceView *self)

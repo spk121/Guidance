@@ -44,6 +44,7 @@ struct _GdnApplicationWindow
 
   /* Threads tab */
   GtkScrolledWindow *thread_window;
+  GdnThreadView *    thread_view;
 
   /* Traps tab */
   GtkScrolledWindow *trap_window;
@@ -59,6 +60,7 @@ struct _GdnApplicationWindow
 
   /* Backtrace tab */
   GtkBox *backtrace_box;
+  GdnBacktraceView *backtrace_view;
 
   /* Source tab */
   GtkBox *source_box;
@@ -92,6 +94,7 @@ static void     handle_after_sweep (GdnLisp *lisp, gpointer user_data);
 static void     handle_module_view_trap (GdnModuleView *view,
                                          guint64        packed_var,
                                          gpointer       user_data);
+static void     show_page (GdnApplicationWindow *self, const char *name);
 
 static void add_simple_action (GdnApplicationWindow *self,
                                const char *          name,
@@ -118,56 +121,16 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GdnApplicationWindow, x)
 
   BIND (main_stack);
-
-  /* Terminal tab */
   BIND (terminal_box);
-
-  /* Threads tab */
   BIND (thread_window);
-
-  /* Trap tab */
   BIND (trap_window);
-
-  /* Modules tab */
   BIND (module_window);
-
-  /* Environment tab */
   BIND (environment_window);
-
-  /* Backtrace tab */
   BIND (backtrace_box);
-
-  /* Source Tab */
   BIND (source_box);
-
   BIND (sweep_image);
   BIND (gc_image);
 #undef BIND
-}
-
-static void
-application_window_init_threads_tab (GdnApplicationWindow *self)
-{
-  GdnThreadView *thread_view;
-
-  thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
-  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
-                                 GTK_WIDGET (thread_view));
-}
-
-
-static void
-application_window_init_backtrace_tab (GdnApplicationWindow *self)
-{
-  GdnBacktraceView *backtrace_view;
-
-  backtrace_view = g_object_new (GDN_TYPE_BACKTRACE_VIEW, NULL);
-  gtk_box_append (self->backtrace_box, backtrace_view);
-  scm_c_define ("*gdn-backtrace-view*",
-                gdn_backtrace_view_to_scm (backtrace_view));
-  g_signal_connect_data (backtrace_view, "location",
-                         G_CALLBACK (handle_backtrace_view_location), self,
-                         NULL, 0);
 }
 
 static void
@@ -187,9 +150,17 @@ gdn_application_window_init (GdnApplicationWindow *self)
 
   self->lisp = g_object_new (GDN_LISP_TYPE, NULL);
 
-  application_window_init_threads_tab (self);
+  self->thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
+  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
+                                 GTK_WIDGET (self->thread_view));
+
   self->terminal_view = g_object_new (GDN_TYPE_TERMINAL_VIEW, NULL);
   gtk_box_append (self->terminal_box, self->terminal_view);
+  gdn_terminal_view_connect_ports (self->terminal_view,
+                                   gdn_lisp_get_input_fd (self->lisp),
+                                   gdn_lisp_get_input_prompt_fd (self->lisp),
+                                   gdn_lisp_get_input_error_fd (self->lisp),
+                                   gdn_lisp_get_output_fd (self->lisp));
 
   self->source_view = g_object_new (GDN_TYPE_SOURCE_VIEW, NULL);
   gtk_box_append (self->source_box, self->source_view);
@@ -210,9 +181,13 @@ gdn_application_window_init (GdnApplicationWindow *self)
   scm_c_define ("*gdn-environment-view*",
                 gdn_environment_view_to_scm (self->environment_view));
 
-  application_window_init_backtrace_tab (self);
-
-  gdn_terminal_view_connect_lisp_ports (self->terminal_view, self->lisp);
+  self->backtrace_view = g_object_new (GDN_TYPE_BACKTRACE_VIEW, NULL);
+  gtk_box_append (self->backtrace_box, self->backtrace_view);
+  scm_c_define ("*gdn-backtrace-view*",
+                gdn_backtrace_view_to_scm (self->backtrace_view));
+  g_signal_connect_data (self->backtrace_view, "location",
+                         G_CALLBACK (handle_backtrace_view_location), self,
+                         NULL, 0);
 
   g_signal_connect (self->lisp, "after-gc", G_CALLBACK (handle_after_gc), self);
   g_signal_connect (self->lisp, "after-sweep", G_CALLBACK (handle_after_sweep),
@@ -298,7 +273,7 @@ handle_backtrace_view_location (GdnBacktraceView *btview,
 
   GdnApplicationWindow *self = user_data;
   gdn_source_view_show_location (self->source_view, filename, line, col);
-  gdn_application_window_show_page (self, "source");
+  show_page (self, "source");
 }
 
 static void
@@ -332,8 +307,8 @@ add_simple_action (GdnApplicationWindow *self,
   g_action_map_add_action (G_ACTION_MAP (self), G_ACTION (action));
 }
 
-void
-gdn_application_window_show_page (GdnApplicationWindow *self, const char *name)
+static void
+show_page (GdnApplicationWindow *self, const char *name)
 {
   GtkWidget *wigz = gtk_stack_get_child_by_name (self->main_stack, name);
   if (wigz != NULL)

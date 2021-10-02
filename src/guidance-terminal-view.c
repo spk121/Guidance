@@ -17,7 +17,6 @@
  */
 
 #include "guidance-terminal-view.h"
-#include "guidance-lisp.h"
 #include <glib-unix.h>
 
 struct _GdnTerminalView
@@ -92,22 +91,23 @@ gdn_terminal_view_init (GdnTerminalView *self)
 ////////////////////////////////////////////////////////////////
 
 void
-gdn_terminal_view_connect_lisp_ports (GdnTerminalView *self, GdnLisp *lisp)
+gdn_terminal_view_connect_ports (GdnTerminalView *self,
+                                 int              input_fd,
+                                 int              prompt_fd,
+                                 int              error_fd,
+                                 int              output_fd)
 {
-  self->input_source =
-      g_unix_fd_add_full (G_PRIORITY_DEFAULT, gdn_lisp_get_input_fd (lisp),
-                          G_IO_IN, poll_terminal_text, self, NULL);
+  self->input_source = g_unix_fd_add_full (
+      G_PRIORITY_DEFAULT, input_fd, G_IO_IN, poll_terminal_text, self, NULL);
   self->prompt_source = g_unix_fd_add_full (
-      G_PRIORITY_DEFAULT, gdn_lisp_get_input_prompt_fd (lisp), G_IO_IN,
-      poll_terminal_prompt, self, NULL);
+      G_PRIORITY_DEFAULT, prompt_fd, G_IO_IN, poll_terminal_prompt, self, NULL);
   self->error_source = g_unix_fd_add_full (
-      G_PRIORITY_DEFAULT, gdn_lisp_get_input_error_fd (lisp), G_IO_IN,
-      poll_terminal_error, self, NULL);
-  self->output_fd = gdn_lisp_get_output_fd (lisp);
+      G_PRIORITY_DEFAULT, error_fd, G_IO_IN, poll_terminal_error, self, NULL);
+  self->output_fd = output_fd;
 }
 
 void
-gdn_terminal_view_disconnect_lisp_port (GdnTerminalView *self)
+gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *self)
 {
   g_source_remove (self->input_source);
   self->input_source = 0;

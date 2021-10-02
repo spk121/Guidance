@@ -385,6 +385,7 @@
     (unless (char-ready?)
       (display "poop>" %gdn-prompt-port))
     (force-output)
+    (gdn-update-traps! *gdn-trap-view* (list-traps))
     ;; (run-hook before-read-hook)
     ;; (%gdn-update-thread-info)
     ;; (%gdn-update-environment-info (gdn-get-environment))
@@ -445,7 +446,7 @@ interpreter."
             'other))))
     (gdn-add-module category name-str abs-filename)))
 
-;;  (add-hook! module-defined-hook gdn-add-module)
+;(add-hook! module-defined-hook gdn-add-module)
 
 #|
 (define (gdn-exit-hook)
@@ -469,7 +470,8 @@ interpreter."
       (display (if (string? prompt) prompt (prompt)) %gdn-prompt-port))
     (force-output)
     (run-hook before-read-hook)
-    (format #t "in gdn-repl-reader~%")
+    (gdn-update-traps! *gdn-trap-view* (list-traps))
+    (gdn-update-threads)
     ((or reader read) (current-input-port))))
 
 (set! repl-reader gdn-repl-reader)
@@ -603,19 +605,3 @@ trap-name indicate the current trap."
         (write (false-if-exception (eval-string data)) (current-output-port))
         (newline (current-output-port))
         (loop (%gdn-get-error-response)))))))
-
-;;////////////////////////////////////////////////////////////////
-
-;; This construction adds a trap from the obarray
-
-(lambda ()
-
-  ;; Makes a list from the module
-  (let ((sym-var-list (hash-map->list
-                       (lambda (sym var)
-                         (cons sym var))
-                       (module-obarray (current-module)))))
-    (let ((entry (car sym-var-list)))
-      ;; Adds a trap for an entry
-      (add-trap-at-procedure-call (variable-ref (cdr entry))))))
-

@@ -60,11 +60,11 @@ int                   gdn_lisp_get_input_fd (GdnLisp *self);
 int                   gdn_lisp_get_input_error_fd (GdnLisp *self);
 int                   gdn_lisp_get_input_prompt_fd (GdnLisp *self);
 int                   gdn_lisp_get_output_fd (GdnLisp *self);
+void
+gdn_lisp_trap_user_response (GdnLisp *self, GdnLispCommand cmd, void *data);
 
 char **gdn_lisp_get_paths (void);
 
-void
-gdn_lisp_trap_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data);
 void gdn_lisp_add_proc_trap_async (GdnLisp *self, SCM proc);
 
 void                  gdn_lisp_continue (GdnLisp *lisp, GdnLispCommand command);
