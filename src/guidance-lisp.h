@@ -46,6 +46,12 @@ typedef enum
   GDN_LISP_N_COMMANDS
 } GdnLispCommand;
 
+typedef struct _GdnLispUserInput
+{
+  GdnLispCommand cmd;
+  void *         data;
+} GdnLispUserInput;
+
 #define GDN_LISP_TYPE (gdn_lisp_get_type ())
 G_DECLARE_FINAL_TYPE (GdnLisp, gdn_lisp, GDN, LISP, GObject)
 
@@ -60,8 +66,10 @@ int                   gdn_lisp_get_input_fd (GdnLisp *self);
 int                   gdn_lisp_get_input_error_fd (GdnLisp *self);
 int                   gdn_lisp_get_input_prompt_fd (GdnLisp *self);
 int                   gdn_lisp_get_output_fd (GdnLisp *self);
-void
-gdn_lisp_trap_user_response (GdnLisp *self, GdnLispCommand cmd, void *data);
+void                  gdn_lisp_set_user_response (GdnLisp *      self,
+                                                  GdnLispCommand cmd,
+                                                  const void *   data);
+SCM                   gdn_lisp_to_scm (GdnLisp *self);
 
 char **gdn_lisp_get_paths (void);
 

@@ -23,6 +23,7 @@
 (use-modules (ice-9 regex)
              (ice-9 threads)
              (ice-9 session))
+
 (export (top-repl
          _break_))
 
@@ -80,28 +81,31 @@ signal handler has been set up."
 (define *inner-prompt-tag* (make-prompt-tag "inner"))
 
 (define (run-repl)
-  "This is the guts of the REPL. We presume locale and signal is set
-up and that the language is available."
+  "This is the guts of the simplified REPL. We presume locale and
+signal is set up and that the language is available."
   (call-with-prompt *outer-prompt-tag*
     (while #t
-      ;; We're at the REPL. We're expecting either the
-      ;; GtkEntry::activate with a string to be evaluated, or the
-      ;; GtkButton::clicked from the run button.
+      ;; We're at the REPL. At this point, we can evaluate
+      ;; something at the GtkEntry, or we can run the
+      ;; command-line arguments when the RUN button is pushed.
+      (gdn-set-input-mode! *gdn-application-window* 'repl)
+      (display "repl>" %gdn-prompt-port)
       (let ((input (gdn-get-user-input)))
-      (let ((input-str (string-trim-both (read-line))))
         ;; Evaluate the input string in the current language
         ;; catching errors and traps.
         (call-with-error-and-trap-handler
          ;; Thunk to be executed
          (lambda ()
            (call-with-values
-               ;; Limit stack to here
-               (begin
-                 (%gdn-set-eval-buttons)
-                 (let ((retval (start-stack #t
-                                            (eval-string input-string (gdn-language)))))
-                   (%gdn-set-default-buttons)
-                   retval))
+               (cond
+                ;; The RUN button run the cmd line arguments
+                ((eqv? (car input) 'run)
+                 (gdn-set-input-mode! *gdn-application-window* 'run)
+                 (start-stack #t (eval (compile-shell-switches argv) (current-module))))
+                ;; Input at the GtkEntry is evalutated
+                ((eqv (car input) 'eval)
+                 (gdn-set-input-mode! *gdn-application-window* 'run)
+                 (start-stack #t (eval-string input-string))))
              ;; Print the return, which could be multiple values.
              (lambda return-vals
                (for-each (lambda (val)
@@ -110,7 +114,7 @@ up and that the language is available."
                              (write val)
                              (newline)))
                          return-vals)))))))
-
+    
     ;; abort handler
     (lambda (k status)
       status)))

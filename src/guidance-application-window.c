@@ -105,6 +105,29 @@ static void handle_backtrace_view_location (GdnBacktraceView *view,
                                             int               line,
                                             int               col,
                                             gpointer          user_data);
+
+static void handle_step_into (GSimpleAction *simple,
+                              GVariant *     parameter,
+                              gpointer       user_data);
+static void handle_step_into_instruction (GSimpleAction *simple,
+                                          GVariant *     parameter,
+                                          gpointer       user_data);
+static void handle_step_over (GSimpleAction *simple,
+                              GVariant *     parameter,
+                              gpointer       user_data);
+static void handle_step_over_instruction (GSimpleAction *simple,
+                                          GVariant *     parameter,
+                                          gpointer       user_data);
+static void handle_step_out (GSimpleAction *simple,
+                             GVariant *     parameter,
+                             gpointer       user_data);
+static void handle_process_run (GSimpleAction *simple,
+                                GVariant *     parameter,
+                                gpointer       user_data);
+static void handle_process_stop (GSimpleAction *simple,
+                                 GVariant *     parameter,
+                                 gpointer       user_data);
+
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
 ////////////////////////////////////////////////////////////////
@@ -134,6 +157,15 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 }
 
 static void
+wtf (GdnApplicationWindow *self)
+{
+  self->lisp = g_object_new (GDN_LISP_TYPE, NULL);
+  SCM lispscm = gdn_lisp_to_scm (self->lisp);
+  SCM tmp = scm_c_define ("*gdn-lisp*", lispscm);
+  printf ("*gdn-lisp* %p %p\n", lispscm, tmp);
+  scm_remember_upto_here_2 (lispscm, tmp);
+}
+static void
 gdn_application_window_init (GdnApplicationWindow *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
@@ -148,8 +180,9 @@ gdn_application_window_init (GdnApplicationWindow *self)
       gdk_display_get_default (), GTK_STYLE_PROVIDER (provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  self->lisp = g_object_new (GDN_LISP_TYPE, NULL);
+  wtf (self);
 
+  /* All the pages */
   self->thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
                                  GTK_WIDGET (self->thread_view));
@@ -194,6 +227,18 @@ gdn_application_window_init (GdnApplicationWindow *self)
                     self);
   g_signal_connect (self->module_view, "trap",
                     G_CALLBACK (handle_module_view_trap), self);
+
+  /* Simple actions */
+  add_simple_action (self, "step-into", handle_step_into);
+  add_simple_action (self, "step-into-instruction",
+                     handle_step_into_instruction);
+  add_simple_action (self, "step-over", handle_step_over);
+  add_simple_action (self, "step-over-instruction",
+                     handle_step_over_instruction);
+  add_simple_action (self, "step-out", handle_step_out);
+  add_simple_action (self, "process-run", handle_process_run);
+  add_simple_action (self, "process-stop", handle_process_stop);
+
   gdn_lisp_run (self->lisp);
 }
 
@@ -290,6 +335,68 @@ handle_module_view_trap (GdnModuleView *view,
   gdn_lisp_add_proc_trap_async (self->lisp, proc);
 }
 
+static void
+handle_step_into (GSimpleAction *simple,
+                  GVariant *     parameter,
+                  gpointer       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INTO, NULL);
+}
+
+static void
+handle_step_into_instruction (GSimpleAction *simple,
+                              GVariant *     parameter,
+                              gpointer       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp,
+                              GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION, NULL);
+}
+
+static void
+handle_step_over (GSimpleAction *simple,
+                  GVariant *     parameter,
+                  gpointer       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP, NULL);
+}
+
+static void
+handle_step_over_instruction (GSimpleAction *simple,
+                              GVariant *     parameter,
+                              gpointer       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INSTRUCTION,
+                              NULL);
+}
+
+static void
+handle_step_out (GSimpleAction *simple, GVariant *parameter, gpointer user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_OUT, NULL);
+}
+
+static void
+handle_process_run (GSimpleAction *simple,
+                    GVariant *     parameter,
+                    gpointer       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_RUN, NULL);
+}
+
+static void
+handle_process_stop (GSimpleAction *simple,
+                     GVariant *     parameter,
+                     gpointer       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STOP, NULL);
+}
 
 ////////////////////////////////////////////////////////////////
 // HELPER FUNCTIONS

@@ -35,24 +35,46 @@ Guidance is a version of the Guile REPL with a GUI and some extra
 features.  Largely, you just call Guidance the way you would call
 Guile.
 
-Classic Experience
-------------------
-
-Classic mode brings up the tried-and-true Guile REPL -- full featured
-and powerful -- with a few quality-of-life modifications.
-
-- Classic mode always starts at a Guile REPL.  Even when called with
-  command-line arguments that would normally cause a program to start
-  executing, we start with a REPL.  To actually execute the
-  command-line arguments, use the new meta-command `,run`.
-
-- The `,backtrace` command as well as the family of `,step` and
-  `,next` commands will update the *Backtrace* and *Source* tabs,
-  providing a quicker experience to see context information and the
-  stack.
-
-Guided Experience
+Alternative REPL
 -----------------
+
+The read-eval-print-loop (REPL) that Guidance provides is different
+from that provided by standard Guile: simpler and less flexible.  The
+Guidance REPL has four distinct modes.
+
+1. In the Eval Mode, the user can enter expressions into the single-
+   line entry. Each entry is expected to be a complete expression.
+   If the expression can be parsed, it is executed in Run Mode.
+   
+   Also, if the Run Button is clicked, the command-line arguments
+   are parsed and excuted in Run Mode.
+   
+2. In Run Mode, the expression is run. Output to the current output
+   port and the current error port is sent to the terminal
+   widget. Input can be entered from the line-entry widget. This
+   continues until the exepression returns, an error occurs, or a
+   trap is hit.  An error changes to Error Mode. A trap changes to
+   Trap Mode.
+   
+   During Run Mode, the Pause and Stop Buttons are enabled. The Pause
+   Button asynchronously inserts a breakpoint. The Stop Button
+   asynchronously inserts an execution termination.
+   
+3. In Error Mode, the backtrace is populated, and the Error REPL is
+   enabled. The Error REPL is an interpreter in the stack context of
+   the error. Unlike the Eval REPL, the Error REPL evaluates each
+   entry as if in a 'false-if-exception' context.
+   
+   During Error Mode, only the Stop Button is enabled. It quits Error
+   Mode and returns to Eval Mode.
+   
+4. In Trap Mode, the backtrace is populated, and the Trap REPL is
+   enabled.  The Trap REPL is like the Error REPL in that it is in the
+   stack context of the trap.
+   
+   During Trap Mode, all of the step and next buttons are enabled,
+   which add ephemeral traps and continue execution.  The Run Button
+   continues execution. The Stop button returns to Eval Mode.
 
 The guided experience replaces the standard Guile REPL with graphical
 elements. Using a GUI toolbar and menu, you can set breakpoints and
@@ -61,54 +83,19 @@ step through the program.
 The Peek Log
 ------------
 
-In both modes, there is a Peek log. Any call to the `pk` or `peek`
-commands will log their output on the Peek tab.
+There is a Peek log. Any call to the `_pk_` commands will log their
+output on the Peek tab.
 
 Breakpoints
 -----------
 
-A new procedure `breakpoint` is provided in the top-level
-environment, which you can add to the code being debugged to ensure
-a breakpoint is triggered at the location.
+A new procedure `_break_` is provided in the top-level environment,
+which you can add to the code being debugged to ensure a breakpoint is
+triggered at the location.
 
-Really, `breakpoint` is procedure of zero arguments that does nothing,
+Really, `_break_` is procedure of zero arguments that does nothing,
 but, Guidance adds a breakpoint on this procedure at startup.
 
-
-
-The extra features are these:
-
-
-- When the REPL is prompting at a location with an associated debug
-  frame, the *Source* and *Backtrace* tabs are updated to give
-  context.
-  
-- The *Traps* tab provides an alternate way to see, disable, and
-  enable traps.
-  
-- The *Peek* tab keeps a history of all calls to the `pk` macro and
-  their output.
-  
-- 
-  
-- A simpler trap handler is available, and installed by default, so
-  that when a trap is reached, the *Source* and *Backtrace* tabs are
-  updated, and a button bar is enabled.
-
-- The REPL adds a couple of new metacommands
-
-  `,run`: This processes the command-line arguments
-
-  `,where`: If the REPL currently is associated with a debug frame,
-  `,where` or `,w` loads the source file of a given frame and displays
-  its location in the *Source* tab.
-  
-- Some existing metacommands are given extra features
-
-  `,backtrace` or `,bt` updates the *Backtrace* tab with the current
-  backtrace information.
-  
-  `,step`, `,next` and all other associated 
 
 Getting Started
 ---------------
@@ -117,7 +104,7 @@ The trickiest part about getting started with Guidance is getting
 setting up the traps and breaks at locations where you want the
 program to pause for inspection.  There are a few ways to do this.
 
-1. In the code to monitored, insert calls to the `(_break_)` procedure
+1. In the code to monitored, insert calls to the `_break_` procedure
    at locations of interest.
 2. Add traps using `add-trap-at-procedure-call!` or
    `add-trap-at-source-location!`.
@@ -128,9 +115,6 @@ program to pause for inspection.  There are a few ways to do this.
        (add-trap-at-procedure-call! (@ (ice-9 i18n) number->locale-string))
    
 3. Add traps at procedures using the **module** page
-4. Start running in a paused state, by using `step-into` procedure.
-
-
 
 Docker Container
 ----------------

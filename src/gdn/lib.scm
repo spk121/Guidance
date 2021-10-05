@@ -472,6 +472,8 @@ interpreter."
     (run-hook before-read-hook)
     (gdn-update-traps! *gdn-trap-view* (list-traps))
     (gdn-update-threads)
+    (write *gdn-lisp*) (newline)
+    (write (gdn-get-user-input *gdn-lisp*)) (newline)
     ((or reader read) (current-input-port))))
 
 (set! repl-reader gdn-repl-reader)

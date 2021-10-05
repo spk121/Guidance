@@ -58,93 +58,28 @@
             <child>
               <object class="GtkBox" id="right">
                 <property name="orientation">vertical</property>
-                <!-- child>
+                <child>
                   <object class="GtkBox" id="toolbar">
                     <property name="halign">end</property>
                     <child>
                       <object class="GtkButton">
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">document-open</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkSeparator">
-                        <property name="margin-start">10</property>
-                        <property name="margin-end">10</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">process-stop</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">debug-restart</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
+                        <property name="action-name">win.process-run</property>
+                        <property name="sensitive">True</property>
                         <child>
                           <object class="GtkImage">
                             <property name="icon-name">debug-run</property>
+                            <property name="tooltip-text">run process</property>
                           </object>
                         </child>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton">
+                        <property name="action-name">win.process-stop</property>
                         <child>
                           <object class="GtkImage">
-                            <property name="icon-name">debug-step-instruction</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
-                        <property name="sensitive">False</property>
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">debug-step</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">debug-next-instruction</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">debug-next</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton">
-                        <child>
-                          <object class="GtkImage">
-                            <property name="icon-name">debug-step-out</property>
+                            <property name="icon-name">process-stop</property>
+                            <property name="tooltip-text">stop process</property>
                           </object>
                         </child>
                       </object>
@@ -156,6 +91,67 @@
                       </object>
                     </child>
                     <child>
+                      <object class="GtkButton">
+                        <property name="action-name">win.step-over</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-next</property>
+                            <property name="tooltip-text">step over</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="action-name">win.step-over-instruction</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-next-instruction</property>
+                            <property name="tooltip-text">step over instruction</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="action-name">win.step-into</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-step</property>
+                            <property name="tooltip-text">step into</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="action-name">win.step-into-instruction</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-step-instruction</property>
+                            <property name="tooltip-text">step into instruction</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="action-name">win.step-out</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-step-out</property>
+                            <property name="tooltip-text">step out</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- child>
+                      <object class="GtkSeparator">
+                        <property name="margin-start">10</property>
+                        <property name="margin-end">10</property>
+                      </object>
+                    </child -->
+                    <!-- child>
                       <object class="GtkButton">
                         <child>
                           <object class="GtkImage">
@@ -163,13 +159,13 @@
                           </object>
                         </child>
                       </object>
-                    </child>
+                    </child -->
                   </object>
                 </child>
                 <child>
                   <object class="GtkSeparator">
                   </object>
-                </child -->
+                </child>
                 <child>
                   <object class="GtkBox" id="main-frame">
                     <child>

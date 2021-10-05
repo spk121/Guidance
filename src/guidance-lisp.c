@@ -59,10 +59,7 @@ struct _GdnLisp
   SCM  input_port;      /* A substitute `current-input-port` */
   SCM input_port_var; /* A Guile variable that hold the input port */
 
-  int    response; /* Actually an enum of type `GdnReplCommand` */
-  void * response_data;
-  GCond  response_condition; /* Used in signalling operator responses */
-  GMutex response_mutex;     /* Used in signalling operator responses */
+  GAsyncQueue *user_input_queue;
 
   SCM         default_thread; /* The Guile representation of this interpreter's main thread */
 };
@@ -88,27 +85,25 @@ static SCM      add_trap_proc;
 static SCM      trap_thunk_store[9], trap_func_store[9];
 static int      trap_thunk_index = 1;
 
-static SCM step_into_instruction_sym =
-    scm_from_utf8_symbol ("step-into-instruction");
-static SCM step_into_sym = scm_from_utf8_symbol ("step-into");
-static SCM step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
-static SCM step_sym = scm_from_utf8_symbol ("step");
-static SCM step_out_sym = scm_from_utf8_symbol ("step-out");
-static SCM continue_sym = scm_from_utf8_symbol ("continue");
-static SCM eval_sym = scm_from_utf8_symbol ("eval");
+static SCM step_into_instruction_sym;
+static SCM step_into_sym;
+static SCM step_instruction_sym;
+static SCM step_sym;
+static SCM step_out_sym;
+static SCM continue_sym;
+static SCM eval_sym;
 
 static int         unix_pty_input_fd_new (void);
 static int         unix_pty_output_fd_new (void);
 static SCM         port_from_unix_output_fd (int fd);
 static SCM         port_from_unix_input_fd (int fd);
 
-static void clear_response_data (GdnLisp *self);
-static SCM  response_data_to_scm (GdnLisp *self);
+static SCM  response_data_to_scm (GdnLispUserInput *input);
 static SCM  scm_load_handler (SCM filename);
 static SCM  spawn_top_repl (G_GNUC_UNUSED void *data);
 static SCM  spawn_handler (void *data, SCM key, SCM args);
-static void set_response_data (GdnLisp *self, GdnLispCommand cmd, void *data);
 static void gdn_lisp_guile_init (void);
+static SCM  scm_get_user_input (SCM s_self);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -117,6 +112,7 @@ static void gdn_lisp_guile_init (void);
 static void
 gdn_lisp_class_init (GdnLispClass *klass)
 {
+
   signals[SIGNAL_AFTER_GC] =
       g_signal_newv ("after-gc", G_TYPE_FROM_CLASS (klass),
                      G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, NULL, NULL, NULL,
@@ -199,11 +195,7 @@ gdn_lisp_init (GdnLisp *self)
   self->prompt_port = port_from_unix_input_fd (self->input_prompt_fd);
   self->prompt_port_var = scm_c_define ("%gdn-prompt-port", self->prompt_port);
 
-  /* To transmit and receive operator command asynchronously, we use
-   * atomic integers and condition variables */
-  g_atomic_int_set (&(self->response), GDN_LISP_COMMAND_UNKNOWN);
-  g_cond_init (&(self->response_condition));
-  g_mutex_init (&(self->response_mutex));
+  self->user_input_queue = g_async_queue_new ();
 
   /* A couple of the garbage collection hooks use the c_hook interface. */
   scm_c_hook_add (&scm_after_gc_c_hook, after_gc_handler, self, 0);
@@ -337,22 +329,15 @@ gdn_lisp_get_output_fd (GdnLisp *self)
  * has activated a debugging action.
  */
 void
-gdn_lisp_set_user_response (GdnLisp *self, GdnLispCommand cmd, void *data)
+gdn_lisp_set_user_response (GdnLisp *self, GdnLispCommand cmd, const void *data)
 {
   g_assert_cmpstr (G_OBJECT_TYPE_NAME (self), ==, "GdnLisp");
 
-  g_mutex_lock (&(self->response_mutex));
-
-  // If an old command didn't get processed, clear out the
-  // associated data. */
-  if (self->response != GDN_LISP_COMMAND_UNKNOWN)
-    {
-      g_warning ("Unprocessed debug user action %d", self->response);
-      clear_response_data (self);
-    }
-  set_response_data (self, cmd, data);
-  g_cond_signal (&(self->response_condition));
-  g_mutex_unlock (&(self->response_mutex));
+  GdnLispUserInput *input = g_new0 (GdnLispUserInput, 1);
+  input->cmd = cmd;
+  if (cmd == GDN_LISP_COMMAND_EVAL)
+    input->data = g_strdup (data);
+  g_async_queue_push (self->user_input_queue, input);
 }
 
 /* GTK THREAD: This sends sends an async request to Guile to add a
@@ -488,58 +473,49 @@ port_from_unix_output_fd (int master_fd)
   return scm_fdopen (scm_from_int (slave_fd), mode);
 }
 
-static void
-clear_response_data (GdnLisp *self)
-{
-  if (self->response == GDN_LISP_COMMAND_EVAL)
-    g_free (self->response_data);
-  self->response_data = NULL;
-  self->response = GDN_LISP_COMMAND_UNKNOWN;
-}
-
-static void
-set_response_data (GdnLisp *self, GdnLispCommand cmd, void *data)
-{
-  self->response = cmd;
-  if (self->response == GDN_LISP_COMMAND_EVAL)
-    self->response_data = g_strdup (data);
-  else
-    self->response_data = data;
-}
-
 static SCM
-response_data_to_scm (GdnLisp *self)
+response_data_to_scm (GdnLispUserInput *input)
 {
   SCM response;
   SCM response_data;
 
+  response = SCM_BOOL_F;
   response_data = SCM_UNSPECIFIED;
 
-  if (self->response == GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION)
+  if (input->cmd == GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION)
     response = step_into_instruction_sym;
-  else if (self->response == GDN_LISP_COMMAND_STEP_INTO)
+  else if (input->cmd == GDN_LISP_COMMAND_STEP_INTO)
     response = step_into_sym;
-  else if (self->response == GDN_LISP_COMMAND_STEP_INSTRUCTION)
+  else if (input->cmd == GDN_LISP_COMMAND_STEP_INSTRUCTION)
     response = step_into_sym;
-  else if (self->response == GDN_LISP_COMMAND_STEP)
+  else if (input->cmd == GDN_LISP_COMMAND_STEP)
     response = step_sym;
-  else if (self->response == GDN_LISP_COMMAND_STEP_INSTRUCTION)
+  else if (input->cmd == GDN_LISP_COMMAND_STEP_INSTRUCTION)
     response = step_instruction_sym;
-  else if (self->response == GDN_LISP_COMMAND_STEP_OUT)
+  else if (input->cmd == GDN_LISP_COMMAND_STEP_OUT)
     response = step_out_sym;
-  else if (self->response == GDN_LISP_COMMAND_CONTINUE)
+  else if (input->cmd == GDN_LISP_COMMAND_CONTINUE)
     response = continue_sym;
-  else if (self->response == GDN_LISP_COMMAND_EVAL)
+  else if (input->cmd == GDN_LISP_COMMAND_EVAL)
     {
       response = eval_sym;
-      response_data = scm_from_utf8_string (self->response_data);
+      response_data = scm_from_utf8_string (input->data);
     }
+
   return scm_list_2 (response, response_data);
 }
 
 ////////////////////////////////////////////////////////////////
 // GUILE API
 ////////////////////////////////////////////////////////////////
+
+SCM
+gdn_lisp_to_scm (GdnLisp *self)
+{
+  SCM ret = scm_make_foreign_object_1 (scm_lisp_type, self);
+  printf ("gdn_lisp_to_scm(%p,%p) -> %p\n", scm_lisp_type, self, ret);
+  return ret;
+}
 
 /* GUILE THREAD: This function, which is running the Guile thread, is
  * a blocking wait for the Gtk thread to give the user's response. */
@@ -549,19 +525,17 @@ scm_get_user_input (SCM s_self)
   scm_assert_foreign_object_type (scm_lisp_type, s_self);
 
   GdnLisp *self;
-  SCM      input;
+  SCM      s_input;
 
   self = scm_foreign_object_ref (s_self, 0);
 
-  g_mutex_lock (&(self->response_mutex));
-  while (self->response != GDN_LISP_COMMAND_UNKNOWN)
-    g_cond_wait (&(self->response_condition), &(self->response_mutex));
+  GdnLispUserInput *input;
+  input = g_async_queue_pop (self->user_input_queue);
+  s_input = response_data_to_scm (input);
+  g_free (input->data);
+  g_free (input);
 
-  input = response_data_to_scm (self);
-  clear_response_data (self);
-  g_mutex_unlock (&(self->response_mutex));
-
-  return input;
+  return s_input;
 }
 
 /*
@@ -652,6 +626,15 @@ gdn_lisp_guile_init (void)
   name = scm_from_utf8_symbol ("gdn-lisp");
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_lisp_type = scm_make_foreign_object_type (name, slots, NULL);
+  printf ("scm_lisp_type %p\n", scm_lisp_type);
+
+  step_into_instruction_sym = scm_from_utf8_symbol ("step-into-instruction");
+  step_into_sym = scm_from_utf8_symbol ("step-into");
+  step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
+  step_sym = scm_from_utf8_symbol ("step");
+  step_out_sym = scm_from_utf8_symbol ("step-out");
+  continue_sym = scm_from_utf8_symbol ("continue");
+  eval_sym = scm_from_utf8_symbol ("eval");
 
   scm_c_define_gsubr ("gdn-get-user-input", 1, 0, 0,
                       (scm_t_subr) scm_get_user_input);
