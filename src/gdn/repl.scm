@@ -24,11 +24,9 @@
              (ice-9 threads)
              (ice-9 format)
              (ice-9 session)
+             (ice-9 control)
              (ice-9 command-line)
              (system vm trap-state))
-
-;;(export (top-repl
-;;         _break_))
 
 (define *cmdline* (command-line))
 
@@ -73,9 +71,8 @@ signal handler has been set up."
   ;; Here's where Guile sets makes a REPL which is bound to a language
   ;; because it wants to use that language's built-in reader.  But
   ;; since we'll be using eval-string, we can ignore that.
-  (repl-welcome)
-  (add-trap-at-procedure-call! _break_)
-  (run-repl))
+  ;; (add-trap-at-procedure-call! _break_)
+  (run-repl '()))
 
 (define (repl-welcome)
   "A friendly welcome message printed to the console."
@@ -83,90 +80,217 @@ signal handler has been set up."
   (format #t "This is linked to Guile ~a.~%" (version))
   (newline))
 
-(define *outer-prompt-tag* (make-prompt-tag "outer"))
-(define *inner-prompt-tag* (make-prompt-tag "inner"))
-
-(define (run-repl)
-  "This is the guts of the simplified REPL. We presume locale and
-signal is set up and that the language is available."
-  (call-with-prompt *outer-prompt-tag*
-    (while #t
-      ;; We're at the REPL. At this point, we can evaluate
-      ;; something at the GtkEntry, or we can run the
-      ;; command-line arguments when the RUN button is pushed.
+(define (repl-read repl)
+  (catch #t
+    (lambda ()
       (gdn-set-input-mode! *gdn-application-window* 'repl)
       (display "repl>" %gdn-prompt-port)
       (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
       (gdn-update-traps! *gdn-trap-view* (list-traps))
       (gdn-update-threads)
-      (let ((input (gdn-get-user-input *gdn-lisp*)))
-        ;; Evaluate the input string in the current language
-        ;; catching errors and traps.
-        (call-with-error-and-trap-handler
-         ;; Thunk to be executed
-         (lambda ()
-           (call-with-values
-               (lambda ()
-                 (begin
-                   (display "run>" %gdn-prompt-port)
-                   (cond
-                    ;; The RUN button run the cmd line arguments
-                    ((eqv? (car input) 'run)
-                     (gdn-set-input-mode! *gdn-application-window* 'run)
-                     (format #t "Command line: ~A~%" *cmdline*)
-                     (start-stack #t (eval (compile-shell-switches *cmdline*) (current-module))))
-                    ;; Input at the GtkEntry is evalutated
-                    ((eqv? (car input) 'eval)
-                     (gdn-set-input-mode! *gdn-application-window* 'run)
-                     (start-stack #t (eval-string (cadr input)))))))
-             ;; Print the return, which could be multiple values.
-             (lambda return-vals
-               (for-each (lambda (val)
-                           (unless (eq? val *unspecified*)
-                             (display "→ ")
-                             (write val)
-                             (newline)))
-                         return-vals)))))))
+      (pk (gdn-get-user-input *gdn-lisp*)))
+    (lambda (key subr msg args rest)
+      (case key
+        ((quit)
+         (throw key subr msg args rest))
+        (else
+         (format (current-error-port) "While reading expression:\n")
+         (display-error #f
+                        (current-error-port)
+                        subr
+                        msg
+                        args
+                        rest)
+         (flush-all-input)
+         *unspecified*)))))
+
+(define (run-repl repl)
+  (run-repl* repl repl-read))
+
+(define (run-repl* repl repl-read)
+  "This is the guts of the simplified REPL. We presume locale and
+signal is set up and that the language is available."
+  (let ((iter 0))
+    (%
+     (begin
+       ;; Print a welcome message the first time.
+       (when (zero? iter)
+         (repl-welcome))
+       (set! iter (1+ iter))
+     
+       (while #t
+         (let* ((input (repl-read repl))  ; Get toolbar or GtkEntry input
+                (action (car input))
+                (data (cadr input)))
+           (pk 'input input)
+           (cond
+            ((eqv? action #f))               ; unknown action: ignore
+            ((eqv? action 'quit)
+             (abort '()))
+            (else
+             (execute-input-and-print-return-values action data)
+             #; (call-with-minimal-error-handler
+              (lambda ()
+                (pk 'before-execute action data)
+                (execute-input-and-print-return-values action data))))))))
+
+     ;; Handler for the '%' prompt
+     (lambda (k . status)
+       status))))
+
+(define (execute-input-and-print-return-values action data)
+  (call-with-values
+      (lambda ()
+        (execute-input action data))
+    print-return-values))
+  
+(define (execute-input action data)
+  (format #t "in execute-input ~a ~a ~%" action data)
+  (flush-all-ports)
+  ;; When the Run Button is pressed, we execute the
+  ;; command line. Otherwise we execute the text
+  ;; from the Terminal's GtkEntry.
+  (% (begin
+       ;; FIXME: add before-eval-hook
+       (call-with-error-handler
+        (lambda ()
+          (format #t "executing input ~A ~A ~%" action data)
+          (cond
+           ((eqv? action 'run)
+            ;; FIXME: insert with-stack-and-prompt here?
+            (eval (compile-shell-switches *cmdline*)
+                  (interaction-envirnoment)))
+           ((eqv? action 'eval)
+            ;; FIXME: ditto?
+            (eval-string data))
+           (else
+            *unspecified*)))))))
     
-    ;; abort handler
-    (lambda (k status)
-      status)))
-
-#|
 (define (with-stack-and-prompt thunk)
-"Calls thunk. The stack is constrained to THUNK.
-If '(abort-to-prompt \"prompt\")' is called, THUNK is restarted."
-(call-with-prompt *inner-prompt-tag*
-(lambda ()
-(start-stack #t (thunk)))
-(lambda (k proc)
-(with-stack-and-prompt (lambda () (proc k))))))
-|#
+  "No idea what this tangled mess does. Stole it from (system repl
+repl)"
+  (call-with-prompt
+      ;; Tag
+      (default-prompt-tag)
+    ;; Thunk
+    (lambda ()
+      (start-stack #t (thunk)))
+    ;; Handler
+    (lambda (state-of-computation proc)
+      (with-stack-and-prompt
+       (lambda ()
+         (proc state-of-computation))))))
 
-(define (handle-exception key subr message args rest)
-  "This exception handler rethrows on 'quit, and prints and error on
-'stack-overflow, and ignore other errors."
-  (when (memq key '(quit))
-    (apply throw key subr message args rest))
-  (when (memq key '(stack-overflow))
-    (display-error #f
-                   (current-error-port)
-                   ;; key
-                   subr
-                   message
-                   args
-                   rest)
-    *unspecified*))
+(define (call-with-minimal-error-handler thunk)
+  "This procedure calls THUNK. On some critical errors, it prints a brief
+error message. Traps are disabled."
+  (pk 'charlie)
+  (catch
+    ;; key
+    #t
+    ;; thunk
+    (lambda ()
+      (pk 'delta thunk)
+      (with-default-trap-handler
+       ;; Use a null trap handler to ignore traps.
+       (lambda (frame trap-idx trap-name)
+         #t)
+       (lambda () (pk 'in-minimal (start-stack #t thunk)))))
+    
+    ;; On-unwind handler : catch
+    (lambda (key . args)
+      (pk 'in-minimal-unwind key args)
+      (cond
+       ((eqv? key 'quit)
+        (apply throw key args))
+       ((eqv? key 'stack-overflow)
+        (display "Stack overflow!" %gdn-error-port)
+        (newline %gdn-error-port))
+       ((eqv? key 'out-of-memory)
+        (display "Out of memory!" %gdn-error-port)
+        (newline %gdn-error-port))
+       (else
+        *unspecified*)))
+        
+    ;; Pre-unwind handler is not used
+    ))
 
-(define (handle-pre-unwind-exception key subr message args rest)
+(define (call-with-error-handler thunk)
+  "This procedure calls THUNK. On error the error GUI error handler is used.
+On traps, the GUI trap handler is used. Will abort to prompt on a
+'quit signal."
+  (catch
+    ;; key
+    #t
+    ;; thunk
+    (lambda ()
+      (with-default-trap-handler
+       trap-handler
+       (lambda () (start-stack #t thunk))))
+    
+    ;; On-unwind handler : catch
+    (lambda (key . args)
+      (cond
+       ((eqv? key 'quit)
+        (apply throw key args))
+       ((eqv? key 'stack-overflow)
+        (display "Stack overflow!" %gdn-error-port)
+        (newline %gdn-error-port))
+       ((eqv? key 'out-of-memory)
+        (display "Out of memory!" %gdn-error-port)
+        (newline %gdn-error-port))
+       (else
+        *unspecified*)))
+        
+    ;; Pre-unwind handler
+    error-handler))
+
+(define (print-return-values . return-vals)
+  ;; Print the return, which could be multiple values.
+  (for-each (lambda (val)
+              (unless (eq? val *unspecified*)
+                (display "→ ")
+                (write val)
+                (newline)))
+            return-vals))
+
+(define (trap-handler frame trap-idx trap-name)
+  "This trap handler launches Guidance's trap-handler UX."
+  (if trap-idx
+      (begin
+        (format #t "Trap ~d: ~a~%" trap-idx trap-name)
+        (format #t "Entering trap mode.~%"))
+      ;; else
+      (format #t "Entering break mode.~%"))
+  (format #t "When ready, press the CONTINUE button to continue.~%")
+
+  (gdn-set-input-mode! *gdn-application-window* 'trap)
+  (gdn-update-backtrace! *gdn-backtrace-view* frame)
+      
+  (while #t
+    (format %gdn-prompt-port "trap ~a>" trap-idx)
+        
+    (let ((input (gdn-get-user-input *gdn-lisp*)))
+      (cond
+       ;; The Stop Button returns to eval mode
+       ((eqv? (car input) 'stop)
+        (break))
+       ((eqv? (car input) 'eval)
+        (display "-> ")
+
+        (write (print-error-on-exception (eval-string (cadr input))))
+        (newline))
+       (else
+        *unspecified*)))))
+
+(define (error-handler key subr message args rest)
   "This pre-unwind handler launches Guidance's error-handler UX on all
 errors except 'quit."
-  (unless (memq key '(quit))
-    (let* ((stack (make-stack #t 4)))
+  (unless (eqv? key 'quit)
+    (let* ((stack (make-stack #t 4 #t)))
       (display-error
        (stack-ref stack 0)
        (current-error-port)
-       ;; key
        subr
        message
        args
@@ -193,64 +317,10 @@ errors except 'quit."
             *unspecified*))))
       #f)))
 
-#|
-(define (handle-trap frame trap-idx trap-name)
-  "This trap handler launches Guidance's trap-handler UX."
-  (if trap-idx
-      (begin
-        (format #t "Trap ~d: ~a~%" trap-idx trap-name)
-        (format #t "Entering trap mode.~%"))
-      ;; else
-      (format #t "Entering break mode.~%"))
-  (format #t "When ready, press the CONTINUE button to continue.~%")
-
-  (gdn-set-input-mode! *gdn-application-window* 'trap)
-  ;; (gdn-update-backtrace! *gdn-backtrace-view* frame)
-      
-  (while #t
-    (format %gdn-prompt-port "trap ~a>" trap-idx)
-        
-    (let ((input (gdn-get-user-input *gdn-lisp*)))
-      (cond
-       ;; The Stop Button returns to eval mode
-       ((eqv? (car input) 'stop)
-        (break))
-       ((eqv? (car input) 'eval)
-        (display "-> ")
-
-        (write (print-error-on-exception (eval-string (cadr input))))
-        (newline))
-       (else
-        *unspecified*)))))
-|#
-(define (handle-trap frame trap-idx trap-name)
-  "This trap handler launches Guidance's trap-handler UX."
-  (format #t "Trap ~d: ~a~%" trap-idx trap-name)
-  (abort))
-  
-
 (define (_break_)
   #t)
 
-(define (call-with-error-and-trap-handler thunk)
-  "This procedure calls THUNK. On error it calls ON-ERROR then POST-ERROR.
-If a trap is encountered, it calls TRAP-HANDLER."
-
-  (catch
-    ;; key
-    #t
-    ;; thunk
-    (lambda ()
-      (with-default-trap-handler
-       handle-trap
-       (lambda () (start-stack #t thunk))))
-    
-    ;; On-unwind handler
-    handle-exception
-
-    ;; Pre-unwind handler
-    handle-pre-unwind-exception))
-
+#|
 (define (gdn-error-handler frame)
   "An error handler"
   (%gdn-enable-error-buttons)
@@ -278,3 +348,4 @@ If a trap is encountered, it calls TRAP-HANDLER."
         (write (false-if-exception (eval-string data)) (current-output-port))
         (newline (current-output-port))
         (loop (%gdn-get-error-response)))))))
+|#
