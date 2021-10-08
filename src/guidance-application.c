@@ -81,9 +81,20 @@ on_activate (GdnApplication *app)
   /* Get the current window or create one if necessary. */
   window = gtk_application_get_active_window (GTK_APPLICATION (app));
   if (window == NULL)
-    window = g_object_new (GDN_TYPE_APPLICTION_WINDOW, "application", app,
+    window = g_object_new (GDN_TYPE_APPLICATION_WINDOW, "application", app,
                            "default-width", 700, "default-height", 400, NULL);
   gtk_window_present (window);
+}
+
+static int
+on_command_line (GdnApplication *         app,
+                 GApplicationCommandLine *command_line,
+                 gpointer                 user_data)
+{
+  /* All the command-line argument handling is for Guile, not for the
+     GTK app. */
+  on_activate (app);
+  return 0;
 }
 
 GdnApplication *
@@ -94,12 +105,14 @@ gdn_application_new (void)
   unsigned        flags;
 
   g_set_application_name ("Guidance");
-  flags = G_APPLICATION_NON_UNIQUE;
+  flags = G_APPLICATION_NON_UNIQUE | G_APPLICATION_HANDLES_COMMAND_LINE;
   gobj = g_object_new (gdn_application_get_type (), "application-id",
                        "com.lonelycactus.Guidance", "flags", flags, NULL);
   app = GDN_APPLICATION (gobj);
   g_signal_connect_data ((gpointer) app, "activate", G_CALLBACK (on_activate),
                          NULL, NULL, 0);
+  g_signal_connect_data ((gpointer) app, "command-line",
+                         G_CALLBACK (on_command_line), NULL, NULL, 0);
 
   _default = app;
   return app;

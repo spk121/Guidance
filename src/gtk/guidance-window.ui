@@ -62,7 +62,7 @@
                   <object class="GtkBox" id="toolbar">
                     <property name="halign">end</property>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="run_button">
                         <property name="action-name">win.process-run</property>
                         <property name="sensitive">True</property>
                         <child>
@@ -74,7 +74,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="stop_button">
                         <property name="action-name">win.process-stop</property>
                         <child>
                           <object class="GtkImage">
@@ -91,7 +91,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="step_over_button">
                         <property name="action-name">win.step-over</property>
                         <child>
                           <object class="GtkImage">
@@ -102,7 +102,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="step_over_instruction_button">
                         <property name="action-name">win.step-over-instruction</property>
                         <child>
                           <object class="GtkImage">
@@ -113,7 +113,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="step_into_button">
                         <property name="action-name">win.step-into</property>
                         <child>
                           <object class="GtkImage">
@@ -124,7 +124,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="step_into_instruction_button">
                         <property name="action-name">win.step-into-instruction</property>
                         <child>
                           <object class="GtkImage">
@@ -135,7 +135,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="step_out_button">
                         <property name="action-name">win.step-out</property>
                         <child>
                           <object class="GtkImage">
@@ -145,21 +145,21 @@
                         </child>
                       </object>
                     </child>
-                    <!-- child>
+                    <child>
                       <object class="GtkSeparator">
                         <property name="margin-start">10</property>
                         <property name="margin-end">10</property>
                       </object>
-                    </child -->
-                    <!-- child>
-                      <object class="GtkButton">
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="menu_button">
                         <child>
                           <object class="GtkImage">
                             <property name="icon-name">open-menu-symbolic</property>
                           </object>
                         </child>
                       </object>
-                    </child -->
+                    </child>
                   </object>
                 </child>
                 <child>

@@ -33,6 +33,8 @@ struct _GdnTerminalView
   guint          prompt_source;
   guint          error_source;
   int            output_fd;
+  gboolean       port_mode;
+  gboolean       echo_mode;
 };
 
 G_DEFINE_TYPE (GdnTerminalView, gdn_terminal_view, GTK_TYPE_BOX)
@@ -55,6 +57,14 @@ static char *xread (int fd);
 // INITIALIZATION
 ////////////////////////////////////////////////////////////////
 
+enum
+{
+  ENTRY = 0,
+  N_SIGNALS
+};
+
+static unsigned signals[N_SIGNALS];
+
 static void
 gdn_terminal_view_class_init (GdnTerminalViewClass *klass)
 {
@@ -71,6 +81,11 @@ gdn_terminal_view_class_init (GdnTerminalViewClass *klass)
   BIND (prompt_label);
   BIND (input_entry);
 #undef BIND
+
+  signals[ENTRY] =
+      g_signal_new ("entry", G_TYPE_FROM_CLASS (klass),
+                    G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0, NULL, NULL,
+                    NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void
@@ -81,6 +96,8 @@ gdn_terminal_view_init (GdnTerminalView *self)
   self->history = NULL;
   self->history_cur = NULL;
   self->output_fd = STDOUT_FILENO;
+  self->port_mode = TRUE;
+  self->echo_mode = TRUE;
 
   g_signal_connect (self->input_entry, "activate",
                     G_CALLBACK (activate_terminal_entry), self);
@@ -118,6 +135,12 @@ gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *self)
   self->output_fd = STDOUT_FILENO;
 }
 
+void
+gdn_terminal_view_set_port_mode (GdnTerminalView *self, gboolean flag)
+{
+  self->port_mode = flag;
+}
+
 ////////////////////////////////////////////////////////////////
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
@@ -135,42 +158,57 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
   GdnTerminalView *self = user_data;
 
   text = gtk_entry_buffer_get_text (gtk_entry_get_buffer (entry));
-  int bytes_written = write (self->output_fd, text, strlen (text));
-  if (bytes_written == -1)
-    g_critical ("Could not push text to the Guile interpreter");
-  if (write (self->output_fd, "\n", 1) == -1)
-    g_critical ("Could not push newline to the Guile interpreter");
-  fsync (self->output_fd);
 
-  /* Write the prompt and the text from the input GtkEntry box onto the main
-   * output widget */
-  GtkTextView *  view = self->text_view;
-  GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-  GtkTextIter    iter_start, iter_end;
-  GtkTextMark *  mark_start;
-  const char *   prompt = gtk_label_get_text (self->prompt_label);
+  /* When debugging a program, input is handled by sending it to the
+   * lisp interpreter.  But when running, we pretend that we are
+   * stdin. */
+  if (self->port_mode == FALSE)
+    {
+      g_signal_emit (self, signals[ENTRY], 0, text);
+    }
+  else
+    {
+      int bytes_written = write (self->output_fd, text, strlen (text));
+      if (bytes_written == -1)
+        g_critical ("Could not push text to the Guile interpreter");
+      if (write (self->output_fd, "\n", 1) == -1)
+        g_critical ("Could not push newline to the Guile interpreter");
+      fsync (self->output_fd);
+    }
 
-  /* Store the 'before' location */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  mark_start =
-      gtk_text_buffer_create_mark (text_buffer, NULL, &iter_start, TRUE);
+  if (self->echo_mode)
+    {
+      /* Write the prompt and the text from the input GtkEntry box
+       * onto the main output widget */
+      GtkTextView *  view = self->text_view;
+      GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
+      GtkTextIter    iter_start, iter_end;
+      GtkTextMark *  mark_start;
+      // const char *   prompt = gtk_label_get_text (self->prompt_label);
 
-  /* Write the prompt and the input text to the main output widget */
-  gtk_text_buffer_insert_at_cursor (text_buffer, prompt, strlen (prompt));
-  gtk_text_buffer_insert_at_cursor (text_buffer, text, strlen (text));
-  gtk_text_buffer_insert_at_cursor (text_buffer, "\n", 1);
+      /* Store the 'before' location */
+      gtk_text_buffer_get_iter_at_mark (
+          text_buffer, &iter_start, gtk_text_buffer_get_insert (text_buffer));
+      mark_start =
+          gtk_text_buffer_create_mark (text_buffer, NULL, &iter_start, TRUE);
 
-  /* Change the presentation for the prompt and entry text */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_end,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  gtk_text_buffer_apply_tag_by_name (text_buffer, "input", &iter_start,
-                                     &iter_end);
-  gtk_text_buffer_delete_mark (text_buffer, mark_start);
+      /* Write the prompt and the input text to the main output widget */
+      // gtk_text_buffer_insert_at_cursor (text_buffer, prompt, strlen
+      // (prompt));
+      gtk_text_buffer_insert_at_cursor (text_buffer, text, strlen (text));
+      gtk_text_buffer_insert_at_cursor (text_buffer, "\n", 1);
 
-  gtk_text_view_scroll_mark_onscreen (view,
-                                      gtk_text_buffer_get_insert (text_buffer));
+      /* Change the presentation for the prompt and entry text */
+      gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
+      gtk_text_buffer_get_iter_at_mark (
+          text_buffer, &iter_end, gtk_text_buffer_get_insert (text_buffer));
+      gtk_text_buffer_apply_tag_by_name (text_buffer, "input", &iter_start,
+                                         &iter_end);
+      gtk_text_buffer_delete_mark (text_buffer, mark_start);
+
+      gtk_text_view_scroll_mark_onscreen (
+          view, gtk_text_buffer_get_insert (text_buffer));
+    }
 
   /* Append the entry to the history */
   if (!self->history || strncmp (text, self->history->data, strlen (text)) != 0)

@@ -90,7 +90,9 @@ static SCM step_into_sym;
 static SCM step_instruction_sym;
 static SCM step_sym;
 static SCM step_out_sym;
+static SCM run_sym;
 static SCM continue_sym;
+static SCM stop_sym;
 static SCM eval_sym;
 
 static int         unix_pty_input_fd_new (void);
@@ -152,6 +154,13 @@ gdn_lisp_class_init (GdnLispClass *klass)
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   scm_c_eval_string (g_bytes_get_data (contents, NULL));
   g_bytes_unref (contents);
+
+  contents = g_resource_lookup_data (guidance_get_resource (),
+                                     "/com/lonelycactus/Guidance/gdn/repl.scm",
+                                     G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+  scm_c_eval_string (g_bytes_get_data (contents, NULL));
+  g_bytes_unref (contents);
+
 #endif
 
   gdn_source_view_guile_init ();
@@ -390,7 +399,8 @@ after_sweep_handler (G_GNUC_UNUSED void *hook_data,
 static SCM
 spawn_top_repl (G_GNUC_UNUSED void *data)
 {
-  scm_c_eval_string ("((@ (ice-9 top-repl) top-repl))");
+  // scm_c_eval_string ("((@ (ice-9 top-repl) top-repl))");
+  scm_c_eval_string ("(top-repl)");
   return SCM_UNSPECIFIED;
 }
 
@@ -494,8 +504,12 @@ response_data_to_scm (GdnLispUserInput *input)
     response = step_instruction_sym;
   else if (input->cmd == GDN_LISP_COMMAND_STEP_OUT)
     response = step_out_sym;
+  else if (input->cmd == GDN_LISP_COMMAND_RUN)
+    response = run_sym;
   else if (input->cmd == GDN_LISP_COMMAND_CONTINUE)
     response = continue_sym;
+  else if (input->cmd == GDN_LISP_COMMAND_STOP)
+    response = stop_sym;
   else if (input->cmd == GDN_LISP_COMMAND_EVAL)
     {
       response = eval_sym;
@@ -530,7 +544,9 @@ scm_get_user_input (SCM s_self)
   self = scm_foreign_object_ref (s_self, 0);
 
   GdnLispUserInput *input;
+  g_debug ("About to wait for input");
   input = g_async_queue_pop (self->user_input_queue);
+  g_debug ("Received input");
   s_input = response_data_to_scm (input);
   g_free (input->data);
   g_free (input);
@@ -633,7 +649,10 @@ gdn_lisp_guile_init (void)
   step_instruction_sym = scm_from_utf8_symbol ("step-instruction");
   step_sym = scm_from_utf8_symbol ("step");
   step_out_sym = scm_from_utf8_symbol ("step-out");
+  run_sym = scm_from_utf8_symbol ("run");
+  run_sym = scm_from_utf8_symbol ("run");
   continue_sym = scm_from_utf8_symbol ("continue");
+  stop_sym = scm_from_utf8_symbol ("stop");
   eval_sym = scm_from_utf8_symbol ("eval");
 
   scm_c_define_gsubr ("gdn-get-user-input", 1, 0, 0,

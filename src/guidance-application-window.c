@@ -30,6 +30,7 @@
 #include "guidance-terminal-view.h"
 #include "guidance-thread-view.h"
 #include "guidance-trap-view.h"
+#include "guidance-xgtk.h"
 #include <glib-unix.h>
 
 struct _GdnApplicationWindow
@@ -37,6 +38,16 @@ struct _GdnApplicationWindow
   GtkApplicationWindow parent_instance;
 
   GtkStack *main_stack;
+
+  /* Toolbar */
+  GtkButton *run_button;
+  GtkButton *stop_button;
+  GtkButton *step_over_button;
+  GtkButton *step_over_instruction_button;
+  GtkButton *step_into_button;
+  GtkButton *step_into_instruction_button;
+  GtkButton *step_out_button;
+  GtkButton *menu_button;
 
   /* Terminal tab */
   GtkBox *terminal_box;
@@ -81,10 +92,15 @@ G_DEFINE_TYPE (GdnApplicationWindow,
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
+static SCM scm_application_window_type = SCM_BOOL_F;
+static SCM scm_repl_sym = SCM_BOOL_F;
+static SCM scm_run_sym = SCM_BOOL_F;
+static SCM scm_error_sym = SCM_BOOL_F;
+static SCM scm_trap_sym = SCM_BOOL_F;
 
-static void     activate_launch (GSimpleAction *simple,
-                                 GVariant *     parameter,
-                                 gpointer       user_data);
+static SCM gdn_application_window_to_scm (GdnApplicationWindow *self);
+static SCM scm_set_input_mode_x (SCM s_appwin, SCM s_mode);
+
 static void     handle_css_parsing_error (GtkCssProvider *provider,
                                           GtkCssSection * section,
                                           GError *        error,
@@ -106,6 +122,7 @@ static void handle_backtrace_view_location (GdnBacktraceView *view,
                                             int               col,
                                             gpointer          user_data);
 
+static void handle_entry (GdnTerminalView *view, char *str, gpointer user_data);
 static void handle_step_into (GSimpleAction *simple,
                               GVariant *     parameter,
                               gpointer       user_data);
@@ -142,6 +159,15 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 
 #define BIND(x)                                                                \
   gtk_widget_class_bind_template_child (widget_class, GdnApplicationWindow, x)
+
+  BIND (run_button);
+  BIND (stop_button);
+  BIND (step_over_button);
+  BIND (step_over_instruction_button);
+  BIND (step_into_button);
+  BIND (step_into_instruction_button);
+  BIND (step_out_button);
+  BIND (menu_button);
 
   BIND (main_stack);
   BIND (terminal_box);
@@ -194,6 +220,8 @@ gdn_application_window_init (GdnApplicationWindow *self)
                                    gdn_lisp_get_input_prompt_fd (self->lisp),
                                    gdn_lisp_get_input_error_fd (self->lisp),
                                    gdn_lisp_get_output_fd (self->lisp));
+  g_signal_connect (self->terminal_view, "entry", G_CALLBACK (handle_entry),
+                    self);
 
   self->source_view = g_object_new (GDN_TYPE_SOURCE_VIEW, NULL);
   gtk_box_append (self->source_box, self->source_view);
@@ -239,6 +267,9 @@ gdn_application_window_init (GdnApplicationWindow *self)
   add_simple_action (self, "process-run", handle_process_run);
   add_simple_action (self, "process-stop", handle_process_stop);
 
+  gdn_application_window_guile_init ();
+  scm_c_define ("*gdn-application-window*",
+                gdn_application_window_to_scm (self));
   gdn_lisp_run (self->lisp);
 }
 
@@ -336,6 +367,13 @@ handle_module_view_trap (GdnModuleView *view,
 }
 
 static void
+handle_entry (GdnTerminalView *view, char *str, gpointer user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_EVAL, str);
+}
+
+static void
 handle_step_into (GSimpleAction *simple,
                   GVariant *     parameter,
                   gpointer       user_data)
@@ -420,4 +458,90 @@ show_page (GdnApplicationWindow *self, const char *name)
   GtkWidget *wigz = gtk_stack_get_child_by_name (self->main_stack, name);
   if (wigz != NULL)
     gtk_stack_set_visible_child (self->main_stack, wigz);
+}
+
+////////////////////////////////////////////////////////////////
+// GUILE API
+////////////////////////////////////////////////////////////////
+
+static SCM
+gdn_application_window_to_scm (GdnApplicationWindow *self)
+{
+  g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_APPLICATION_WINDOW);
+  return scm_make_foreign_object_1 (scm_application_window_type, self);
+}
+
+static SCM
+scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
+{
+  scm_assert_foreign_object_type (scm_application_window_type, s_appwin);
+  GdnApplicationWindow *self = scm_foreign_object_ref (s_appwin, 0);
+
+  if (scm_is_eq (s_mode, scm_repl_sym))
+    {
+      xgtk_button_set_sensitive (self->run_button, TRUE);
+      xgtk_button_set_sensitive (self->stop_button, FALSE);
+      xgtk_button_set_sensitive (self->step_into_button, FALSE);
+      xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
+      xgtk_button_set_sensitive (self->step_over_button, FALSE);
+      xgtk_button_set_sensitive (self->step_over_instruction_button, FALSE);
+      xgtk_button_set_sensitive (self->step_out_button, FALSE);
+      gdn_terminal_view_set_port_mode (self->terminal_view, FALSE);
+    }
+  else if (scm_is_eq (s_mode, scm_run_sym))
+    {
+      xgtk_button_set_sensitive (self->run_button, FALSE);
+      xgtk_button_set_sensitive (self->stop_button, TRUE);
+      xgtk_button_set_sensitive (self->step_into_button, FALSE);
+      xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
+      xgtk_button_set_sensitive (self->step_over_button, FALSE);
+      xgtk_button_set_sensitive (self->step_over_instruction_button, FALSE);
+      xgtk_button_set_sensitive (self->step_out_button, FALSE);
+      gdn_terminal_view_set_port_mode (self->terminal_view, TRUE);
+    }
+  else if (scm_is_eq (s_mode, scm_error_sym))
+    {
+      xgtk_button_set_sensitive (self->run_button, FALSE);
+      xgtk_button_set_sensitive (self->stop_button, TRUE);
+      xgtk_button_set_sensitive (self->step_into_button, FALSE);
+      xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
+      xgtk_button_set_sensitive (self->step_over_button, FALSE);
+      xgtk_button_set_sensitive (self->step_over_instruction_button, FALSE);
+      xgtk_button_set_sensitive (self->step_out_button, FALSE);
+      gdn_terminal_view_set_port_mode (self->terminal_view, FALSE);
+    }
+  else if (scm_is_eq (s_mode, scm_trap_sym))
+    {
+      xgtk_button_set_sensitive (self->run_button, FALSE);
+      xgtk_button_set_sensitive (self->stop_button, TRUE);
+      xgtk_button_set_sensitive (self->step_into_button, TRUE);
+      xgtk_button_set_sensitive (self->step_into_instruction_button, TRUE);
+      xgtk_button_set_sensitive (self->step_over_button, TRUE);
+      xgtk_button_set_sensitive (self->step_over_instruction_button, TRUE);
+      xgtk_button_set_sensitive (self->step_out_button, TRUE);
+      gdn_terminal_view_set_port_mode (self->terminal_view, FALSE);
+    }
+  else
+    {
+      g_critical ("unknown mode in set-input-mode-x!");
+    }
+  return SCM_UNSPECIFIED;
+}
+
+void
+gdn_application_window_guile_init (void)
+{
+  SCM name, slots;
+
+  name = scm_from_utf8_symbol ("gdn-application-window");
+  slots = scm_list_1 (scm_from_utf8_symbol ("data"));
+  scm_application_window_type =
+      scm_make_foreign_object_type (name, slots, NULL);
+
+  scm_repl_sym = scm_from_utf8_symbol ("repl");
+  scm_run_sym = scm_from_utf8_symbol ("run");
+  scm_error_sym = scm_from_utf8_symbol ("error");
+  scm_trap_sym = scm_from_utf8_symbol ("trap");
+
+  scm_c_define_gsubr ("gdn-set-input-mode!", 2, 0, 0, scm_set_input_mode_x);
 }

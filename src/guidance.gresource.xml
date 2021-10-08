@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/com/lonelycactus/Guidance">
     <file>gdn/lib.scm</file>
+    <file>gdn/repl.scm</file>
     <file>gtk/backtrace-view.ui</file>
     <file>gtk/guidance-window.css</file>
     <file>gtk/guidance-window.ui</file>

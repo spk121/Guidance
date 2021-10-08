@@ -580,30 +580,3 @@ trap-name indicate the current trap."
         (newline (current-output-port))
         (loop (%gdn-get-trap-response)))))))
 
-(define (gdn-error-handler frame)
-  "An error handler"
-  (%gdn-enable-error-buttons)
-  (%gdn-update-thread-info)
-  (%gdn-update-environment-info (gdn-get-environment))
-  (%gdn-update-trap-info #f)
-  (gdn-update-backtrace frame)
-  (display "error>" %gdn-prompt-port)
-  
-  ;; This is a blocking operation, awaiting a response from the
-  ;; operator. This cannot be run in the Gtk main thread.
-  (let loop ((response (%gdn-get-error-response)))
-    (let ((type (car response))
-          (data (cdr response)))
-      (cond
-       ((eq? type 'continue)
-        *unspecified*)
-       ((eq? type 'restart)
-        (%gdn-disable-error-buttons)
-        (abort-to-prompt *start-prompt* "error restart"))
-       ((eq? type 'eval)
-        (display data (current-output-port))
-        (newline (current-output-port))
-        (display "=> " (current-output-port))
-        (write (false-if-exception (eval-string data)) (current-output-port))
-        (newline (current-output-port))
-        (loop (%gdn-get-error-response)))))))

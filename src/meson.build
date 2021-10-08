@@ -17,7 +17,8 @@ guidance_sources = [
   'guidance-module-view.c',
   'guidance-terminal-view.c',
   'guidance-trap-info.c',
-  'guidance-trap-view.c'
+  'guidance-trap-view.c',
+  'guidance-xgtk.c'
 ]
 
 guidance_deps = [

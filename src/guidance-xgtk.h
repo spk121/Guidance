@@ -1,4 +1,4 @@
-/* guidance-terminal-view.h
+/* guidance-xgtk.h
  *
  * Copyright 2021 Michael Gran
  *
@@ -19,20 +19,7 @@
 #pragma once
 
 #include <gtk/gtk.h>
-#include <libguile.h>
 
 G_BEGIN_DECLS
-#define GDN_TYPE_TERMINAL_VIEW (gdn_terminal_view_get_type ())
-
-G_DECLARE_FINAL_TYPE (
-    GdnTerminalView, gdn_terminal_view, GDN, TERMINAL_VIEW, GtkBox)
-
-void gdn_terminal_view_connect_ports (GdnTerminalView *self,
-                                      int              input_fd,
-                                      int              prompt_fd,
-                                      int              error_fd,
-                                      int              output_fd);
-void gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *view);
-void gdn_terminal_view_set_port_mode (GdnTerminalView *view, gboolean flag);
-
+void xgtk_button_set_sensitive (GtkButton *button, gboolean flag);
 G_END_DECLS

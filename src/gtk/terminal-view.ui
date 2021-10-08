@@ -4,6 +4,22 @@
   <object class="GtkTextTagTable" id="text_tag_table">
     <child type="tag">
       <object class="GtkTextTag">
+        <property name="name">default</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+      </object>
+    </child>
+    <child type="tag">
+      <object class="GtkTextTag">
+        <property name="name">output</property>
+        <property name="weight">500</property>
+        <property name="weight-set">True</property>
+        <property name="family">monospace</property>
+        <property name="foreground">darkgreen</property>
+      </object>
+    </child>
+    <child type="tag">
+      <object class="GtkTextTag">
         <property name="name">input</property>
         <property name="weight">500</property>
         <property name="weight-set">True</property>

@@ -1,4 +1,4 @@
-/* guidance-application-window.h
+/* guidance-xgtk.c
  *
  * Copyright 2021 Michael Gran
  *
@@ -16,19 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include "guidance-xgtk.h"
 
-#include <gtk/gtk.h>
-
-G_BEGIN_DECLS
-
-#define GDN_TYPE_APPLICATION_WINDOW (gdn_application_window_get_type ())
-
-G_DECLARE_FINAL_TYPE (GdnApplicationWindow,
-                      gdn_application_window,
-                      GDN,
-                      APPLICATION_WINDOW,
-                      GtkApplicationWindow)
-void gdn_application_window_guile_init (void);
-
-G_END_DECLS
+void
+xgtk_button_set_sensitive (GtkButton *button, gboolean flag)
+{
+  g_assert_cmpstr (G_OBJECT_TYPE_NAME (button), ==, "GtkButton");
+  gtk_widget_set_sensitive (GTK_WIDGET (button), flag);
+}
