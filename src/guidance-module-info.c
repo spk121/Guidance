@@ -54,7 +54,6 @@ static void gdn_module_info_get_property (GObject *    object,
                                           GParamSpec * pspec);
 
 static GListStore *create_module_bindings_list_store (SCM module);
-static GListModel *get_child_model (GObject *item, void *user_data);
 static char *      get_module_abs_path (SCM module, size_t *len);
 
 static uint64_t scm_unpack_to_uint64 (SCM x);
@@ -144,18 +143,6 @@ gdn_module_info_get_property (GObject *    object,
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
 
-GtkTreeListModel *
-gdn_module_info_get_tree_model (void)
-{
-  if (_store == NULL)
-    _store = g_list_store_new (GDN_MODULE_INFO_TYPE);
-  if (_model == NULL)
-    _model = gtk_tree_list_model_new (
-        G_LIST_MODEL (_store), FALSE, FALSE,
-        (GtkTreeListModelCreateModelFunc) get_child_model, NULL, NULL);
-  return _model;
-}
-
 gboolean
 gdn_module_info_is_module (GdnModuleInfo *info)
 {
@@ -215,8 +202,8 @@ uint64_pack_to_scm (uint64_t x)
 
 // A GtkTreeListModelCreateModelFunc
 // Creates the children model of an GdnModuleInfo
-static GListModel *
-get_child_model (GObject *item, void *user_data)
+GListModel *
+gdn_module_info_get_child_model (GObject *item, void *user_data)
 {
   g_assert (item != NULL);
   g_assert (user_data == NULL);

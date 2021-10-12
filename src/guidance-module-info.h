@@ -28,12 +28,12 @@ G_DECLARE_FINAL_TYPE (GdnModuleInfo, gdn_module_info, GDN, MODULE_INFO, GObject)
 
 void gdn_module_info_guile_init (void);
 
-GtkTreeListModel *gdn_module_info_get_tree_model (void);
 gboolean          gdn_module_info_is_top_level (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_module (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_procedure (GdnModuleInfo *info);
 const char *      gdn_module_info_get_name (GdnModuleInfo *info);
 SCM               gdn_module_info_get_procedure (GdnModuleInfo *info);
 char *            gdn_module_info_get_abs_path (GdnModuleInfo *info);
+GListModel *gdn_module_info_get_child_model (GObject *item, void *user_data);
 
 G_END_DECLS

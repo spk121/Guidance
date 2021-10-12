@@ -121,6 +121,11 @@ static void handle_backtrace_view_location (GdnBacktraceView *view,
                                             int               line,
                                             int               col,
                                             gpointer          user_data);
+static void handle_module_view_location (GdnBacktraceView *view,
+                                         const char *      filename,
+                                         int               line,
+                                         int               col,
+                                         gpointer          user_data);
 
 static void handle_entry (GdnTerminalView *view, char *str, gpointer user_data);
 static void handle_step_into (GSimpleAction *simple,
@@ -235,6 +240,9 @@ gdn_application_window_init (GdnApplicationWindow *self)
   self->module_view = g_object_new (GDN_TYPE_MODULE_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->module_window),
                                  GTK_WIDGET (self->module_view));
+  g_signal_connect_data (self->module_view, "location",
+                         G_CALLBACK (handle_module_view_location), self, NULL,
+                         0);
 
   self->environment_view = g_object_new (GDN_TYPE_ENVIRONMENT_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->environment_window),
@@ -347,6 +355,18 @@ handle_backtrace_view_location (GdnBacktraceView *btview,
 {
   g_assert_cmpstr (G_OBJECT_TYPE_NAME (user_data), ==, "GdnApplicationWindow");
 
+  GdnApplicationWindow *self = user_data;
+  gdn_source_view_show_location (self->source_view, filename, line, col);
+  show_page (self, "source");
+}
+
+static void
+handle_module_view_location (GdnBacktraceView *btview,
+                             const char *      filename,
+                             int               line,
+                             int               col,
+                             gpointer          user_data)
+{
   GdnApplicationWindow *self = user_data;
   gdn_source_view_show_location (self->source_view, filename, line, col);
   show_page (self, "source");

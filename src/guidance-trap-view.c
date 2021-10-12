@@ -48,9 +48,9 @@ enum
 static unsigned signals[N_SIGNALS];
 static SCM      scm_trap_view_type = SCM_BOOL_F;
 
-typedef void (*factory_func_t) (GtkSignalListItemFactory *self,
-                                GtkListItem *             listitem,
-                                gpointer                  user_data);
+typedef void (*factory_func_t) (GtkListItemFactory *self,
+                                GtkListItem *       listitem,
+                                gpointer            user_data);
 
 static void set_column_view_model (GtkColumnView *view, GListModel *model);
 static void add_column_factory (GtkColumnViewColumn *col,
@@ -149,10 +149,10 @@ gdn_trap_view_init (GdnTrapView *self)
 ////////////////////////////////////////////////////////////////
 
 static void
-name_activate (GtkButton *self, gpointer user_data)
+delete_activate (GtkButton *self, gpointer user_data)
 {
 #if 1
-  g_debug ("activate trap");
+  g_debug ("activate delete");
 #else
   GtkListItem *list_item = user_data;
 
@@ -170,10 +170,10 @@ name_setup (GtkListItemFactory *factory,
 {
   GtkLabel * label;
 
-  label = gtk_label_new ("");
+  label = GTK_LABEL (gtk_label_new (""));
   gtk_label_set_xalign (label, 0);
   gtk_label_set_width_chars (label, 30);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
@@ -185,7 +185,7 @@ name_bind (GtkListItemFactory *factory,
   GdnTrapInfo *info;
   GObject *    obj;
 
-  label = gtk_list_item_get_child (list_item);
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
   obj = gtk_list_item_get_item (list_item);
   info = GDN_TRAP_INFO (obj);
   gtk_label_set_text (label, gdn_trap_info_get_name (info));
@@ -200,7 +200,7 @@ name_unbind (GtkListItemFactory *factory,
 {
   GtkLabel * label;
 
-  label = gtk_list_item_get_child (list_item);
+  label = GTK_LABEL (gtk_list_item_get_child (list_item));
   gtk_label_set_text (label, "");
 }
 
@@ -211,8 +211,8 @@ index_setup (GtkListItemFactory *factory,
 {
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
-  gtk_list_item_set_child (list_item, label);
+  label = GTK_LABEL (gtk_label_new (NULL));
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
@@ -253,10 +253,10 @@ active_setup (GtkListItemFactory *factory,
   GtkBox *   box;
   GtkSwitch *swtch;
 
-  box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  swtch = gtk_switch_new ();
-  gtk_box_append (box, swtch);
-  gtk_list_item_set_child (list_item, box);
+  box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  swtch = GTK_SWITCH (gtk_switch_new ());
+  gtk_box_append (box, GTK_WIDGET (swtch));
+  gtk_list_item_set_child (list_item, GTK_WIDGET (box));
 }
 
 static void
@@ -268,10 +268,9 @@ active_bind (GtkListItemFactory *factory,
   GtkSwitch *  swtch;
   GObject *    obj;
   GdnTrapInfo *info;
-  char *       location;
 
-  box = gtk_list_item_get_child (list_item);
-  swtch = gtk_widget_get_first_child (box);
+  box = GTK_BOX (gtk_list_item_get_child (list_item));
+  swtch = GTK_SWITCH (gtk_widget_get_first_child (GTK_WIDGET (box)));
   obj = gtk_list_item_get_item (list_item);
   info = GDN_TRAP_INFO (obj);
   gtk_switch_set_active (swtch, gdn_trap_info_get_active (info));
@@ -292,13 +291,13 @@ delete_setup (GtkListItemFactory *factory,
   GtkBox *   box;
   GtkButton *button;
 
-  box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  button = gtk_button_new_from_icon_name ("delete");
-  gtk_box_append (box, button);
-  gtk_list_item_set_child (list_item, box);
+  box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
+  button = GTK_BUTTON (gtk_button_new_from_icon_name ("delete"));
+  gtk_box_append (box, GTK_WIDGET (button));
+  gtk_list_item_set_child (list_item, GTK_WIDGET (box));
 
-  // g_signal_connect (G_OBJECT (button), "clicked", G_CALLBACK (name_activate),
-  //                  list_item);
+  g_signal_connect (G_OBJECT (button), "clicked", G_CALLBACK (delete_activate),
+                    list_item);
 }
 
 static void

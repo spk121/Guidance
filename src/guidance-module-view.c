@@ -34,6 +34,7 @@ struct _GdnModuleView
   GtkScrolledWindow *scrolled_window;
   GtkListView *      list_view;
 
+  GListStore *      store;
   GtkTreeListModel *model;
 };
 
@@ -42,8 +43,15 @@ G_DEFINE_TYPE (GdnModuleView, gdn_module_view, GTK_TYPE_BOX)
 enum
 {
   TRAP = 0,
+  LOCATION,
   N_SIGNALS
 };
+
+typedef struct _GdnModuleViewAndListItem
+{
+  GdnModuleView *view;
+  GtkListItem *  item;
+} GdnModuleViewAndListItem;
 
 static GdnModuleView *_self;
 
@@ -66,6 +74,7 @@ static void entry_unbind (GtkListItemFactory *factory,
 static void module_open_activate (GtkButton *button, gpointer user_data);
 static void procedure_open_activate (GtkButton *button, gpointer user_data);
 static void procedure_trap_activate (GtkButton *button, gpointer user_data);
+static void mvli_free (GdnModuleViewAndListItem *mvli, GClosure *closure);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -90,6 +99,10 @@ gdn_module_view_class_init (GdnModuleViewClass *klass)
       g_signal_new ("trap", G_TYPE_FROM_CLASS (klass),
                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0, NULL, NULL,
                     NULL, G_TYPE_NONE, 1, G_TYPE_UINT64);
+  signals[LOCATION] = g_signal_new ("location", G_TYPE_FROM_CLASS (klass),
+                                    G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0,
+                                    NULL, NULL, NULL, G_TYPE_NONE, 3,
+                                    G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
 }
 
 static void
@@ -109,6 +122,11 @@ gdn_module_view_init (GdnModuleView *self)
   GtkListItemFactory *factory;
 
   gtk_widget_init_template (GTK_WIDGET (self));
+
+  self->store = g_list_store_new (GDN_MODULE_INFO_TYPE);
+  self->model =
+      gtk_tree_list_model_new (G_LIST_MODEL (self->store), FALSE, FALSE,
+                               gdn_module_info_get_child_model, NULL, NULL);
 
   tree_model = gdn_module_info_get_tree_model ();
   _self = self;
@@ -130,11 +148,11 @@ static void
 module_open_activate (GtkButton *self, gpointer user_data)
 {
   g_assert (self != NULL);
-  g_assert (user_data != NULL);
 
-  GdnModuleInfo *info = GDN_MODULE_INFO (user_data);
+  GdnModuleViewAndListItem *mvli = (GdnModuleViewAndListItem *) user_data;
+  GdnModuleInfo *           info = GDN_MODULE_INFO (mvli->item);
   char *         path = gdn_module_info_get_abs_path (info);
-  gdn_source_view_show_location (path, 0, 0);
+  g_signal_emit (mvli->view, signals[LOCATION], 0, g_strdup (path), 0, 0);
   free (path);
 }
 
@@ -175,8 +193,8 @@ entry_setup (GtkListItemFactory *factory,
   g_assert (factory != NULL);
   g_assert (user_data == NULL);
 
-  expander = gtk_tree_expander_new ();
-  gtk_list_item_set_child (list_item, expander);
+  expander = GTK_TREE_EXPANDER (gtk_tree_expander_new ());
+  gtk_list_item_set_child (list_item, GTK_WIDGET (expander));
 
   box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10));
   gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), GTK_WIDGET (box));
@@ -209,7 +227,7 @@ entry_bind (GtkListItemFactory *factory,
   GtkButton *      open_button, *trap_button;
 
   g_assert (factory != NULL);
-  g_assert (user_data == NULL);
+  GdnModuleView *self = user_data;
 
   list_row = gtk_list_item_get_item (list_item);
   item = gtk_tree_list_row_get_item (list_row);
@@ -233,8 +251,12 @@ entry_bind (GtkListItemFactory *factory,
     {
       gtk_widget_show (GTK_WIDGET (open_button));
       gtk_widget_hide (GTK_WIDGET (trap_button));
-      g_signal_connect (open_button, "clicked",
-                        G_CALLBACK (module_open_activate), info);
+      GdnModuleViewAndListItem *mvli = g_new0 (GdnModuleViewAndListItem, 1);
+      mvli->view = g_object_ref (self);
+      mvli->item = g_object_ref (list_item);
+      g_signal_connect_data (open_button, "clicked",
+                             G_CALLBACK (module_open_activate), mvli,
+                             (GClosureNotify) mvli_free, G_CONNECT_AFTER);
     }
   else if (gdn_module_info_is_procedure (info))
     {
@@ -280,6 +302,16 @@ entry_unbind (GtkListItemFactory *factory,
 ////////////////////////////////////////////////////////////////
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
+
+static void
+mvli_free (GdnModuleViewAndListItem *mvli, GClosure *closure)
+{
+  g_object_unref (mvli->view);
+  mvli->view = NULL;
+  g_object_unref (mvli->item);
+  mvli->item = NULL;
+  free (mvli);
+}
 
 ////////////////////////////////////////////////////////////////
 // Guile API
