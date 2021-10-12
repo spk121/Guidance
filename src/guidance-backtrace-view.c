@@ -63,14 +63,14 @@ static unsigned signals[N_SIGNALS];
 static SCM      get_backtrace_func = SCM_BOOL_F;
 static SCM      scm_backtrace_view_type;
 
-typedef void (*factory_func_t) (GtkSignalListItemFactory *self,
-                                GtkListItem *             listitem,
-                                gpointer                  user_data);
+typedef void (*factory_func_t) (GtkListItemFactory *self,
+                                GtkListItem *       listitem,
+                                gpointer            user_data);
 static void set_column_view_model (GtkColumnView *view, GListModel *model);
 static void add_column_factory (GtkColumnViewColumn *col,
-                                factory_func_t *     setup,
-                                factory_func_t *     bind,
-                                factory_func_t *     unbind,
+                                factory_func_t       setup,
+                                factory_func_t       bind,
+                                factory_func_t       unbind,
                                 gpointer             user_data);
 
 static void frame_button_clicked (GtkButton *self, gpointer user_data);
@@ -180,15 +180,16 @@ gdn_backtrace_view_class_init (GdnBacktraceViewClass *klass)
 static void
 gdn_backtrace_view_init (GdnBacktraceView *self)
 {
-  gtk_widget_init_template (self);
+  gtk_widget_init_template (GTK_WIDGET (self));
 
   g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_BACKTRACE_VIEW);
 
   self->frames = g_list_store_new (GDN_FRAME_INFO_TYPE);
   self->bindings = g_list_store_new (GDN_BINDING_INFO_TYPE);
 
-  set_column_view_model (self->stack_column_view, self->frames);
-  set_column_view_model (self->variables_column_view, self->bindings);
+  set_column_view_model (self->stack_column_view, G_LIST_MODEL (self->frames));
+  set_column_view_model (self->variables_column_view,
+                         G_LIST_MODEL (self->bindings));
   add_column_factory (self->stack_frame_column, frame_setup, frame_bind,
                       frame_unbind, self);
   add_column_factory (self->stack_location_column, location_setup,
@@ -213,7 +214,7 @@ gdn_backtrace_view_init (GdnBacktraceView *self)
 /* This GtkButton::clicked handler updates GdnBacktraceView.bindings
  * based on which of the frame info entries was selected */
 static void
-frame_button_clicked (GtkButton *button, gpointer user_data)
+frame_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
 {
   GdnBacktraceViewAndListItem *bvli = user_data;
   GdnBacktraceView *           self = bvli->view;
@@ -227,10 +228,9 @@ frame_button_clicked (GtkButton *button, gpointer user_data)
 
 /* This GtkButton::clicked handler */
 static void
-location_button_clicked (GtkButton *button, gpointer user_data)
+location_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
 {
   GdnBacktraceViewAndListItem *bvli = user_data;
-  GdnBacktraceView *           self = bvli->view;
   GdnFrameInfo *               info = gtk_list_item_get_item (bvli->item);
 
   const char *filename = gdn_frame_info_get_filename (info);
@@ -246,20 +246,20 @@ location_button_clicked (GtkButton *button, gpointer user_data)
 }
 
 static void
-frame_setup (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+frame_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   g_assert_cmpuint (G_OBJECT_TYPE (user_data), ==, GDN_TYPE_BACKTRACE_VIEW);
 
   GtkButton *button;
   GtkLabel * label;
 
-  button = gtk_button_new_with_label (NULL);
+  button = GTK_BUTTON (gtk_button_new_with_label (NULL));
   label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
   gtk_label_set_width_chars (label, 30);
-  gtk_list_item_set_child (list_item, button);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (button));
 
   GdnBacktraceViewAndListItem *bvli;
   bvli = create_pair (user_data, list_item);
@@ -269,9 +269,9 @@ frame_setup (GtkListItemFactory *factory,
 }
 
 static void
-frame_bind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+frame_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkButton *   button;
   GtkLabel *    label;
@@ -279,7 +279,7 @@ frame_bind (GtkListItemFactory *factory,
   GObject *     obj;
 
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = gtk_button_get_child (button);
+  label = GTK_LABEL (gtk_button_get_child (button));
   obj = gtk_list_item_get_item (list_item);
   info = GDN_FRAME_INFO (obj);
   gtk_label_set_text (label, gdn_frame_info_get_name (info));
@@ -288,30 +288,30 @@ frame_bind (GtkListItemFactory *factory,
 }
 
 static void
-frame_unbind (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+frame_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   GtkButton *   button;
   GtkLabel *    label;
 
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = gtk_button_get_child (button);
+  label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_text (label, "");
 }
 
 static void
-location_setup (GtkListItemFactory *factory,
-                GtkListItem *       list_item,
-                gpointer            user_data)
+location_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+                GtkListItem *                     list_item,
+                G_GNUC_UNUSED gpointer            user_data)
 {
   GtkButton *button;
   GtkLabel * label;
 
-  button = gtk_button_new_with_label (NULL);
+  button = GTK_BUTTON (gtk_button_new_with_label (NULL));
   label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, button);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (button));
 
   GdnBacktraceViewAndListItem *bvli;
   bvli = create_pair (user_data, list_item);
@@ -321,9 +321,9 @@ location_setup (GtkListItemFactory *factory,
 }
 
 static void
-location_bind (GtkListItemFactory *factory,
-               GtkListItem *       list_item,
-               gpointer            user_data)
+location_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+               GtkListItem *                     list_item,
+               G_GNUC_UNUSED gpointer            user_data)
 {
   GtkButton *   button;
   GtkLabel *    label;
@@ -332,7 +332,7 @@ location_bind (GtkListItemFactory *factory,
   char *        location;
 
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = gtk_button_get_child (button);
+  label = GTK_LABEL (gtk_button_get_child (button));
   obj = gtk_list_item_get_item (list_item);
   if (G_IS_OBJECT (label) && G_OBJECT_TYPE (label) == GTK_TYPE_LABEL)
     {
@@ -349,40 +349,40 @@ location_bind (GtkListItemFactory *factory,
       else
         {
           gtk_label_set_text (label, "N/A");
-          gtk_widget_set_sensitive (button, FALSE);
+          gtk_widget_set_sensitive (GTK_WIDGET (button), FALSE);
         }
     }
 }
 
 static void
-location_unbind (GtkListItemFactory *factory,
-                 GtkListItem *       list_item,
-                 gpointer            user_data)
+location_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+                 GtkListItem *                     list_item,
+                 G_GNUC_UNUSED gpointer            user_data)
 {
   GtkButton *   button;
   GtkLabel *    label;
 
   button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = gtk_button_get_child (button);
+  label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_text (label, "");
 }
 
 static void
-type_setup (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+type_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
+  label = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-type_bind (GtkListItemFactory *factory,
-           GtkListItem *       list_item,
-           gpointer            user_data)
+type_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+           GtkListItem *                     list_item,
+           G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *      label;
   GObject *       obj;
@@ -398,9 +398,9 @@ type_bind (GtkListItemFactory *factory,
 }
 
 static void
-type_unbind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+type_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *    label;
 
@@ -409,21 +409,21 @@ type_unbind (GtkListItemFactory *factory,
 }
 
 static void
-name_setup (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+name_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
+  label = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-name_bind (GtkListItemFactory *factory,
-           GtkListItem *       list_item,
-           gpointer            user_data)
+name_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+           GtkListItem *                     list_item,
+           G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *      label;
   GObject *       obj;
@@ -436,9 +436,9 @@ name_bind (GtkListItemFactory *factory,
 }
 
 static void
-name_unbind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+name_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *    label;
 
@@ -447,21 +447,21 @@ name_unbind (GtkListItemFactory *factory,
 }
 
 static void
-representation_setup (GtkListItemFactory *factory,
-                      GtkListItem *       list_item,
-                      gpointer            user_data)
+representation_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+                      GtkListItem *                     list_item,
+                      G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
+  label = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-representation_bind (GtkListItemFactory *factory,
-                     GtkListItem *       list_item,
-                     gpointer            user_data)
+representation_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+                     GtkListItem *                     list_item,
+                     G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *      label;
   GObject *       obj;
@@ -474,9 +474,9 @@ representation_bind (GtkListItemFactory *factory,
 }
 
 static void
-representation_unbind (GtkListItemFactory *factory,
-                       GtkListItem *       list_item,
-                       gpointer            user_data)
+representation_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+                       GtkListItem *                     list_item,
+                       G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *    label;
 
@@ -485,21 +485,21 @@ representation_unbind (GtkListItemFactory *factory,
 }
 
 static void
-value_setup (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+value_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
+  label = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-value_bind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+value_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *      label;
   GObject *       obj;
@@ -512,9 +512,9 @@ value_bind (GtkListItemFactory *factory,
 }
 
 static void
-value_unbind (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+value_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *    label;
 
@@ -523,21 +523,21 @@ value_unbind (GtkListItemFactory *factory,
 }
 
 static void
-info_setup (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+info_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
+  label = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-info_bind (GtkListItemFactory *factory,
-           GtkListItem *       list_item,
-           gpointer            user_data)
+info_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+           GtkListItem *                     list_item,
+           G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *      label;
   GObject *       obj;
@@ -550,9 +550,9 @@ info_bind (GtkListItemFactory *factory,
 }
 
 static void
-info_unbind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+info_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *    label;
 
@@ -575,9 +575,9 @@ set_column_view_model (GtkColumnView *view, GListModel *model)
 
 static void
 add_column_factory (GtkColumnViewColumn *col,
-                    factory_func_t *     setup,
-                    factory_func_t *     bind,
-                    factory_func_t *     unbind,
+                    factory_func_t       setup,
+                    factory_func_t       bind,
+                    factory_func_t       unbind,
                     gpointer             user_data)
 {
   GtkSignalListItemFactory *factory;

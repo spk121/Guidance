@@ -32,7 +32,11 @@ gboolean          gdn_module_info_is_top_level (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_module (GdnModuleInfo *info);
 gboolean          gdn_module_info_is_procedure (GdnModuleInfo *info);
 const char *      gdn_module_info_get_name (GdnModuleInfo *info);
+void gdn_module_info_set_name (GdnModuleInfo *info, const char *name);
 SCM               gdn_module_info_get_procedure (GdnModuleInfo *info);
+SCM               gdn_module_info_get_module (GdnModuleInfo *info);
+void              gdn_module_info_set_module (GdnModuleInfo *info, SCM module);
+
 char *            gdn_module_info_get_abs_path (GdnModuleInfo *info);
 GListModel *gdn_module_info_get_child_model (GObject *item, void *user_data);
 

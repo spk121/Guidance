@@ -25,5 +25,7 @@ G_BEGIN_DECLS
 #define GDN_TYPE_THREAD_VIEW (gdn_thread_view_get_type ())
 
 G_DECLARE_FINAL_TYPE (GdnThreadView, gdn_thread_view, GDN, THREAD_VIEW, GtkBox)
+void gdn_thread_view_guile_init (void);
+SCM  gdn_thread_view_to_scm (GdnThreadView *self);
 
 G_END_DECLS

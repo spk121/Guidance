@@ -149,7 +149,8 @@ gdn_trap_view_init (GdnTrapView *self)
 ////////////////////////////////////////////////////////////////
 
 static void
-delete_activate (GtkButton *self, gpointer user_data)
+delete_activate (G_GNUC_UNUSED GtkButton *self,
+                 G_GNUC_UNUSED gpointer   user_data)
 {
 #if 1
   g_debug ("activate delete");
@@ -164,9 +165,9 @@ delete_activate (GtkButton *self, gpointer user_data)
 }
 
 static void
-name_setup (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+name_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel * label;
 
@@ -177,9 +178,9 @@ name_setup (GtkListItemFactory *factory,
 }
 
 static void
-name_bind (GtkListItemFactory *factory,
-           GtkListItem *       list_item,
-           gpointer            user_data)
+name_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+           GtkListItem *                     list_item,
+           G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *   label;
   GdnTrapInfo *info;
@@ -194,9 +195,9 @@ name_bind (GtkListItemFactory *factory,
 }
 
 static void
-name_unbind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+name_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel * label;
 
@@ -205,9 +206,9 @@ name_unbind (GtkListItemFactory *factory,
 }
 
 static void
-index_setup (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+index_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
@@ -216,9 +217,9 @@ index_setup (GtkListItemFactory *factory,
 }
 
 static void
-index_bind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+index_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *   label;
   GObject *    obj;
@@ -235,9 +236,9 @@ index_bind (GtkListItemFactory *factory,
 }
 
 static void
-index_unbind (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+index_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   GtkLabel *label;
 
@@ -246,9 +247,9 @@ index_unbind (GtkListItemFactory *factory,
 }
 
 static void
-active_setup (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+active_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   GtkBox *   box;
   GtkSwitch *swtch;
@@ -260,9 +261,9 @@ active_setup (GtkListItemFactory *factory,
 }
 
 static void
-active_bind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+active_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   GtkBox *     box;
   GtkSwitch *  swtch;
@@ -277,16 +278,16 @@ active_bind (GtkListItemFactory *factory,
 }
 
 static void
-active_unbind (GtkListItemFactory *factory,
-               GtkListItem *       list_item,
-               gpointer            user_data)
+active_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+               G_GNUC_UNUSED GtkListItem *list_item,
+               G_GNUC_UNUSED gpointer     user_data)
 {
 }
 
 static void
-delete_setup (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+delete_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   GtkBox *   box;
   GtkButton *button;
@@ -301,16 +302,16 @@ delete_setup (GtkListItemFactory *factory,
 }
 
 static void
-delete_bind (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+delete_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+             G_GNUC_UNUSED GtkListItem *list_item,
+             G_GNUC_UNUSED gpointer     user_data)
 {
 }
 
 static void
-delete_unbind (GtkListItemFactory *factory,
-               GtkListItem *       list_item,
-               gpointer            user_data)
+delete_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+               G_GNUC_UNUSED GtkListItem *list_item,
+               G_GNUC_UNUSED gpointer     user_data)
 {
 }
 
@@ -364,7 +365,7 @@ scm_update_traps_x (SCM s_self, SCM trap_list)
   GdnTrapView *self = scm_foreign_object_ref (s_self, 0);
   g_list_store_remove_all (self->traps);
 
-  for (int i = 0; i < scm_c_vector_length (trap_vec); i++)
+  for (size_t i = 0; i < scm_c_vector_length (trap_vec); i++)
     {
       GdnTrapInfo *info = trap_info_new_from_trap_id (
           scm_to_int (scm_c_vector_ref (trap_vec, i)), 0);

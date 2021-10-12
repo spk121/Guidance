@@ -89,7 +89,7 @@ gdn_frame_info_finalize (GObject *object)
   GdnFrameInfo *self = GDN_FRAME_INFO (object);
   g_assert (self->name != NULL);
 
-  printf ("Freeing frame info %p name %s\n", object, self->name);
+  // printf ("Freeing frame info %p name %s\n", object, self->name);
   free (self->name);
   self->name = NULL;
   free (self->filename);
@@ -194,8 +194,8 @@ gdn_frame_info_store_update (GListStore *store, SCM frames)
       GdnFrameInfo *info = frame_info_new_from_scm (entry);
       if (g_list_model_get_object (G_LIST_MODEL (store), i) != NULL)
         {
-          GdnFrameInfo *old_info =
-              GDN_FRAME_INFO (g_list_model_get_object (store, i));
+          GdnFrameInfo *old_info = GDN_FRAME_INFO (
+              g_list_model_get_object (G_LIST_MODEL (store), i));
           free (old_info->name);
           old_info->name = g_strdup (info->name);
           free (old_info->filename);
@@ -209,10 +209,11 @@ gdn_frame_info_store_update (GListStore *store, SCM frames)
       else
         g_list_store_append (store, info);
     }
-  if (scm_c_vector_length (frames) < g_list_model_get_n_items (store))
+  if (scm_c_vector_length (frames) <
+      g_list_model_get_n_items (G_LIST_MODEL (store)))
     {
       g_list_store_splice (store, scm_c_vector_length (frames),
-                           g_list_model_get_n_items (store) -
+                           g_list_model_get_n_items (G_LIST_MODEL (store)) -
                                scm_c_vector_length (frames),
                            NULL, 0);
     }

@@ -24,12 +24,7 @@ G_DEFINE_TYPE (GdnEnvironmentInfo, gdn_environment_info, G_TYPE_OBJECT)
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 
-static GtkTreeListModel *_model = NULL;
-static GListStore *      _store = NULL;
-
-static void                finalize (GdnEnvironmentInfo *self);
-static GdnEnvironmentInfo *info_new_from_scm (SCM info);
-static GListModel *        get_child_model (GObject *item, gpointer user_data);
+static void finalize (GObject *self);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -61,8 +56,9 @@ gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
 ////////////////////////////////////////////////////////////////
 
 static void
-finalize (GdnEnvironmentInfo *self)
+finalize (GObject *_self)
 {
+  GdnEnvironmentInfo *self = GDN_ENVIRONMENT_INFO (_self);
   g_free (self->key);
   self->key = NULL;
   if (self->value)
@@ -77,7 +73,8 @@ finalize (GdnEnvironmentInfo *self)
     }
 
   /* Don't forget to chain up. */
-  G_OBJECT_CLASS (gdn_environment_info_parent_class)->finalize (self);
+  G_OBJECT_CLASS (gdn_environment_info_parent_class)
+      ->finalize (G_OBJECT (self));
 }
 
 GdnEnvironmentInfo *
@@ -234,7 +231,7 @@ char *
 memory_string (size_t x)
 {
   if (x < 1000)
-    return g_strdup_printf ("%d B", x);
+    return g_strdup_printf ("%ld B", x);
   else if (x < 1000000)
     return g_strdup_printf ("%.3f kB", x / 1000.0);
   else if (x < 1000000000)

@@ -88,12 +88,15 @@ gdn_environment_view_init (GdnEnvironmentView *self)
   gtk_widget_init_template (GTK_WIDGET (self));
 
   self->store = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
-  self->model = gtk_tree_list_model_new (self->store, FALSE, FALSE,
-                                         get_child_model, NULL, NULL);
+  self->model = gtk_tree_list_model_new (
+      G_LIST_MODEL (self->store), FALSE, FALSE,
+      (GtkTreeListModelCreateModelFunc) get_child_model, NULL, NULL);
 
   GtkSingleSelection *selection_model;
-  selection_model = gtk_single_selection_new (g_object_ref (self->model));
-  gtk_column_view_set_model (self->column_view, selection_model);
+  selection_model =
+      gtk_single_selection_new (G_LIST_MODEL (g_object_ref (self->model)));
+  gtk_column_view_set_model (self->column_view,
+                             GTK_SELECTION_MODEL (selection_model));
 
   GtkListItemFactory *key_column_factory;
   key_column_factory = gtk_signal_list_item_factory_new ();
@@ -121,29 +124,27 @@ gdn_environment_view_init (GdnEnvironmentView *self)
 ////////////////////////////////////////////////////////////////
 
 static void
-key_setup (GtkListItemFactory *factory,
-           GtkListItem *       list_item,
-           gpointer            user_data)
+key_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+           GtkListItem *                     list_item,
+           G_GNUC_UNUSED gpointer            user_data)
 {
-  GtkExpander *expander;
+  GtkTreeExpander *expander;
   GtkLabel *   label;
 
-  expander = gtk_tree_expander_new ();
-  label = gtk_label_new ("");
-  gtk_widget_set_margin_start (label, 5);
-  gtk_widget_set_margin_end (label, 5);
+  expander = GTK_TREE_EXPANDER (gtk_tree_expander_new ());
+  label = GTK_LABEL (gtk_label_new (""));
+  gtk_widget_set_margin_start (GTK_WIDGET (label), 5);
+  gtk_widget_set_margin_end (GTK_WIDGET (label), 5);
   gtk_label_set_xalign (label, 0);
-  gtk_list_item_set_child (list_item, expander);
-  gtk_tree_expander_set_child (expander, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (expander));
+  gtk_tree_expander_set_child (expander, GTK_WIDGET (label));
 }
 
 static void
-key_bind (GtkListItemFactory *factory,
-          GtkListItem *       list_item,
-          gpointer            user_data)
+key_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+          GtkListItem *                     list_item,
+          G_GNUC_UNUSED gpointer            user_data)
 {
-  g_assert (factory != NULL);
-
   GtkTreeListRow *list_row;
   GtkWidget *     expander;
   GtkWidget *     label;
@@ -160,9 +161,9 @@ key_bind (GtkListItemFactory *factory,
 }
 
 static void
-key_unbind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+key_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   g_assert (factory != NULL);
 
@@ -175,25 +176,25 @@ key_unbind (GtkListItemFactory *factory,
 }
 
 static void
-value_setup (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
+value_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+             GtkListItem *                     list_item,
+             G_GNUC_UNUSED gpointer            user_data)
 {
   g_assert (factory != NULL);
 
   GtkLabel *label;
 
-  label = gtk_label_new (NULL);
-  gtk_widget_set_margin_start (label, 5);
-  gtk_widget_set_margin_end (label, 5);
+  label = GTK_LABEL (gtk_label_new (NULL));
+  gtk_widget_set_margin_start (GTK_WIDGET (label), 5);
+  gtk_widget_set_margin_end (GTK_WIDGET (label), 5);
   gtk_label_set_xalign (GTK_LABEL (label), 0.0);
-  gtk_list_item_set_child (list_item, label);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-value_bind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
+value_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+            GtkListItem *                     list_item,
+            G_GNUC_UNUSED gpointer            user_data)
 {
   g_assert (factory != NULL);
 
@@ -209,9 +210,9 @@ value_bind (GtkListItemFactory *factory,
 }
 
 static void
-value_unbind (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+value_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   g_assert (factory != NULL);
 
@@ -227,7 +228,7 @@ value_unbind (GtkListItemFactory *factory,
 
 /* A GtkTreeListModelCreateModelFunc */
 static GListModel *
-get_child_model (GObject *item, gpointer user_data)
+get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
 {
   GdnEnvironmentInfo *info = GDN_ENVIRONMENT_INFO (item);
   GListStore *        store = gdn_environment_info_get_child_model (info);
@@ -255,7 +256,7 @@ scm_update_environments_x (SCM s_self, SCM entries)
 
   g_list_store_remove_all (self->store);
 
-  for (int i = 0; i < scm_c_vector_length (entries); i++)
+  for (size_t i = 0; i < scm_c_vector_length (entries); i++)
     {
       SCM                 entry;
       SCM                 key, value, children;
@@ -274,7 +275,7 @@ scm_update_environments_x (SCM s_self, SCM entries)
 
       if (scm_is_vector (children))
         {
-          for (int j = 0; j < scm_c_vector_length (children); j++)
+          for (size_t j = 0; j < scm_c_vector_length (children); j++)
             {
               SCM                 child;
               GdnEnvironmentInfo *kiddo;

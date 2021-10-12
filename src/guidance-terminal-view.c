@@ -221,7 +221,9 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
 }
 
 gboolean
-poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data)
+poll_terminal_text (gint                       fd,
+                    G_GNUC_UNUSED GIOCondition condition,
+                    gpointer                   user_data)
 {
   GdnTerminalView *self = user_data;
 
@@ -243,7 +245,9 @@ poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data)
 }
 
 gboolean
-poll_terminal_error (gint fd, GIOCondition condition, gpointer user_data)
+poll_terminal_error (gint                       fd,
+                     G_GNUC_UNUSED GIOCondition condition,
+                     gpointer                   user_data)
 {
   GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
   GtkTextView *    view = self->text_view;
@@ -278,7 +282,9 @@ poll_terminal_error (gint fd, GIOCondition condition, gpointer user_data)
 }
 
 gboolean
-poll_terminal_prompt (gint fd, GIOCondition condition, gpointer user_data)
+poll_terminal_prompt (gint                       fd,
+                      G_GNUC_UNUSED GIOCondition condition,
+                      gpointer                   user_data)
 {
 #define MAX_PROMPT_CODEPOINTS 80
 #define MAX_PROMPT_BYTES (MAX_PROMPT_CODEPOINTS * 3)

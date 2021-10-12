@@ -1,7 +1,7 @@
 project('guidance', 'c',
           version: '0.1.0',
     meson_version: '>= 0.50.0',
-  default_options: [ 'warning_level=1',
+  default_options: [ 'warning_level=2',
                      'c_std=c2x',
                      'b_sanitize=address',
                      'b_sanitize=leak',

@@ -22,7 +22,7 @@
 #include "guidance-frame-info.h"
 #include "guidance-module-info.h"
 #include "guidance-resources.h"
-#include "guidance-thread-info.h"
+#include "guidance-thread-view.h"
 #include "guidance-trap-info.h"
 #include "guidance-trap-view.h"
 #include <fcntl.h>
@@ -165,7 +165,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
 
   gdn_source_view_guile_init ();
   gdn_backtrace_view_guile_init ();
-  gdn_thread_info_guile_init ();
+  gdn_thread_view_guile_init ();
   gdn_module_info_guile_init ();
   gdn_trap_view_guile_init ();
   gdn_trap_info_guile_init ();
@@ -270,7 +270,7 @@ gdn_lisp_break_async (GdnLisp *self)
 }
 
 gboolean
-gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx)
+gdn_lisp_switch_thread (G_GNUC_UNUSED GdnLisp *lisp, G_GNUC_UNUSED int thd_idx)
 {
   return TRUE;
 }
@@ -289,7 +289,7 @@ gdn_lisp_get_paths (void)
 {
   SCM           path = scm_vector (scm_c_eval_string ("%load-path"));
   GStrvBuilder *builder = g_strv_builder_new ();
-  for (int i = 0; i < scm_c_vector_length (path); i++)
+  for (size_t i = 0; i < scm_c_vector_length (path); i++)
     {
       char *str;
       str = scm_to_utf8_string (scm_c_vector_ref (path, i));
@@ -405,7 +405,7 @@ spawn_top_repl (G_GNUC_UNUSED void *data)
 }
 
 static SCM
-spawn_handler (void *data, SCM key, SCM args)
+spawn_handler (G_GNUC_UNUSED void *data, SCM key, SCM args)
 {
   scm_simple_format (scm_current_output_port (),
                      scm_from_utf8_string ("Guile has exited"), SCM_EOL);

@@ -31,13 +31,11 @@
              (system vm traps)
              (system vm trap-state))
 
-(define (poop x)
-  (if x
-      (1+ x)
-      x))
-
 (define (_Break_)
   (format #t "_Break_ is called~%")
+  #t)
+(define (poop)
+  (format #t "poop is called~%")
   #t)
 
 (define *cmdline* (command-line))
@@ -103,7 +101,7 @@ signal handler has been set up."
       (display "repl>" %gdn-prompt-port)
       (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
       (gdn-update-traps! *gdn-trap-view* (list-traps))
-      (gdn-update-threads)
+      (gdn-update-threads! *gdn-thread-view*)
       (pk (gdn-get-user-input *gdn-lisp*)))
     (lambda (key subr msg args rest)
       (case key

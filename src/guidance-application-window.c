@@ -217,9 +217,11 @@ gdn_application_window_init (GdnApplicationWindow *self)
   self->thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
                                  GTK_WIDGET (self->thread_view));
+  scm_c_define ("*gdn-thread-view*",
+                gdn_thread_view_to_scm (self->thread_view));
 
   self->terminal_view = g_object_new (GDN_TYPE_TERMINAL_VIEW, NULL);
-  gtk_box_append (self->terminal_box, self->terminal_view);
+  gtk_box_append (self->terminal_box, GTK_WIDGET (self->terminal_view));
   gdn_terminal_view_connect_ports (self->terminal_view,
                                    gdn_lisp_get_input_fd (self->lisp),
                                    gdn_lisp_get_input_prompt_fd (self->lisp),
@@ -229,12 +231,13 @@ gdn_application_window_init (GdnApplicationWindow *self)
                     self);
 
   self->source_view = g_object_new (GDN_TYPE_SOURCE_VIEW, NULL);
-  gtk_box_append (self->source_box, self->source_view);
+  gtk_box_append (self->source_box, GTK_WIDGET (self->source_view));
   scm_c_define ("*gdn-source-view*",
                 gdn_source_view_to_scm (self->source_view));
 
   self->trap_view = g_object_new (GDN_TYPE_TRAP_VIEW, NULL);
-  gtk_scrolled_window_set_child (self->trap_window, self->trap_view);
+  gtk_scrolled_window_set_child (self->trap_window,
+                                 GTK_WIDGET (self->trap_view));
   scm_c_define ("*gdn-trap-view*", gdn_trap_view_to_scm (self->trap_view));
 
   self->module_view = g_object_new (GDN_TYPE_MODULE_VIEW, NULL);
@@ -251,7 +254,7 @@ gdn_application_window_init (GdnApplicationWindow *self)
                 gdn_environment_view_to_scm (self->environment_view));
 
   self->backtrace_view = g_object_new (GDN_TYPE_BACKTRACE_VIEW, NULL);
-  gtk_box_append (self->backtrace_box, self->backtrace_view);
+  gtk_box_append (self->backtrace_box, GTK_WIDGET (self->backtrace_view));
   scm_c_define ("*gdn-backtrace-view*",
                 gdn_backtrace_view_to_scm (self->backtrace_view));
   g_signal_connect_data (self->backtrace_view, "location",
@@ -265,15 +268,15 @@ gdn_application_window_init (GdnApplicationWindow *self)
                     G_CALLBACK (handle_module_view_trap), self);
 
   /* Simple actions */
-  add_simple_action (self, "step-into", handle_step_into);
+  add_simple_action (self, "step-into", G_CALLBACK (handle_step_into));
   add_simple_action (self, "step-into-instruction",
-                     handle_step_into_instruction);
-  add_simple_action (self, "step-over", handle_step_over);
+                     G_CALLBACK (handle_step_into_instruction));
+  add_simple_action (self, "step-over", G_CALLBACK (handle_step_over));
   add_simple_action (self, "step-over-instruction",
-                     handle_step_over_instruction);
-  add_simple_action (self, "step-out", handle_step_out);
-  add_simple_action (self, "process-run", handle_process_run);
-  add_simple_action (self, "process-stop", handle_process_stop);
+                     G_CALLBACK (handle_step_over_instruction));
+  add_simple_action (self, "step-out", G_CALLBACK (handle_step_out));
+  add_simple_action (self, "process-run", G_CALLBACK (handle_process_run));
+  add_simple_action (self, "process-stop", G_CALLBACK (handle_process_stop));
 
   gdn_application_window_guile_init ();
   scm_c_define ("*gdn-application-window*",

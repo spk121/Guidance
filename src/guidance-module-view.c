@@ -20,12 +20,6 @@
 #include "guidance-module-info.h"
 #include <glib-unix.h>
 
-/* An expandable list view.
- - 1st level is a label and an open button
- - 2nd level is a label with a source button and a trap button
-   - The source button jumps to the function in the source view
-   - The trap button pop a yes/no dialog then sets a trap a that procedure
-*/
 
 struct _GdnModuleView
 {
@@ -53,7 +47,6 @@ typedef struct _GdnModuleViewAndListItem
   GtkListItem *  item;
 } GdnModuleViewAndListItem;
 
-static GdnModuleView *_self;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
@@ -75,6 +68,14 @@ static void module_open_activate (GtkButton *button, gpointer user_data);
 static void procedure_open_activate (GtkButton *button, gpointer user_data);
 static void procedure_trap_activate (GtkButton *button, gpointer user_data);
 static void mvli_free (GdnModuleViewAndListItem *mvli, GClosure *closure);
+
+static int module_info_compare (const void *a, const void *b, void *user_data);
+
+static SCM scm_module_view_type;
+static SCM add_binding_key_value_proc;
+static SCM module_name_proc;
+static SCM module_filename_proc;
+static SCM module_obarray_proc;
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -106,32 +107,21 @@ gdn_module_view_class_init (GdnModuleViewClass *klass)
 }
 
 static void
-set_list_view_model (GtkListView *view, GtkTreeListModel *model)
-{
-  GtkNoSelection *nosel_model;
-
-  g_object_ref (model);
-  nosel_model = gtk_no_selection_new (model);
-  gtk_list_view_set_model (view, nosel_model);
-}
-
-static void
 gdn_module_view_init (GdnModuleView *self)
 {
-  GtkTreeListModel *  tree_model;
   GtkListItemFactory *factory;
 
   gtk_widget_init_template (GTK_WIDGET (self));
 
   self->store = g_list_store_new (GDN_MODULE_INFO_TYPE);
-  self->model =
-      gtk_tree_list_model_new (G_LIST_MODEL (self->store), FALSE, FALSE,
-                               gdn_module_info_get_child_model, NULL, NULL);
+  self->model = gtk_tree_list_model_new (
+      G_LIST_MODEL (self->store), FALSE, FALSE,
+      (GtkTreeListModelCreateModelFunc) gdn_module_info_get_child_model, NULL,
+      NULL);
 
-  tree_model = gdn_module_info_get_tree_model ();
-  _self = self;
-  self->model = tree_model;
-  set_list_view_model (self->list_view, tree_model);
+  GtkNoSelection *nosel_model =
+      gtk_no_selection_new (G_LIST_MODEL (self->model));
+  gtk_list_view_set_model (self->list_view, GTK_SELECTION_MODEL (nosel_model));
 
   factory = gtk_signal_list_item_factory_new ();
   g_signal_connect (factory, "setup", G_CALLBACK (entry_setup), NULL);
@@ -272,9 +262,9 @@ entry_bind (GtkListItemFactory *factory,
 }
 
 static void
-entry_unbind (GtkListItemFactory *factory,
-              GtkListItem *       list_item,
-              gpointer            user_data)
+entry_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+              GtkListItem *                     list_item,
+              G_GNUC_UNUSED gpointer            user_data)
 {
   g_assert (factory != NULL);
   g_assert (list_item != NULL);
@@ -304,7 +294,7 @@ entry_unbind (GtkListItemFactory *factory,
 ////////////////////////////////////////////////////////////////
 
 static void
-mvli_free (GdnModuleViewAndListItem *mvli, GClosure *closure)
+mvli_free (GdnModuleViewAndListItem *mvli, G_GNUC_UNUSED GClosure *closure)
 {
   g_object_unref (mvli->view);
   mvli->view = NULL;
@@ -313,11 +303,141 @@ mvli_free (GdnModuleViewAndListItem *mvli, GClosure *closure)
   free (mvli);
 }
 
-////////////////////////////////////////////////////////////////
-// Guile API
-////////////////////////////////////////////////////////////////
+/* A GCompareDataFunc that comparestwo GdnModuleInfo by their name. */
+static int
+module_info_compare (const void *a, const void *b, void *user_data)
+{
+  g_assert (user_data == NULL);
+  GdnModuleInfo *entry_a = GDN_MODULE_INFO ((gpointer) a);
+  GdnModuleInfo *entry_b = GDN_MODULE_INFO ((gpointer) b);
+  return strcmp (gdn_module_info_get_name (entry_a),
+                 gdn_module_info_get_name (entry_b));
+}
 
+static int
+module_info_eq (const void *a, const void *b)
+{
+  GdnModuleInfo *entry_a = GDN_MODULE_INFO ((gpointer) a);
+  GdnModuleInfo *entry_b = GDN_MODULE_INFO ((gpointer) b);
+  return strcmp (gdn_module_info_get_name (entry_a),
+                 gdn_module_info_get_name (entry_b)) == 0;
+}
+
+////////////////////////////////////////////////////////////////
+// GUILE API
+////////////////////////////////////////////////////////////////
+static GListStore *_inner_store = NULL;
+
+/* This procedure is an internal procedure used when creating a
+ * GListStore of top-level procedures from an SCM module. This
+ * unfortunate proc is a work-around because of having to use
+ * scm_hash_for_each. */
+static SCM
+scm_add_binding_key_value (SCM key, SCM value)
+{
+  GdnModuleInfo *info;
+  char *         str;
+
+  info = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
+  gdn_module_info_set_module (info, value);
+  str = scm_to_utf8_string (scm_symbol_to_string (key));
+  gdn_module_info_set_name (info, str);
+  free (str);
+
+  g_list_store_insert_sorted (_inner_store, info, module_info_compare, NULL);
+
+  return SCM_UNSPECIFIED;
+}
+
+static SCM
+scm_module_name (SCM module)
+{
+  return scm_call_1 (module_name_proc, module);
+}
+
+/* This Guile procedure, given a Guile #<directory> module entry,
+ * updates the module info store. If an existing entry by this name
+ * exists, it is replaced. Returns #t if store is modified. */
+static SCM
+scm_add_module_x (SCM s_self, SCM module)
+{
+  scm_assert_foreign_object_type (scm_module_view_type, s_self);
+  GdnModuleView *self = scm_foreign_object_ref (s_self, 0);
+
+  SCM            symlist;
+  SCM            name;
+  char *         str;
+  GdnModuleInfo *entry, *found;
+  guint          position;
+  SCM            ret = SCM_BOOL_F;
+
+  symlist = scm_module_name (module);
+  name = scm_object_to_string (symlist, SCM_UNDEFINED);
+  str = scm_to_utf8_string (name);
+  entry = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
+  gdn_module_info_set_name (entry, str);
+  free (str);
+  gdn_module_info_set_module (entry, module);
+
+  if (g_list_store_find_with_equal_func (self->store, entry, module_info_eq,
+                                         &position))
+    {
+      found = g_list_model_get_item (G_LIST_MODEL (self->store), position);
+      if (!scm_is_eq (gdn_module_info_get_module (found),
+                      gdn_module_info_get_module (entry)))
+        {
+          gdn_module_info_set_module (found,
+                                      gdn_module_info_get_module (entry));
+          g_list_model_items_changed (G_LIST_MODEL (self->store), position, 1,
+                                      1);
+          ret = SCM_BOOL_T;
+        }
+      g_object_unref (entry);
+    }
+  else
+    {
+      g_list_store_insert_sorted (self->store, entry, module_info_compare,
+                                  NULL);
+      ret = SCM_BOOL_T;
+    }
+
+  return ret;
+}
+
+/* This Guile procedure deletes all the entries in the module info
+ * _STORE.  The return value is unspecified. */
+static SCM
+scm_clear_modules_x (SCM s_self)
+{
+  scm_assert_foreign_object_type (scm_module_view_type, s_self);
+  GdnModuleView *self = scm_foreign_object_ref (s_self, 0);
+
+  g_list_store_remove_all (self->store);
+  return SCM_UNSPECIFIED;
+}
+
+/* This procedure initializes the Guile API for the Module page of the
+   GUI. */
 void
 gdn_module_view_guile_init (void)
 {
+  SCM name, slots;
+
+  name = scm_from_utf8_symbol ("gdn-module-view");
+  slots = scm_list_1 (scm_from_utf8_symbol ("data"));
+  scm_module_view_type = scm_make_foreign_object_type (name, slots, NULL);
+
+  /* Guile functions used in this module. */
+  add_binding_key_value_proc =
+      scm_c_define_gsubr ("%gdn-add-binding-key-value", 2, 0, 0,
+                          (scm_t_subr) scm_add_binding_key_value);
+  module_filename_proc = scm_variable_ref (scm_c_lookup ("module-filename"));
+  module_name_proc = scm_variable_ref (scm_c_lookup ("module-name"));
+  module_obarray_proc = scm_variable_ref (scm_c_lookup ("module-obarray"));
+
+  /* The public API */
+  scm_c_define_gsubr ("gdn-add-module!", 2, 0, 0,
+                      (scm_t_subr) scm_add_module_x);
+  scm_c_define_gsubr ("gdn-clear-modules!", 1, 0, 0,
+                      (scm_t_subr) scm_clear_modules_x);
 }

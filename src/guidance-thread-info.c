@@ -35,8 +35,6 @@ struct _GdnThreadInfo
 
 G_DEFINE_TYPE (GdnThreadInfo, gdn_thread_info, G_TYPE_OBJECT)
 
-static GListStore *_model = NULL;
-
 enum
 {
   PROP_0,
@@ -141,8 +139,8 @@ thread_info_new_from_scm (SCM thread)
   return self;
 }
 
-static void
-thread_info_store_update (GListStore *store)
+void
+gdn_thread_info_store_update (GListStore *store)
 {
   SCM all_threads = scm_vector (scm_all_threads ());
 
@@ -171,26 +169,4 @@ gdn_thread_info_get_active (GdnThreadInfo *info)
   return info->active;
 }
 
-GListStore *
-gdn_thread_info_get_model (void)
-{
-  if (_model == NULL)
-    _model = g_list_store_new (GDN_THREAD_INFO_TYPE);
-  return _model;
-}
 
-////////////////////////////////////////////////////////////////
-// Guile API
-////////////////////////////////////////////////////////////////
-
-static SCM
-scm_update_threads (void)
-{
-  thread_info_store_update (_model);
-}
-
-void
-gdn_thread_info_guile_init (void)
-{
-  scm_c_define_gsubr ("gdn-update-threads", 0, 0, 0, scm_update_threads);
-}

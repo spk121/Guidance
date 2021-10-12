@@ -61,13 +61,13 @@ gdn_source_view_class_init (GdnSourceViewClass *klass)
 static void
 gdn_source_view_init (GdnSourceView *self)
 {
-  gtk_widget_init_template (self);
+  gtk_widget_init_template (GTK_WIDGET (self));
   self->contents =
       g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
   self->rel_path = NULL;
 
   char **paths = gdn_lisp_get_paths ();
-  gdn_source_view_set_paths (self, paths);
+  gdn_source_view_set_paths (self, (const char **) paths);
   g_strfreev (paths);
 
   GtkTextBuffer *buf;

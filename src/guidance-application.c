@@ -87,9 +87,9 @@ on_activate (GdnApplication *app)
 }
 
 static int
-on_command_line (GdnApplication *         app,
-                 GApplicationCommandLine *command_line,
-                 gpointer                 user_data)
+on_command_line (GdnApplication *app,
+                 G_GNUC_UNUSED GApplicationCommandLine *command_line,
+                 G_GNUC_UNUSED gpointer                 user_data)
 {
   /* All the command-line argument handling is for Guile, not for the
      GTK app. */
