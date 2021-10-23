@@ -38,4 +38,7 @@ guidance_sources += gnome.compile_resources('guidance-resources',
 executable('guidance', guidance_sources,
   dependencies: guidance_deps,
   install: true,
+  link_args : ['-fsanitize=address',
+  '-fsanitize=leak',
+  '-fsanitize=undefined']
 )

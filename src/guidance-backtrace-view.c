@@ -664,8 +664,10 @@ gdn_backtrace_view_guile_init (void)
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_backtrace_view_type = scm_make_foreign_object_type (name, slots, NULL);
 
-  get_backtrace_func = scm_variable_ref (scm_c_lookup ("gdn-get-backtrace"));
+  get_backtrace_func =
+      scm_variable_ref (scm_c_public_lookup ("gdn lib", "gdn-get-backtrace"));
 
   scm_c_define_gsubr ("gdn-update-backtrace!", 1, 1, 0,
                       (scm_t_subr) scm_update_backtrace_x);
+  scm_c_export ("gdn-update-backtrace!", NULL);
 }

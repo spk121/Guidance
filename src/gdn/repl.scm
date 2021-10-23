@@ -19,24 +19,19 @@
 ;;; Goals
 ;;; - Use only functions documented in the reference manual
 ;;; - Be simple
-
-(use-modules (ice-9 regex)
-             (ice-9 threads)
-             (ice-9 format)
-             (ice-9 session)
-             (ice-9 control)
-             (ice-9 command-line)
-             (ice-9 optargs)
-             (system vm vm)
-             (system vm traps)
-             (system vm trap-state))
-
-(define (_Break_)
-  (format #t "_Break_ is called~%")
-  #t)
-(define (poop)
-  (format #t "poop is called~%")
-  #t)
+(define-module (gdn repl)
+  #:use-module (gdn lib)
+  #:use-module (gdn gui)
+  #:use-module (gdn ports)
+  #:use-module (gdn widgets)
+  #:use-module (ice-9 control)
+  #:use-module (ice-9 pretty-print)
+  #:use-module (ice-9 eval-string)
+  #:use-module (system vm vm)
+  #:use-module (system vm traps)
+  #:use-module (system vm trap-state)
+  #:export (gdn-top-repl _break_)
+  #:declarative? #f)
 
 (define *cmdline* (command-line))
 
@@ -54,7 +49,21 @@ current error port."
                      rest)
       *unspecified*)))
 
-(define (top-repl)
+(define (abort-on-error exp)
+  (catch #t
+    (lambda () exp)
+    (lambda (key subr message args rest)
+      (format #t "While ~A:~%" string)
+      (display-error #f
+                     (current-error-port)
+                     subr
+                     message
+                     args
+                     rest)
+      (abort))))
+
+
+(define (gdn-top-repl)
   "Kick off the REPL for Guidance."
 
   ;; Note that there is no signal handler here, because we handle
@@ -81,11 +90,6 @@ signal handler has been set up."
   ;; Here's where Guile sets makes a REPL which is bound to a language
   ;; because it wants to use that language's built-in reader.  But
   ;; since we'll be using eval-string, we can ignore that.
-  (add-trap-at-procedure-call! poop)
-  ;; (add-trap-at-procedure-call! _Break_)
-  ;; (trap-in-procedure _Break_ trap-handler trap-handler)
-  (set-vm-trace-level! 0)
-  (install-trap-handler! trap-handler)
   (run-repl '()))
 
 (define (repl-welcome)
@@ -102,7 +106,7 @@ signal handler has been set up."
       (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
       (gdn-update-traps! *gdn-trap-view* (list-traps))
       (gdn-update-threads! *gdn-thread-view*)
-      (pk (gdn-get-user-input *gdn-lisp*)))
+      (gdn-get-user-input *gdn-lisp*))
     (lambda (key subr msg args rest)
       (case key
         ((quit)
@@ -115,11 +119,25 @@ signal handler has been set up."
                         msg
                         args
                         rest)
-         (flush-all-input)
          *unspecified*)))))
 
 (define (run-repl repl)
   (run-repl* repl repl-read))
+
+(define (with-stack-and-prompt thunk)
+  "No idea what this tangled mess does. Stole it from (system repl
+repl)"
+  (call-with-prompt
+      ;; Tag
+      (default-prompt-tag)
+    ;; Thunk
+    (lambda ()
+      (start-stack #t (thunk)))
+    ;; Handler
+    (lambda (state-of-computation proc)
+      (with-stack-and-prompt
+       (lambda ()
+         (proc state-of-computation))))))
 
 (define (run-repl* repl repl-read)
   "This is the guts of the simplified REPL. We presume locale and
@@ -136,137 +154,96 @@ signal is set up and that the language is available."
          (let* ((input (repl-read repl))  ; Get toolbar or GtkEntry input
                 (action (car input))
                 (data (cadr input)))
-           (pk 'input 'action action 'data data)
            (cond
             ((eqv? action #f))               ; unknown action: ignore
             ((eqv? action 'quit)
              (abort '()))
             (else
-             (execute-input-and-print-return-values action data)
-             #; (call-with-minimal-error-handler
+             (pk 'about-to-call-execute-input)
+             (call-with-minimal-error-handler
               (lambda ()
-                (pk 'before-execute action data)
-                (execute-input-and-print-return-values action data))))))))
+                (pk 'alpha)
+                (catch 'quit
+                  (lambda ()
+                    (pk 'bravo)
+                    (call-with-values
+                        (lambda ()
+                          (pk 'charlie)
+                          #;(%
+                           ;; prompt expression
+                           (let ((thunk
+                                  (abort-on-error
+                                   "compiling expression"
+                                   (eval-string data #:compile? #t))))
+                             (pk 'delta 'thunk thunk)
+                             (call-with-error-handler
+                              (lambda ()
+                                (with-stack-and-prompt thunk))))
+                           
+                           ;; prompt handler
+                           (lambda (k)
+                          (values)))
 
-     ;; Handler for the '%' prompt
+                          (let ((thunk
+                                 (lambda ()
+                                   (eval-string data #:compile? #t))))
+                            (call-with-error-handler thunk)))
+                           
+                      
+                      print-return-values))
+
+                  ;; The handler for 'quit
+                  (lambda (k . args)
+                    (abort args)))))))))
+                
+     ;; Handler for the outer '%' prompt
      (lambda (k . status)
-       status))))
+       status)))))
 
 (define (execute-input-and-print-return-values action data)
   (call-with-values
       (lambda ()
-        (execute-input action data))
+        (%
+         (execute-input action data)))
     print-return-values))
   
 (define (execute-input action data)
-  ;; When the Run Button is pressed, we execute the
-  ;; command line. Otherwise we execute the text
-  ;; from the Terminal's GtkEntry.
-  
-  ;; FIXME: add before-eval-hook
-  (catch
-    ;; key
-    #t
-    ;; thunk
-    (lambda ()
-      ;;(with-default-trap-handler
-      ;;trap-handler
-      (dynamic-wind
+  (call-with-error-handler
+   (lambda ()
+     (cond
+      ((eqv? action 'run)
+       ;; FIXME: insert with-stack-and-prompt here?
+       #;(eval (compile-shell-switches *cmdline*)
+       (interaction-envirnoment))
+       (error "not supposed to be here")
+       )
+      
+      ((eqv? action 'eval)
+       (pk 'in-eval action data)
+       (with-stack-and-prompt
         (lambda ()
-          (set-vm-trace-level! 1))
-        (lambda ()
-          (cond
-           ((eqv? action 'run)
-            ;; FIXME: insert with-stack-and-prompt here?
-            (eval (compile-shell-switches *cmdline*)
-                  (interaction-envirnoment)))
-           ((eqv? action 'eval)
-            ;; FIXME: ditto?
-            (eval-string data))
-           (else
-            *unspecified*)))
-        (lambda ()
-          (set-vm-trace-level! 0))))
+          (eval-string data #:compile? #t))))
+      (else
+       *unspecified*)))))
 
-    (lambda (key . args)
-      (cond
-       ((eqv? key 'quit)
-        (apply throw key args))
-       ((eqv? key 'stack-overflow)
-        (display "Stack overflow!" %gdn-error-port)
-        (newline %gdn-error-port))
-       ((eqv? key 'out-of-memory)
-        (display "Out of memory!" %gdn-error-port)
-        (newline %gdn-error-port))
-       (else
-        *unspecified*)))
-
-    (lambda (key subr message args rest)
-      (format #t "ERROR HANDLER ~S ~S ~S ~S ~S~%" key subr message args rest)
-      (unless (eqv? key 'quit)
-        (let ((stack (make-stack #t 4)))
-          (format #t "STACK ~S~%" stack)
-          (display-error
-           (stack-ref stack 0)
-           %gdn-error-port
-           subr
-           message
-           args
-           rest)
-          (flush-all-ports)
-          (format #t "Entering Error Mode.~%")
-          (format #t "When ready, press the STOP 🛑 button to terminate.~%")
-          (gdn-update-backtrace! *gdn-backtrace-view* (stack-ref stack 0))
-          (gdn-set-input-mode! *gdn-application-window* 'error)
-          (display "error>" %gdn-prompt-port)
-          (while #t
-            (let ((input (gdn-get-user-input *gdn-lisp*)))
-              (cond
-               ;; The Stop Button returns to eval mode
-               ((eqv? (car input) 'stop)
-                (break))
-               ((eqv? (car input) 'eval)
-                (display "-> ")
-                (write (print-error-on-exception (eval-string (cadr input))))
-                (newline))
-               (else
-                *unspecified*))))         
-          )))))
-    
-(define (with-stack-and-prompt thunk)
-  "No idea what this tangled mess does. Stole it from (system repl
-repl)"
-  (call-with-prompt
-      ;; Tag
-      (default-prompt-tag)
-    ;; Thunk
-    (lambda ()
-      (start-stack #t (thunk)))
-    ;; Handler
-    (lambda (state-of-computation proc)
-      (with-stack-and-prompt
-       (lambda ()
-         (proc state-of-computation))))))
 
 (define (call-with-minimal-error-handler thunk)
   "This procedure calls THUNK. On some critical errors, it prints a brief
 error message. Traps are disabled."
-  (pk 'charlie)
   (catch
     ;; key
     #t
     ;; thunk
     (lambda ()
-      (pk 'delta thunk)
       (with-default-trap-handler
        ;; Use a null trap handler to ignore traps.
        (lambda (frame trap-idx trap-name)
+         (format #t "Trap ~A ignored~%" trap-name)
          #t)
-       (lambda () (pk 'in-minimal (start-stack #t thunk)))))
+       (start-stack #t thunk)))
     
     ;; On-unwind handler : catch
     (lambda (key . args)
-      (pk 'in-minimal-unwind key args)
       (cond
        ((eqv? key 'quit)
         (apply throw key args))
@@ -286,13 +263,14 @@ error message. Traps are disabled."
   "This procedure calls THUNK. On error the error GUI error handler is used.
 On traps, the GUI trap handler is used. Will abort to prompt on a
 'quit signal."
+  (pk 'foxtrot)
   (catch
     ;; key
     #t
     ;; thunk
     (with-default-trap-handler
      trap-handler
-     (lambda () (start-stack #t thunk)))
+     (start-stack #t thunk))
     
     ;; On-unwind handler : catch
     (lambda (key . args)
@@ -320,33 +298,73 @@ On traps, the GUI trap handler is used. Will abort to prompt on a
                 (newline)))
             return-vals))
 
-(define* (trap-handler frame #:optional (trap-idx #f) (trap-name "anonymous"))
+(define (_break_)
+  (display "in _break_ \n")
+  (let ((frame (stack-ref (make-stack #t 1) 0)))
+    (add-ephemeral-trap-at-frame-finish! frame trap-handler)))
+;;  (trap-handler (stack-ref (make-stack #t) 6)))
+
+(define* (trap-handler frame #:optional (trap-idx #f) (trap-name "break"))
   "This trap handler launches Guidance's trap-handler UX."
+  (gdn-set-input-mode! *gdn-application-window* 'trap)
+  (pk 'lima frame trap-idx trap-name)
   (set-vm-trace-level! 0)
   (if trap-idx
       (begin
-        (format #t "Trap ~d: ~a~%" trap-idx trap-name)
+        (format #t "Trap ~a: ~a~%" trap-idx trap-name)
         (format #t "Entering trap mode.~%"))
       ;; else
       (format #t "Entering break mode.~%"))
-  (format #t "When ready, press the CONTINUE button to continue.~%")
+  (format #t "When ready, press the RUN button to continue.~%")
 
-  (gdn-set-input-mode! *gdn-application-window* 'trap)
   (gdn-update-backtrace! *gdn-backtrace-view* frame)
       
   (while #t
     (format %gdn-prompt-port "trap ~a>" trap-idx)
+    (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
+    (gdn-update-traps! *gdn-trap-view* (list-traps))
+    (gdn-update-threads! *gdn-thread-view*)
         
-    (let ((input (gdn-get-user-input *gdn-lisp*)))
+    (let* ((input (gdn-get-user-input *gdn-lisp*))
+           (action (car input))
+           (data (cadr input)))
       (cond
        ;; The Stop Button returns to eval mode
-       ((eqv? (car input) 'stop)
+       ((eqv? action 'run)
         (break))
-       ((eqv? (car input) 'eval)
-        (display "-> ")
+       
+       ((eqv? action 'step)
+        (add-ephemeral-stepping-trap! frame trap-handler #:into? #f #:instruction? #f)
+        (gdn-update-traps! *gdn-trap-view* (list-traps))
+        (break))
+       
+       ((eqv? action 'step-instruction)
+        (add-ephemeral-stepping-trap! frame trap-handler #:into? #f #:instruction? #t)
+        (gdn-update-traps! *gdn-trap-view* (list-traps))
+        (break))
+       
+       ((eqv? action 'step-into)
+        (add-ephemeral-stepping-trap! frame trap-handler #:into? #t #:instruction? #f)
+        (gdn-update-traps! *gdn-trap-view* (list-traps))
+        (break))
+       
+       ((eqv? action 'step-into-instruction)
+        (add-ephemeral-stepping-trap! frame trap-handler #:into? #t #:instruction? #t)
+        (break))
+       
+       ((eqv? action 'step-out)
+        (add-ephemeral-trap-at-frame-finish! frame trap-handler)
+        (gdn-update-traps! *gdn-trap-view* (list-traps))
+        (break))
 
-        (write (print-error-on-exception (eval-string (cadr input))))
-        (newline))
+       ((eqv? action 'eval)
+        (let ((out (print-error-on-exception
+                    (lambda () (eval-string data)))))
+          (unless (unspecified? out)
+            (display "trap> ")
+            (write out)
+            (newline))))
+       
        (else
         *unspecified*))))
   (set-vm-trace-level! 1))
@@ -354,10 +372,15 @@ On traps, the GUI trap handler is used. Will abort to prompt on a
 (define (error-handler key subr message args rest)
   "This pre-unwind handler launches Guidance's error-handler UX on all
 errors except 'quit."
+  (gdn-set-input-mode! *gdn-application-window* 'error)
+  (pk 'india key subr message)
+  (backtrace)
   (unless (eqv? key 'quit)
-    (let* ((stack (make-stack #t 4 #t)))
+    (pk 'juliette)
+    (let* ((stack (make-stack #t 3)))
+      (pk 'juilette stack)
       (display-error
-       (stack-ref stack 0)
+       #f ;;(stack-ref stack 0)
        (current-error-port)
        subr
        message
@@ -367,20 +390,31 @@ errors except 'quit."
       (format #t "Entering error mode.~%")
       (format #t "When ready, press the STOP 🛑 button to terminate.~%")
       
-      ;; (gdn-update-backtrace! *gdn-backtrace-view* (stack-ref stack 0))
-      (gdn-set-input-mode! *gdn-application-window* 'error)
+      (gdn-update-backtrace! *gdn-backtrace-view* (stack-ref stack 0))
+      (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
+      (gdn-update-traps! *gdn-trap-view* (list-traps))
+      (gdn-update-threads! *gdn-thread-view*)
+      
       (display "error>" %gdn-prompt-port)
       
       (while #t
-        (let ((input (gdn-get-user-input *gdn-lisp*)))
+        (pk 'mike)
+        (sleep 1)
+        (let* ((input (gdn-get-user-input *gdn-lisp*))
+               (action (car input))
+               (data (cadr input)))
+          (pk 'kilo input)
           (cond
            ;; The Stop Button returns to eval mode
-           ((eqv? (car input) 'stop)
+           ((eqv? action 'stop)
             (break))
-           ((eqv? (car input) 'eval)
-            (display "-> ")
-            (write (print-error-on-exception (eval-string (cadr input))))
-            (newline))
+           ((eqv? action 'eval)
+            (let ((out (print-error-on-exception
+                        (lambda () (eval-string data)))))
+              (unless (unspecified? out)
+                (display "err> ")
+                (write out)
+                (newline))))
            (else
             *unspecified*))))
       #f)))

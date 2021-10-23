@@ -3,9 +3,9 @@ project('guidance', 'c',
     meson_version: '>= 0.50.0',
   default_options: [ 'warning_level=2',
                      'c_std=c2x',
-                     'b_sanitize=address',
-                     'b_sanitize=leak',
-                     'b_sanitize=undefined'
+                     # 'b_sanitize=address',
+                     # 'b_sanitize=leak',
+                     # 'b_sanitize=undefined'
                    ],
 )
 
@@ -13,6 +13,9 @@ if meson.get_compiler('c').get_id() == 'gcc'
   add_global_arguments([
   '-fstack-protector-strong',
   '-fstack-clash-protection',
+  '-fsanitize=address',
+  '-fsanitize=leak',
+  '-fsanitize=undefined',
   '-fcf-protection',
   '-Werror=shadow',
   '-fexceptions',

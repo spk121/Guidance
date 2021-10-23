@@ -28,6 +28,8 @@ struct _GdnEnvironmentView
   GtkColumnViewColumn *key_col;
   GtkColumnViewColumn *value_col;
   GtkTreeListModel *   model;
+
+  SCM                  temp_store;
   GListStore *         store;
 };
 
@@ -36,6 +38,7 @@ G_DEFINE_TYPE (GdnEnvironmentView, gdn_environment_view, GTK_TYPE_BOX)
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
+static GMutex lock;
 
 static SCM scm_environment_view_type = SCM_BOOL_F;
 
@@ -87,6 +90,7 @@ gdn_environment_view_init (GdnEnvironmentView *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
 
+  self->temp_store = SCM_BOOL_F;
   self->store = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
   self->model = gtk_tree_list_model_new (
       G_LIST_MODEL (self->store), FALSE, FALSE,
@@ -235,6 +239,90 @@ get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
   return G_LIST_MODEL (store);
 }
 
+static gint
+compare (gconstpointer a, gconstpointer b, gpointer user_data)
+{
+  return gdn_environment_info_compare (a, b);
+}
+
+/* This GSourceFunc is used on-idle to move the SCM temp_store to the
+ * environment GListStore that the GUI uses. This has to occur in the
+ * GTK thread. */
+static gboolean
+update_store (gpointer user_data)
+{
+  GdnEnvironmentView *self = GDN_ENVIRONMENT_VIEW (user_data);
+
+  g_mutex_lock (&lock);
+  SCM entries = self->temp_store;
+  for (size_t i = 0; i < scm_c_vector_length (entries); i++)
+    {
+      SCM                 entry;
+      SCM                 key, value, children;
+      GdnEnvironmentInfo *info;
+      gboolean            found;
+      guint               position;
+
+      entry = scm_c_vector_ref (entries, i);
+
+      key = scm_c_vector_ref (entry, 0);
+      value = scm_c_vector_ref (entry, 1);
+      children = scm_c_vector_ref (entry, 2);
+
+      info = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+      info->key = scm_to_utf8_string (key);
+      info->value = scm_to_utf8_string (value);
+      info->list = NULL;
+
+      found = g_list_store_find_with_equal_func (
+          self->store, info, gdn_environment_info_equal, &position);
+      if (found)
+        {
+          g_object_unref (info);
+          info = g_list_model_get_object (self->store, position);
+        }
+      if (scm_is_vector (children))
+        {
+          for (size_t j = 0; j < scm_c_vector_length (children); j++)
+            {
+              SCM                 child;
+              GdnEnvironmentInfo *kiddo;
+
+              child = scm_c_vector_ref (children, j);
+              kiddo = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
+              kiddo->key = scm_to_utf8_string (scm_c_vector_ref (child, 0));
+              kiddo->value = scm_to_utf8_string (scm_c_vector_ref (child, 1));
+              kiddo->list = NULL;
+              GSList *entry2 = g_slist_find_custom (
+                  info->list, kiddo, gdn_environment_info_compare);
+              if (entry2)
+                {
+                  /* Overwrite an existing entry */
+                  GdnEnvironmentInfo *info2 =
+                      (GdnEnvironmentInfo *) (entry2->data);
+                  free (info2->value);
+                  info2->value = g_strdup (kiddo->value);
+                  g_object_unref (kiddo);
+                }
+              else
+                {
+                  info->list = g_slist_insert_sorted_with_data (
+                      info->list, kiddo, compare, NULL);
+                }
+            }
+        }
+      if (!found)
+        {
+          position =
+              g_list_store_insert_sorted (self->store, info, compare, NULL);
+        }
+    }
+  g_mutex_unlock (&lock);
+
+  /* We only run this once. */
+  return G_SOURCE_REMOVE;
+}
+
 ////////////////////////////////////////////////////////////////
 // GUILE API
 ////////////////////////////////////////////////////////////////
@@ -250,46 +338,12 @@ static SCM
 scm_update_environments_x (SCM s_self, SCM entries)
 {
   scm_assert_foreign_object_type (scm_environment_view_type, s_self);
-
   GdnEnvironmentView *self;
+  g_mutex_lock (&lock);
   self = scm_foreign_object_ref (s_self, 0);
-
-  g_list_store_remove_all (self->store);
-
-  for (size_t i = 0; i < scm_c_vector_length (entries); i++)
-    {
-      SCM                 entry;
-      SCM                 key, value, children;
-      GdnEnvironmentInfo *info;
-
-      entry = scm_c_vector_ref (entries, i);
-
-      key = scm_c_vector_ref (entry, 0);
-      value = scm_c_vector_ref (entry, 1);
-      children = scm_c_vector_ref (entry, 2);
-
-      info = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
-      info->key = scm_to_utf8_string (key);
-      info->value = scm_to_utf8_string (value);
-      info->list = NULL;
-
-      if (scm_is_vector (children))
-        {
-          for (size_t j = 0; j < scm_c_vector_length (children); j++)
-            {
-              SCM                 child;
-              GdnEnvironmentInfo *kiddo;
-
-              child = scm_c_vector_ref (children, j);
-              kiddo = g_object_new (GDN_ENVIRONMENT_INFO_TYPE, NULL);
-              kiddo->key = scm_to_utf8_string (scm_c_vector_ref (child, 0));
-              kiddo->value = scm_to_utf8_string (scm_c_vector_ref (child, 1));
-              kiddo->list = NULL;
-              info->list = g_slist_append (info->list, kiddo);
-            }
-        }
-      g_list_store_append (self->store, info);
-    }
+  self->temp_store = entries;
+  g_mutex_unlock (&lock);
+  g_idle_add (update_store, self);
   return SCM_UNSPECIFIED;
 }
 
@@ -304,4 +358,5 @@ gdn_environment_view_guile_init (void)
 
   scm_c_define_gsubr ("gdn-update-environments!", 2, 0, 0,
                       (scm_t_subr) scm_update_environments_x);
+  scm_c_export ("gdn-update-environments!", NULL);
 }

@@ -46,6 +46,17 @@ gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
 ////////////////////////////////////////////////////////////////
 // METHODS
 ////////////////////////////////////////////////////////////////
+gboolean
+gdn_environment_info_equal (GdnEnvironmentInfo *a, GdnEnvironmentInfo *b)
+{
+  return (g_strcmp0 (a->key, b->key) == 0);
+}
+
+gint
+gdn_environment_info_compare (GdnEnvironmentInfo *a, GdnEnvironmentInfo *b)
+{
+  return g_strcmp0 (a->key, b->key);
+}
 
 ////////////////////////////////////////////////////////////////
 // SIGNAL HANDLERS

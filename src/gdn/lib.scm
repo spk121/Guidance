@@ -13,6 +13,283 @@
 ;;; You should have received a copy of the GNU General Public License
 ;;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;;
+
+;; (gdn lib) contains the procedures that do no recall any special
+;; primitives from Guidance, e.g, they should run in base Guile.
+
+(define-module (gdn lib)
+  #:use-module (ice-9 i18n)
+  #:use-module (ice-9 format)
+  #:use-module (system vm frame)
+  #:use-module (system vm program)
+  #:export (gdn-get-backtrace
+            gdn-get-environment))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; BACKTRACE
+
+;; This is trying to push the frame and variable info into a compact form.
+;; Each vector entry should be
+;; - call (string): a function-call-like string, e.g. "(func 10)"
+;; - filename (string)
+;; - line (integer): the line number in file
+;; - column (integer): the column number
+;; - nargs (integer): the number of arguments in this function call
+;; - bindings (vector): a vector bindings, both arguments and locals
+;;
+;; The bindings themselves are each a vector
+;; - name (string)
+;; - argument (boolean)
+;; - representation (string)
+;; - value (string)
+;; - extra (string)
+;;
+;; It does the trick where it builds it upside-down then reverses at
+;; the end.
+(define (gdn-get-backtrace frame)
+  (let loop ((frame frame)
+             (backtrace '()))
+    (cond
+     ((and frame
+           (not (eqv? (frame-procedure-name frame) '%start-stack))
+           (not (eqv? (frame-procedure-name frame) 'save-module-excursion)))
+      ;; Were still in the program's stack.
+      ;; Assemble this frame's data then step up the stack.
+      (let* ((source (frame-source frame))
+             (file (if source (or (source:file source) "") ""))
+             (line (if source (source:line-for-user source) 0))
+             (col (if source (source:column source) 0)))
+        (loop (frame-previous frame)
+              (cons (vector
+                     (format-frame-arguments frame)
+                     file
+                     line
+                     col
+                     (length (frame-arguments frame))
+                     (list->vector (map (lambda (binding)
+                                          (unpack-binding (length (frame-arguments frame)) binding))
+                                        (frame-bindings frame))))
+                    backtrace))))
+     (else
+      ;; We've reached the top of the program's frames. Above here
+      ;; is Guile's own frames.
+      (list->vector (reverse backtrace))))))
+
+(define (object->extra-info x)
+  (cond
+   ;; ((procedure? x)
+   ;;  (or (procedure-name x) "λ"))
+   ;; ((and (variable? x) (variable-bound? x))
+   ;;  (value->string (variable-ref x)))
+   ;; ((and (variable? x) (not (variable-bound? x)))
+   ;;  "undefined")
+   ((fluid? x)
+    (object->string (or (false-if-exception (fluid-ref x)) "unbound")))
+   (else
+    "")))
+
+(define (format-frame-arguments frame)
+  (with-output-to-string
+    (lambda ()
+      (display "(")
+      (display (or (frame-procedure-name frame) 'λ))
+      (for-each
+       (lambda (arg)
+         (newline)
+         (display "  ")
+         (display arg))
+       (frame-arguments frame))
+      (display ")"))))
+
+(define (unpack-binding n_args binding)
+  (let ((name (binding-name binding))
+        (val (binding-ref binding)))
+    (vector
+     (if name
+         (symbol->string name)
+         "(anonymous)")
+     (if (< (binding-index binding) n_args)
+         #t
+         #f)
+     (object->string (binding-representation binding))
+     (object->string val)
+     (object->extra-info val))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ENVIRONMENT INFO
+(define (memory-string x)
+  (cond
+   ((< x 1000)
+    (format #f "~d B" x))
+   ((< x 1000000)
+    (format #f "~5f kB" (/ x 1000)))
+   ((< x 1000000000)
+    (format #f "~5f MB" (/ x 1000000)))
+   ((< x 1000000000000)
+    (format #f "~5f GB" (/ x 1000000000)))
+   (else
+    (format #f "~5f TB" (/ x 1000000000000)))))
+
+(define (time-string x)
+  (cond
+   ((< x 0.001)
+    (format #f "~5f µs" (* x 1000000)))
+   ((< x 1)
+    (format #f "~5f ms" (* x 1000)))
+   ((< x 60)
+    (format #f "~4f s" x))
+   ((< x 3600)
+    (format #f "~4f m" (/ x 60)))
+   ((< x (* 24 3600))
+    (format #f "~4f hr" (/ x 3600)))
+   (else
+    (format #f "~4f days" (/ x (* 24 3600))))))
+
+(define (get-locale-information)
+  (vector
+   (vector "LC_ALL" (setlocale LC_ALL))
+   (vector "LC_COLLATE" (setlocale LC_COLLATE))
+   (vector "LC_CTYPE" (setlocale LC_CTYPE))
+   (vector "LC_MESSAGES" (setlocale LC_MESSAGES))
+   (vector "LC_MONETARY" (setlocale LC_MONETARY))
+   (vector "LC_NUMERIC" (setlocale LC_NUMERIC))
+   (vector "LC_TIME" (setlocale LC_TIME))))
+
+(define (get-system-information)
+  (let ((un (uname)))
+    (vector
+     (vector "OS Name" (utsname:sysname un))
+     (vector "Node Name" (utsname:nodename un))
+     (vector "Release" (utsname:release un))
+     (vector "Version" (utsname:version un))
+     (vector "Machine" (utsname:machine un))
+     (vector "Host Name" (gethostname))
+     )))
+
+(define (get-process-information)
+  (vector
+   (vector "CWD" (getcwd))
+   (vector "file creation umask" (format #f "~5,'0o" (umask)))
+   (vector "PID" (number->string (getpid)))
+   (vector "Groups" (format #f "~S" (getgroups)))
+   (vector "PPID" (number->string (getppid)))
+   (vector "UID" (number->string (getuid)))
+   (vector "UID Name" (passwd:name (getpwuid (getuid))))
+   (vector "GID" (number->string (getgid)))
+   (vector "GID Name" (group:name (getgrgid (getgid))))
+   (vector "EUID" (number->string (geteuid)))
+   (vector "EUID Name" (passwd:name (getpwuid (geteuid))))
+   (vector "EGID" (number->string (getegid)))
+   (vector "EGID Name" (group:name (getgrgid (getegid))))
+   (vector "PGRP" (number->string (getpgrp)))
+   (vector "Processor Count" (number->string (or (false-if-exception (total-processor-count)) 0)))
+   (vector "Processors Used" (number->string (or (false-if-exception (current-processor-count)) 0)))
+   ))
+
+(define (get-environment-variables)
+  (let ((EV (sort (environ) string-ci<?)))
+    (list->vector
+     (map (lambda (entry)
+            (let ((split-location (string-index entry #\=)))
+              (vector (string-take entry split-location)
+                      (string-drop entry (1+ split-location)))))
+          EV))))
+
+(define (get-time-entries)
+  (let* ((timeofday (gettimeofday))
+         (timeofday-sec (car timeofday))
+         (timeofday-usec (cdr timeofday))
+         (curtime (current-time))
+         (now-local (localtime curtime))
+         (now-gmt (gmtime curtime))
+         (now-cpu (times)))
+    (vector
+     (vector "Seconds in Epoch" (number->locale-string (+ timeofday-sec (/ timeofday-usec 1000000))))
+     (vector "GMT" (strftime "%c" now-gmt))
+     (vector "GMT Day of Year" (number->locale-string (tm:yday now-gmt)))
+     (vector "Local Time Zone" (tm:zone now-local))
+     (vector "Time Zone Seconds from GMT" (number->locale-string (tm:gmtoff now-local)))
+     (vector "Local Time" (strftime "%c" now-local))
+     (vector "Local Day of Year" (number->locale-string (tm:yday now-local)))
+     (vector "Daylight Savings" (cond ((= 0 (tm:isdst now-local)) "no")
+                                      ((< 0 (tm:isdst now-local)) "yes")
+                                      ((> 0 (tm:isdst now-local)) "unknown")))
+     (vector "CPU Clock Time" (time-string (/ (tms:clock now-cpu)
+                                                  (exact->inexact internal-time-units-per-second))))
+     (vector "CPU Process Time" (time-string (/ (tms:utime now-cpu)
+                                                    (exact->inexact internal-time-units-per-second))))
+     (vector "CPU System Time" (time-string (/ (tms:stime now-cpu)
+                                                   (exact->inexact internal-time-units-per-second))))
+     (vector "CPU CU Time" (time-string (tms:cutime now-cpu)))
+     (vector "CPU CS Time" (time-string (tms:cstime now-cpu)))
+     (vector "Guile Time Units Per Sec" (number->locale-string internal-time-units-per-second))
+     (vector "Guile Real Time" (time-string (/ (get-internal-real-time) (exact->inexact internal-time-units-per-second))))
+     (vector "Guile Run Time" (time-string (/ (get-internal-run-time)
+                                                  (exact->inexact internal-time-units-per-second)))))))
+
+(define (get-user-information-entries)
+  (let ((uid (getuid))
+        (euid (geteuid))
+        (gid (getgid))
+        (egid (getegid))
+        (login (getlogin)))
+    (let ((uid-pw (getpw uid))
+          (euid-pw (getpw euid))
+          (gid-gr (getgr gid))
+          (egid-gr (getgr egid)))
+      (vector
+       (vector "Login Name" login)
+       (vector "User Name" (passwd:name uid-pw))
+       (vector "User ID" (number->string (passwd:uid uid-pw)))
+       (vector "User Group ID" (number->string (passwd:gid uid-pw)))
+       (vector "User Full Name" (passwd:gecos uid-pw))
+       (vector "User Shell" (passwd:shell uid-pw))
+       (vector "User Home" (passwd:dir uid-pw))
+       (vector "Group Name" (group:name gid-gr))
+       (vector "Group ID" (number->string (group:gid gid-gr)))
+       (vector "Effective User Name" (passwd:name uid-pw))
+       (vector "Effective User ID" (number->string (passwd:uid uid-pw)))
+       (vector "Effective User Group ID" (number->string (passwd:gid uid-pw)))
+       (vector "Effective User Full Name" (passwd:gecos uid-pw))
+       (vector "Effective User Shell" (passwd:shell uid-pw))
+       (vector "Effective User Home" (passwd:dir uid-pw))
+       (vector "Effective Group Name" (group:name egid-gr))
+       (vector "Effective Group ID" (number->string (group:gid egid-gr)))))))
+
+(define (get-gc-stats)
+  (let ((x (gc-stats)))
+    (vector 
+     (vector "GC Time Taken" (time-string (/ (assoc-ref x 'gc-time-taken) (exact->inexact internal-time-units-per-second))))
+     (vector "Heap Size" (memory-string (assoc-ref x 'heap-size)))
+     (vector "Heap Free Size" (memory-string (assoc-ref x 'heap-free-size)))
+     (vector "Heap Total Allocated" (memory-string (assoc-ref x 'heap-total-allocated)))
+     (vector "Heap Allocated Since GC" (memory-string (assoc-ref x 'heap-allocated-since-gc)))
+     (vector "Protected Objects" (number->locale-string (assoc-ref x 'protected-objects)))
+     (vector "GC Events" (number->locale-string (assoc-ref x 'gc-times)))
+     ;; (vector "GC Live Object Stats" (gc-live-object-stats))
+     )))
+
+;; The return value is a vector
+;; Each entry is a 2-element vector that is #(category entries)
+;; - category is a string
+;; - entries is a vector. Each entry is a 2-element vector that is #(key val)
+;;   - key is a string
+;;   - val is a string
+(define (gdn-get-environment)
+  "Lots of info about the current running environment."
+  (vector
+   (vector "system" "" (get-system-information))
+   (vector "memory" "" (get-gc-stats))
+   (vector "environment" "" (get-environment-variables))
+   (vector "locale" "" (get-locale-information))
+   (vector "process" "" (get-process-information))
+   (vector "time" "" (get-time-entries))
+   (vector "user" "" (get-user-information-entries))
+   ))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 
+#|
 (use-modules
  ((system repl debug) #:select (stack->vector) #:prefix __)
  ((system vm frame) #:select (frame-bindings binding-representation binding-index binding-ref binding-name) #:prefix __)
@@ -54,19 +331,6 @@
    (else
     "")))
 
-(define (gdn-unpack-binding n_args binding)
-  (let ((name (__binding-name binding))
-        (val (__binding-ref binding)))
-    (vector
-     (if name
-         (symbol->string name)
-         "(anonymous)")
-     (if (< (__binding-index binding) n_args)
-         #t
-         #f)
-     (gdn-value->string (__binding-representation binding))
-     (gdn-value->string val)
-     (gdn-value->extra-info val))))
 
 (define (gdn-format-frame-arguments frame)
   (with-output-to-string
@@ -80,55 +344,6 @@
          (display arg))
        (frame-arguments frame))
       (display ")"))))
-
-;; This is trying to push the frame and variable info into a compact form.
-;; Each vector entry should be
-;; - call (string): a function-call-like string, e.g. "(func 10)"
-;; - filename (string)
-;; - line (integer): the line number in file
-;; - column (integer): the column number
-;; - nargs (integer): the number of arguments in this function call
-;; - bindings (vector): a vector bindings, both arguments and locals
-;;
-;; The bindings themselves are each a vector
-;; - name (string)
-;; - argument (boolean)
-;; - representation (string)
-;; - value (string)
-;; - extra (string)
-;;
-;; It does the trick where it builds it upside-down then reverses at
-;; the end.
-(define (gdn-get-backtrace frame)
-  (unless frame
-    (set! frame (vector-ref (__stack->vector (make-stack #t 1)) 0)))
-  (let loop ((frame frame)
-             (backtrace '()))
-    (cond
-     ((and frame
-           (not (eqv? (frame-procedure-name frame) '%start-stack))
-           (not (eqv? (frame-procedure-name frame) 'save-module-excursion)))
-      ;; Were still in the program's stack.
-      ;; Assemble this frame's data then step up the stack.
-      (let* ((source (frame-source frame))
-             (file (if source (or (__source:file source) "") ""))
-             (line (if source (__source:line-for-user source) 0))
-             (col (if source (__source:column source) 0)))
-        (loop (frame-previous frame)
-              (cons (vector
-                     (gdn-format-frame-arguments frame)
-                     file
-                     line
-                     col
-                     (length (frame-arguments frame))
-                     (list->vector (map (lambda (binding)
-                                          (gdn-unpack-binding (length (frame-arguments frame)) binding))
-                                        (__frame-bindings frame))))
-                    backtrace))))
-     (else
-      ;; We've reached the top of the program's frames. Above here
-      ;; is Guile's own frames.
-      (list->vector (reverse backtrace))))))
 
 (define (gdn-test-backtrace x)
   (write (gdn-get-backtrace
@@ -149,177 +364,6 @@
 (list-traps))))
 |#
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; ENVIRONMENT INFO
-(define (gdn-memory-string x)
-  (cond
-   ((< x 1000)
-    (format #f "~d B" x))
-   ((< x 1000000)
-    (format #f "~5f kB" (/ x 1000)))
-   ((< x 1000000000)
-    (format #f "~5f MB" (/ x 1000000)))
-   ((< x 1000000000000)
-    (format #f "~5f GB" (/ x 1000000000)))
-   (else
-    (format #f "~5f TB" (/ x 1000000000000)))))
-
-(define (gdn-time-string x)
-  (cond
-   ((< x 0.001)
-    (format #f "~5f µs" (* x 1000000)))
-   ((< x 1)
-    (format #f "~5f ms" (* x 1000)))
-   ((< x 60)
-    (format #f "~4f s" x))
-   ((< x 3600)
-    (format #f "~4f m" (/ x 60)))
-   ((< x (* 24 3600))
-    (format #f "~4f hr" (/ x 3600)))
-   (else
-    (format #f "~4f days" (/ x (* 24 3600))))))
-
-(define (gdn-get-locale-information)
-  (vector
-   (vector "LC_ALL" (setlocale LC_ALL))
-   (vector "LC_COLLATE" (setlocale LC_COLLATE))
-   (vector "LC_CTYPE" (setlocale LC_CTYPE))
-   (vector "LC_MESSAGES" (setlocale LC_MESSAGES))
-   (vector "LC_MONETARY" (setlocale LC_MONETARY))
-   (vector "LC_NUMERIC" (setlocale LC_NUMERIC))
-   (vector "LC_TIME" (setlocale LC_TIME))))
-
-(define (gdn-get-system-information)
-  (let ((un (uname)))
-    (vector
-     (vector "OS Name" (utsname:sysname un))
-     (vector "Node Name" (utsname:nodename un))
-     (vector "Release" (utsname:release un))
-     (vector "Version" (utsname:version un))
-     (vector "Machine" (utsname:machine un))
-     (vector "Host Name" (gethostname))
-     )))
-
-(define (gdn-get-process-information)
-  (vector
-   (vector "CWD" (getcwd))
-   (vector "file creation umask" (format #f "~5,'0o" (umask)))
-   (vector "PID" (number->string (getpid)))
-   (vector "Groups" (format #f "~S" (getgroups)))
-   (vector "PPID" (number->string (getppid)))
-   (vector "UID" (number->string (getuid)))
-   (vector "UID Name" (passwd:name (getpwuid (getuid))))
-   (vector "GID" (number->string (getgid)))
-   (vector "GID Name" (group:name (getgrgid (getgid))))
-   (vector "EUID" (number->string (geteuid)))
-   (vector "EUID Name" (passwd:name (getpwuid (geteuid))))
-   (vector "EGID" (number->string (getegid)))
-   (vector "EGID Name" (group:name (getgrgid (getegid))))
-   (vector "PGRP" (number->string (getpgrp)))
-   (vector "Processor Count" (number->string (or (false-if-exception (total-processor-count)) 0)))
-   (vector "Processors Used" (number->string (or (false-if-exception (current-processor-count)) 0)))
-   ))
-
-(define (gdn-get-environment-variables)
-  (let ((EV (sort (environ) string-ci<?)))
-    (list->vector
-     (map (lambda (entry)
-            (let ((split-location (string-index entry #\=)))
-              (vector (string-take entry split-location)
-                      (string-drop entry (1+ split-location)))))
-          EV))))
-
-(define (gdn-get-time-entries)
-  (let* ((timeofday (gettimeofday))
-         (timeofday-sec (car timeofday))
-         (timeofday-usec (cdr timeofday))
-         (curtime (current-time))
-         (now-local (localtime curtime))
-         (now-gmt (gmtime curtime))
-         (now-cpu (times)))
-    (vector
-     (vector "Seconds in Epoch" (__number->locale-string (+ timeofday-sec (/ timeofday-usec 1000000))))
-     (vector "GMT" (strftime "%c" now-gmt))
-     (vector "GMT Day of Year" (__number->locale-string (tm:yday now-gmt)))
-     (vector "Local Time Zone" (tm:zone now-local))
-     (vector "Time Zone Seconds from GMT" (__number->locale-string (tm:gmtoff now-local)))
-     (vector "Local Time" (strftime "%c" now-local))
-     (vector "Local Day of Year" (__number->locale-string (tm:yday now-local)))
-     (vector "Daylight Savings" (cond ((= 0 (tm:isdst now-local)) "no")
-                                      ((< 0 (tm:isdst now-local)) "yes")
-                                      ((> 0 (tm:isdst now-local)) "unknown")))
-     (vector "CPU Clock Time" (gdn-time-string (/ (tms:clock now-cpu)
-                                                  (exact->inexact internal-time-units-per-second))))
-     (vector "CPU Process Time" (gdn-time-string (/ (tms:utime now-cpu)
-                                                    (exact->inexact internal-time-units-per-second))))
-     (vector "CPU System Time" (gdn-time-string (/ (tms:stime now-cpu)
-                                                   (exact->inexact internal-time-units-per-second))))
-     (vector "CPU CU Time" (gdn-time-string (tms:cutime now-cpu)))
-     (vector "CPU CS Time" (gdn-time-string (tms:cstime now-cpu)))
-     (vector "Guile Time Units Per Sec" (__number->locale-string internal-time-units-per-second))
-     (vector "Guile Real Time" (gdn-time-string (/ (get-internal-real-time) (exact->inexact internal-time-units-per-second))))
-     (vector "Guile Run Time" (gdn-time-string (/ (get-internal-run-time)
-                                                  (exact->inexact internal-time-units-per-second)))))))
-
-(define (gdn-get-user-information-entries)
-  (let ((uid (getuid))
-        (euid (geteuid))
-        (gid (getgid))
-        (egid (getegid))
-        (login (getlogin)))
-    (let ((uid-pw (getpw uid))
-          (euid-pw (getpw euid))
-          (gid-gr (getgr gid))
-          (egid-gr (getgr egid)))
-      (vector
-       (vector "Login Name" login)
-       (vector "User Name" (passwd:name uid-pw))
-       (vector "User ID" (number->string (passwd:uid uid-pw)))
-       (vector "User Group ID" (number->string (passwd:gid uid-pw)))
-       (vector "User Full Name" (passwd:gecos uid-pw))
-       (vector "User Shell" (passwd:shell uid-pw))
-       (vector "User Home" (passwd:dir uid-pw))
-       (vector "Group Name" (group:name gid-gr))
-       (vector "Group ID" (number->string (group:gid gid-gr)))
-       (vector "Effective User Name" (passwd:name uid-pw))
-       (vector "Effective User ID" (number->string (passwd:uid uid-pw)))
-       (vector "Effective User Group ID" (number->string (passwd:gid uid-pw)))
-       (vector "Effective User Full Name" (passwd:gecos uid-pw))
-       (vector "Effective User Shell" (passwd:shell uid-pw))
-       (vector "Effective User Home" (passwd:dir uid-pw))
-       (vector "Effective Group Name" (group:name egid-gr))
-       (vector "Effective Group ID" (number->string (group:gid egid-gr)))))))
-
-(define (gdn-get-gc-stats)
-  (let ((x (gc-stats)))
-    (vector 
-     (vector "GC Time Taken" (gdn-time-string (/ (assoc-ref x 'gc-time-taken) (exact->inexact internal-time-units-per-second))))
-     (vector "Heap Size" (gdn-memory-string (assoc-ref x 'heap-size)))
-     (vector "Heap Free Size" (gdn-memory-string (assoc-ref x 'heap-free-size)))
-     (vector "Heap Total Allocated" (gdn-memory-string (assoc-ref x 'heap-total-allocated)))
-     (vector "Heap Allocated Since GC" (gdn-memory-string (assoc-ref x 'heap-allocated-since-gc)))
-     (vector "Protected Objects" (__number->locale-string (assoc-ref x 'protected-objects)))
-     (vector "GC Events" (__number->locale-string (assoc-ref x 'gc-times)))
-     ;; (vector "GC Live Object Stats" (gc-live-object-stats))
-     )))
-
-;; The return value is a vector
-;; Each entry is a 2-element vector that is #(category entries)
-;; - category is a string
-;; - entries is a vector. Each entry is a 2-element vector that is #(key val)
-;;   - key is a string
-;;   - val is a string
-(define (gdn-get-environment)
-  "Lots of info about the current running environment."
-  (vector
-   (vector "system" "" (gdn-get-system-information))
-   (vector "memory" "" (gdn-get-gc-stats))
-   (vector "environment" "" (gdn-get-environment-variables))
-   (vector "locale" "" (gdn-get-locale-information))
-   (vector "process" "" (gdn-get-process-information))
-   (vector "time" "" (gdn-get-time-entries))
-   (vector "user" "" (gdn-get-user-information-entries))
-   ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Entry point for REPL
@@ -580,3 +624,4 @@ trap-name indicate the current trap."
         (newline (current-output-port))
         (loop (%gdn-get-trap-response)))))))
 
+|#

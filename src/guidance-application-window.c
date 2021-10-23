@@ -121,11 +121,11 @@ static void handle_backtrace_view_location (GdnBacktraceView *view,
                                             int               line,
                                             int               col,
                                             gpointer          user_data);
-static void handle_module_view_location (GdnBacktraceView *view,
-                                         const char *      filename,
-                                         int               line,
-                                         int               col,
-                                         gpointer          user_data);
+static void handle_module_view_location (GdnModuleView *view,
+                                         const char *   filename,
+                                         int            line,
+                                         int            col,
+                                         gpointer       user_data);
 
 static void handle_entry (GdnTerminalView *view, char *str, gpointer user_data);
 static void handle_step_into (GSimpleAction *simple,
@@ -146,6 +146,9 @@ static void handle_step_out (GSimpleAction *simple,
 static void handle_process_run (GSimpleAction *simple,
                                 GVariant *     parameter,
                                 gpointer       user_data);
+static void handle_process_continue (GSimpleAction *simple,
+                                     GVariant *     parameter,
+                                     gpointer       user_data);
 static void handle_process_stop (GSimpleAction *simple,
                                  GVariant *     parameter,
                                  gpointer       user_data);
@@ -188,14 +191,26 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
 }
 
 static void
-wtf (GdnApplicationWindow *self)
+gdn_widgets_guile_init (void *user_data)
 {
-  self->lisp = g_object_new (GDN_LISP_TYPE, NULL);
-  SCM lispscm = gdn_lisp_to_scm (self->lisp);
-  SCM tmp = scm_c_define ("*gdn-lisp*", lispscm);
-  printf ("*gdn-lisp* %p %p\n", lispscm, tmp);
-  scm_remember_upto_here_2 (lispscm, tmp);
+  GdnApplicationWindow *self = user_data;
+  scm_c_define ("*gdn-application-window*",
+                gdn_application_window_to_scm (self));
+  scm_c_define ("*gdn-backtrace-view*",
+                gdn_backtrace_view_to_scm (self->backtrace_view));
+  scm_c_define ("*gdn-environment-view*",
+                gdn_environment_view_to_scm (self->environment_view));
+  scm_c_define ("*gdn-source-view*",
+                gdn_source_view_to_scm (self->source_view));
+  scm_c_define ("*gdn-thread-view*",
+                gdn_thread_view_to_scm (self->thread_view));
+  scm_c_define ("*gdn-trap-view*", gdn_trap_view_to_scm (self->trap_view));
+  scm_c_define ("*gdn-lisp*", gdn_lisp_to_scm (self->lisp));
+  scm_c_export ("*gdn-application-window*", "*gdn-backtrace-view*",
+                "*gdn-environment-view*", "*gdn-source-view*",
+                "*gdn-thread-view*", "*gdn-trap-view*", "*gdn-lisp*", NULL);
 }
+
 static void
 gdn_application_window_init (GdnApplicationWindow *self)
 {
@@ -211,14 +226,12 @@ gdn_application_window_init (GdnApplicationWindow *self)
       gdk_display_get_default (), GTK_STYLE_PROVIDER (provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  wtf (self);
+  self->lisp = g_object_new (GDN_LISP_TYPE, NULL);
 
   /* All the pages */
   self->thread_view = g_object_new (GDN_TYPE_THREAD_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->thread_window),
                                  GTK_WIDGET (self->thread_view));
-  scm_c_define ("*gdn-thread-view*",
-                gdn_thread_view_to_scm (self->thread_view));
 
   self->terminal_view = g_object_new (GDN_TYPE_TERMINAL_VIEW, NULL);
   gtk_box_append (self->terminal_box, GTK_WIDGET (self->terminal_view));
@@ -232,13 +245,10 @@ gdn_application_window_init (GdnApplicationWindow *self)
 
   self->source_view = g_object_new (GDN_TYPE_SOURCE_VIEW, NULL);
   gtk_box_append (self->source_box, GTK_WIDGET (self->source_view));
-  scm_c_define ("*gdn-source-view*",
-                gdn_source_view_to_scm (self->source_view));
 
   self->trap_view = g_object_new (GDN_TYPE_TRAP_VIEW, NULL);
   gtk_scrolled_window_set_child (self->trap_window,
                                  GTK_WIDGET (self->trap_view));
-  scm_c_define ("*gdn-trap-view*", gdn_trap_view_to_scm (self->trap_view));
 
   self->module_view = g_object_new (GDN_TYPE_MODULE_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->module_window),
@@ -250,13 +260,9 @@ gdn_application_window_init (GdnApplicationWindow *self)
   self->environment_view = g_object_new (GDN_TYPE_ENVIRONMENT_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->environment_window),
                                  GTK_WIDGET (self->environment_view));
-  scm_c_define ("*gdn-environment-view*",
-                gdn_environment_view_to_scm (self->environment_view));
 
   self->backtrace_view = g_object_new (GDN_TYPE_BACKTRACE_VIEW, NULL);
   gtk_box_append (self->backtrace_box, GTK_WIDGET (self->backtrace_view));
-  scm_c_define ("*gdn-backtrace-view*",
-                gdn_backtrace_view_to_scm (self->backtrace_view));
   g_signal_connect_data (self->backtrace_view, "location",
                          G_CALLBACK (handle_backtrace_view_location), self,
                          NULL, 0);
@@ -276,11 +282,12 @@ gdn_application_window_init (GdnApplicationWindow *self)
                      G_CALLBACK (handle_step_over_instruction));
   add_simple_action (self, "step-out", G_CALLBACK (handle_step_out));
   add_simple_action (self, "process-run", G_CALLBACK (handle_process_run));
+  add_simple_action (self, "process-continue",
+                     G_CALLBACK (handle_process_continue));
   add_simple_action (self, "process-stop", G_CALLBACK (handle_process_stop));
 
-  gdn_application_window_guile_init ();
-  scm_c_define ("*gdn-application-window*",
-                gdn_application_window_to_scm (self));
+  scm_c_define_module ("gdn widgets", gdn_widgets_guile_init, self);
+
   gdn_lisp_run (self->lisp);
 }
 
@@ -350,11 +357,11 @@ handle_after_sweep (GdnLisp *lisp, gpointer user_data)
 }
 
 static void
-handle_backtrace_view_location (GdnBacktraceView *btview,
-                                const char *      filename,
-                                int               line,
-                                int               col,
-                                gpointer          user_data)
+handle_backtrace_view_location (G_GNUC_UNUSED GdnBacktraceView *btview,
+                                const char *                    filename,
+                                int                             line,
+                                int                             col,
+                                gpointer                        user_data)
 {
   g_assert_cmpstr (G_OBJECT_TYPE_NAME (user_data), ==, "GdnApplicationWindow");
 
@@ -364,11 +371,11 @@ handle_backtrace_view_location (GdnBacktraceView *btview,
 }
 
 static void
-handle_module_view_location (GdnBacktraceView *btview,
-                             const char *      filename,
-                             int               line,
-                             int               col,
-                             gpointer          user_data)
+handle_module_view_location (G_GNUC_UNUSED GdnModuleView *mview,
+                             const char *                 filename,
+                             int                          line,
+                             int                          col,
+                             gpointer                     user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_source_view_show_location (self->source_view, filename, line, col);
@@ -390,25 +397,27 @@ handle_module_view_trap (GdnModuleView *view,
 }
 
 static void
-handle_entry (GdnTerminalView *view, char *str, gpointer user_data)
+handle_entry (G_GNUC_UNUSED GdnTerminalView *view,
+              char *                         str,
+              gpointer                       user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_EVAL, str);
 }
 
 static void
-handle_step_into (GSimpleAction *simple,
-                  GVariant *     parameter,
-                  gpointer       user_data)
+handle_step_into (G_GNUC_UNUSED GSimpleAction *simple,
+                  G_GNUC_UNUSED GVariant *parameter,
+                  gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INTO, NULL);
 }
 
 static void
-handle_step_into_instruction (GSimpleAction *simple,
-                              GVariant *     parameter,
-                              gpointer       user_data)
+handle_step_into_instruction (G_GNUC_UNUSED GSimpleAction *simple,
+                              G_GNUC_UNUSED GVariant *parameter,
+                              gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp,
@@ -416,18 +425,18 @@ handle_step_into_instruction (GSimpleAction *simple,
 }
 
 static void
-handle_step_over (GSimpleAction *simple,
-                  GVariant *     parameter,
-                  gpointer       user_data)
+handle_step_over (G_GNUC_UNUSED GSimpleAction *simple,
+                  G_GNUC_UNUSED GVariant *parameter,
+                  gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP, NULL);
 }
 
 static void
-handle_step_over_instruction (GSimpleAction *simple,
-                              GVariant *     parameter,
-                              gpointer       user_data)
+handle_step_over_instruction (G_GNUC_UNUSED GSimpleAction *simple,
+                              G_GNUC_UNUSED GVariant *parameter,
+                              gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INSTRUCTION,
@@ -435,25 +444,36 @@ handle_step_over_instruction (GSimpleAction *simple,
 }
 
 static void
-handle_step_out (GSimpleAction *simple, GVariant *parameter, gpointer user_data)
+handle_step_out (G_GNUC_UNUSED GSimpleAction *simple,
+                 G_GNUC_UNUSED GVariant *parameter,
+                 gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_OUT, NULL);
 }
 
 static void
-handle_process_run (GSimpleAction *simple,
-                    GVariant *     parameter,
-                    gpointer       user_data)
+handle_process_run (G_GNUC_UNUSED GSimpleAction *simple,
+                    G_GNUC_UNUSED GVariant *parameter,
+                    gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_RUN, NULL);
 }
 
 static void
-handle_process_stop (GSimpleAction *simple,
-                     GVariant *     parameter,
-                     gpointer       user_data)
+handle_process_continue (G_GNUC_UNUSED GSimpleAction *simple,
+                         G_GNUC_UNUSED GVariant *parameter,
+                         gpointer                user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_CONTINUE, NULL);
+}
+
+static void
+handle_process_stop (G_GNUC_UNUSED GSimpleAction *simple,
+                     G_GNUC_UNUSED GVariant *parameter,
+                     gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
   gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STOP, NULL);
@@ -503,6 +523,7 @@ scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
   if (scm_is_eq (s_mode, scm_repl_sym))
     {
       xgtk_button_set_sensitive (self->run_button, TRUE);
+      // xgtk_button_set_sensitive (self->continue_button, FALSE);
       xgtk_button_set_sensitive (self->stop_button, FALSE);
       xgtk_button_set_sensitive (self->step_into_button, FALSE);
       xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
@@ -514,6 +535,7 @@ scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
   else if (scm_is_eq (s_mode, scm_run_sym))
     {
       xgtk_button_set_sensitive (self->run_button, FALSE);
+      // xgtk_button_set_sensitive (self->continue_button, FALSE);
       xgtk_button_set_sensitive (self->stop_button, TRUE);
       xgtk_button_set_sensitive (self->step_into_button, FALSE);
       xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
@@ -525,6 +547,7 @@ scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
   else if (scm_is_eq (s_mode, scm_error_sym))
     {
       xgtk_button_set_sensitive (self->run_button, FALSE);
+      // xgtk_button_set_sensitive (self->continue_button, FALSE);
       xgtk_button_set_sensitive (self->stop_button, TRUE);
       xgtk_button_set_sensitive (self->step_into_button, FALSE);
       xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
@@ -535,7 +558,8 @@ scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
     }
   else if (scm_is_eq (s_mode, scm_trap_sym))
     {
-      xgtk_button_set_sensitive (self->run_button, FALSE);
+      xgtk_button_set_sensitive (self->run_button, TRUE);
+      // xgtk_button_set_sensitive (self->continue_button, TRUE);
       xgtk_button_set_sensitive (self->stop_button, TRUE);
       xgtk_button_set_sensitive (self->step_into_button, TRUE);
       xgtk_button_set_sensitive (self->step_into_instruction_button, TRUE);
@@ -567,4 +591,5 @@ gdn_application_window_guile_init (void)
   scm_trap_sym = scm_from_utf8_symbol ("trap");
 
   scm_c_define_gsubr ("gdn-set-input-mode!", 2, 0, 0, scm_set_input_mode_x);
+  scm_c_export ("gdn-set-input-mode!", NULL);
 }

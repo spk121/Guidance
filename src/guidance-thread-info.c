@@ -114,8 +114,8 @@ gdn_thread_info_init (G_GNUC_UNUSED GdnThreadInfo *self)
 {
 }
 
-static GdnThreadInfo *
-thread_info_new_from_scm (SCM thread)
+GdnThreadInfo *
+gdn_thread_info_new_from_scm (SCM thread)
 {
   const SCM format_string = scm_from_utf8_string ("~A");
 
@@ -137,24 +137,6 @@ thread_info_new_from_scm (SCM thread)
   self->current = current;
 
   return self;
-}
-
-void
-gdn_thread_info_store_update (GListStore *store)
-{
-  SCM all_threads = scm_vector (scm_all_threads ());
-
-  g_list_store_remove_all (store);
-
-  for (size_t i = 0; i < scm_c_vector_length (all_threads); i++)
-    {
-      SCM            thrd;
-      GdnThreadInfo *info;
-
-      thrd = scm_c_vector_ref (all_threads, i);
-      info = thread_info_new_from_scm (thrd);
-      g_list_store_append (store, info);
-    }
 }
 
 const char *

@@ -31,6 +31,7 @@ struct _GdnThreadView
   GtkColumnViewColumn *emoji_col;
   GtkColumnViewColumn *active_col;
 
+  GPtrArray * temp_store;
   GListStore *store;
 };
 
@@ -39,7 +40,10 @@ G_DEFINE_TYPE (GdnThreadView, gdn_thread_view, GTK_TYPE_BOX)
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
+
 static SCM scm_thread_view_type = SCM_BOOL_F;
+static GMutex   lock;
+static gboolean update_store (gpointer user_data);
 
 typedef void (*factory_func_t) (GtkListItemFactory *self,
                                 GtkListItem *       listitem,
@@ -106,6 +110,7 @@ static void
 gdn_thread_view_init (GdnThreadView *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
+  self->temp_store = g_ptr_array_new_full (1, g_object_unref);
   self->store = g_list_store_new (GDN_THREAD_INFO_TYPE);
 
   set_column_view_model (self->column_view, G_LIST_MODEL (self->store));
@@ -268,6 +273,32 @@ active_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
+/* This GSourceFunc is used on-idle to move the thread temp_store to
+ * the thread GListStore that the GUI uses. This has to occur in the
+ * GTK thread. */
+static gboolean
+update_store (gpointer user_data)
+{
+  GdnThreadView * self = GDN_THREAD_VIEW (user_data);
+  gsize           len;
+  GdnThreadInfo **array;
+
+  g_mutex_lock (&lock);
+  array = g_ptr_array_steal (self->temp_store, &len);
+
+  /* This operation adds a reference to each entry array. */
+  g_list_store_splice (self->store, 0, g_list_model_get_n_items (self->store),
+                       array, len);
+
+  /* So we can drop the original reference here. */
+  for (guint i = 0; i < len; i++)
+    g_object_unref (g_list_model_get_object (self->store, i));
+  g_mutex_unlock (&lock);
+
+  /* We only run this once. */
+  return G_SOURCE_REMOVE;
+}
+
 static void
 set_column_view_model (GtkColumnView *view, GListModel *model)
 {
@@ -308,7 +339,26 @@ scm_update_threads_x (SCM s_self)
   scm_assert_foreign_object_type (scm_thread_view_type, s_self);
   GdnThreadView *self = scm_foreign_object_ref (s_self, 0);
 
-  gdn_thread_info_store_update (self->store);
+  /* Since this is Guile API, it is probably being called from a Guile
+   * thread instead of the Gtk thread.  GListModel's can only be
+   * updated from the Gtk thread.  So we stage the changes to the temp
+   * storage array, and then update the GListModel in the next
+   * available tick. */
+  g_mutex_lock (&lock);
+  SCM    all_threads = scm_vector (scm_all_threads ());
+  size_t len = scm_c_vector_length (all_threads);
+  g_ptr_array_set_size (self->temp_store, 0);
+  for (size_t i = 0; i < len; i++)
+    {
+      SCM            thrd;
+      GdnThreadInfo *info;
+
+      thrd = scm_c_vector_ref (all_threads, i);
+      info = gdn_thread_info_new_from_scm (thrd);
+      g_ptr_array_insert (self->temp_store, -1, info);
+    }
+  g_mutex_unlock (&lock);
+  g_idle_add (update_store, self);
   return SCM_UNSPECIFIED;
 }
 
@@ -322,4 +372,5 @@ gdn_thread_view_guile_init (void)
   scm_thread_view_type = scm_make_foreign_object_type (name, slots, NULL);
 
   scm_c_define_gsubr ("gdn-update-threads!", 1, 0, 0, scm_update_threads_x);
+  scm_c_export ("gdn-update-threads!", NULL);
 }

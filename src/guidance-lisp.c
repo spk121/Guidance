@@ -34,6 +34,9 @@
 #include "guidance-backtrace-view.h"
 #include "guidance-source-view.h"
 
+/* Avoiding header recursion */
+extern void gdn_application_window_guile_init (void);
+
 static void *after_gc_handler (void *hook_data, void *fn_data, void *data);
 static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
 
@@ -112,6 +115,20 @@ static SCM  scm_get_user_input (SCM s_self);
 ////////////////////////////////////////////////////////////////
 
 static void
+gdn_gui_guile_init (void *user_data)
+{
+  gdn_lisp_guile_init ();
+  gdn_application_window_guile_init ();
+  gdn_backtrace_view_guile_init ();
+  gdn_environment_view_guile_init ();
+  gdn_module_info_guile_init ();
+  gdn_source_view_guile_init ();
+  gdn_thread_view_guile_init ();
+  gdn_trap_info_guile_init ();
+  gdn_trap_view_guile_init ();
+}
+
+static void
 gdn_lisp_class_init (GdnLispClass *klass)
 {
 
@@ -143,33 +160,33 @@ gdn_lisp_class_init (GdnLispClass *klass)
   scm_c_export ("%gdn-update-trap-info", NULL);
   gui_thread = scm_current_thread ();
 
-  gdn_lisp_guile_init ();
+  /* Not positive that turning off declarative modules is the
+   * right thing, but let's try it. */
+  scm_c_eval_string ("(user-modules-declarative? #f)");
 
-#if 1
-  // Loading this library sets up the GTK->Guile port mapping and defines our spawn functions.
+  /* Everything in (gdn lib) should not require special gdn
+   * primitives */
   GBytes *contents;
-
   contents = g_resource_lookup_data (guidance_get_resource (),
                                      "/com/lonelycactus/Guidance/gdn/lib.scm",
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   scm_c_eval_string (g_bytes_get_data (contents, NULL));
   g_bytes_unref (contents);
 
-  contents = g_resource_lookup_data (guidance_get_resource (),
-                                     "/com/lonelycactus/Guidance/gdn/repl.scm",
-                                     G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
-  scm_c_eval_string (g_bytes_get_data (contents, NULL));
-  g_bytes_unref (contents);
+  /* Provide GUI-related primitives */
+  SCM module = scm_c_define_module ("gdn gui", gdn_gui_guile_init, NULL);
+}
 
-#endif
-
-  gdn_source_view_guile_init ();
-  gdn_backtrace_view_guile_init ();
-  gdn_thread_view_guile_init ();
-  gdn_module_info_guile_init ();
-  gdn_trap_view_guile_init ();
-  gdn_trap_info_guile_init ();
-  gdn_environment_view_guile_init ();
+static void
+gdn_ports_guile_init (void *user_data)
+{
+  GdnLisp *self = user_data;
+  self->input_port_var = scm_c_define ("%gdn-input-port", self->input_port);
+  self->output_port_var = scm_c_define ("%gdn-output-port", self->output_port);
+  self->error_port_var = scm_c_define ("%gdn-error-port", self->error_port);
+  self->prompt_port_var = scm_c_define ("%gdn-prompt-port", self->prompt_port);
+  scm_c_export ("%gdn-input-port", "%gdn-output-port", "%gdn-error-port",
+                "%gdn-prompt-port", NULL);
 }
 
 /* This initializes an instance of the lisp interpreter */
@@ -180,19 +197,16 @@ gdn_lisp_init (GdnLisp *self)
   self->original_input_port = scm_current_input_port ();
   self->output_fd = unix_pty_output_fd_new ();
   self->input_port = port_from_unix_output_fd (self->output_fd);
-  self->input_port_var = scm_c_define ("%gdn-input-port", self->input_port);
   scm_set_current_input_port (self->input_port);
 
   self->original_output_port = scm_current_output_port ();
   self->input_fd = unix_pty_input_fd_new ();
   self->output_port = port_from_unix_input_fd (self->input_fd);
-  self->output_port_var = scm_c_define ("%gdn-output-port", self->output_port);
   scm_set_current_output_port (self->output_port);
 
   self->original_error_port = scm_current_error_port ();
   self->input_error_fd = unix_pty_input_fd_new ();
   self->error_port = port_from_unix_input_fd (self->input_error_fd);
-  self->error_port_var = scm_c_define ("%gdn-error-port", self->error_port);
   scm_set_current_error_port (self->error_port);
 
   /* Note that we are combining Guile's error and warning ports. */
@@ -202,7 +216,6 @@ gdn_lisp_init (GdnLisp *self)
    * `scheme@(guile-user)>` from the REPL. */
   self->input_prompt_fd = unix_pty_input_fd_new ();
   self->prompt_port = port_from_unix_input_fd (self->input_prompt_fd);
-  self->prompt_port_var = scm_c_define ("%gdn-prompt-port", self->prompt_port);
 
   self->user_input_queue = g_async_queue_new ();
 
@@ -211,6 +224,8 @@ gdn_lisp_init (GdnLisp *self)
   scm_c_hook_add (&scm_after_sweep_c_hook, after_sweep_handler, self, 0);
 
   self->default_thread = SCM_BOOL_F;
+
+  scm_c_define_module ("gdn ports", gdn_ports_guile_init, self);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -238,6 +253,12 @@ void
 gdn_lisp_run (GdnLisp *self)
 {
   g_assert_cmpstr (G_OBJECT_TYPE_NAME (self), ==, "GdnLisp");
+  GBytes *contents;
+  contents = g_resource_lookup_data (guidance_get_resource (),
+                                     "/com/lonelycactus/Guidance/gdn/repl.scm",
+                                     G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+  scm_c_eval_string (g_bytes_get_data (contents, NULL));
+  g_bytes_unref (contents);
   self->default_thread =
       scm_spawn_thread (spawn_top_repl, NULL, spawn_handler, NULL);
 }
@@ -400,7 +421,8 @@ static SCM
 spawn_top_repl (G_GNUC_UNUSED void *data)
 {
   // scm_c_eval_string ("((@ (ice-9 top-repl) top-repl))");
-  scm_c_eval_string ("(top-repl)");
+  scm_c_eval_string ("(use-modules (gdn lib) (gdn repl))");
+  scm_c_eval_string ("(gdn-top-repl)");
   return SCM_UNSPECIFIED;
 }
 
@@ -497,7 +519,7 @@ response_data_to_scm (GdnLispUserInput *input)
   else if (input->cmd == GDN_LISP_COMMAND_STEP_INTO)
     response = step_into_sym;
   else if (input->cmd == GDN_LISP_COMMAND_STEP_INSTRUCTION)
-    response = step_into_sym;
+    response = step_instruction_sym;
   else if (input->cmd == GDN_LISP_COMMAND_STEP)
     response = step_sym;
   else if (input->cmd == GDN_LISP_COMMAND_STEP_INSTRUCTION)
@@ -677,4 +699,6 @@ gdn_lisp_guile_init (void)
       scm_c_define_gsubr ("trap-thunk-8", 0, 0, 0, scm_trap_thunk_8);
   add_trap_proc =
       scm_c_public_ref ("system vm trap-state", "add-trap-at-procedure-call!");
+
+  scm_c_export ("gdn-get-user-input", NULL);
 }

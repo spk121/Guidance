@@ -73,6 +73,18 @@
                         </child>
                       </object>
                     </child>
+                    <!-- child>
+                      <object class="GtkButton" id="continue_button">
+                        <property name="action-name">win.process-continue</property>
+                        <property name="sensitive">True</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">debug-continue</property>
+                            <property name="tooltip-text">continue process</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child -->
                     <child>
                       <object class="GtkButton" id="stop_button">
                         <property name="action-name">win.process-stop</property>
