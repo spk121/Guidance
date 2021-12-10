@@ -672,7 +672,6 @@ gdn_lisp_guile_init (void)
   step_sym = scm_from_utf8_symbol ("step");
   step_out_sym = scm_from_utf8_symbol ("step-out");
   run_sym = scm_from_utf8_symbol ("run");
-  run_sym = scm_from_utf8_symbol ("run");
   continue_sym = scm_from_utf8_symbol ("continue");
   stop_sym = scm_from_utf8_symbol ("stop");
   eval_sym = scm_from_utf8_symbol ("eval");

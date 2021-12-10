@@ -154,21 +154,30 @@ signal is set up and that the language is available."
          (let* ((input (repl-read repl))  ; Get toolbar or GtkEntry input
                 (action (car input))
                 (data (cadr input)))
+           ;; (pk 'nu action data)
            (cond
             ((eqv? action #f))               ; unknown action: ignore
             ((eqv? action 'quit)
              (abort '()))
+            ((eqv? action 'run)
+             (if (not (= (length *cmdline*) 2))
+                 (format #t "No file given on command line~%")
+                 ;; else
+                 (let ((thunk
+                        (lambda ()
+                          (load (cadr *cmdline*)))))
+                   (call-with-error-handler thunk))))
             (else
-             (pk 'about-to-call-execute-input)
+             ;; (pk 'about-to-call-execute-input)
              (call-with-minimal-error-handler
               (lambda ()
-                (pk 'alpha)
+                ;; (pk 'alpha)
                 (catch 'quit
                   (lambda ()
-                    (pk 'bravo)
+                    ;; (pk 'bravo)
                     (call-with-values
                         (lambda ()
-                          (pk 'charlie)
+                          ;; (pk 'charlie)
                           #;(%
                            ;; prompt expression
                            (let ((thunk
@@ -186,7 +195,8 @@ signal is set up and that the language is available."
 
                           (let ((thunk
                                  (lambda ()
-                                   (eval-string data #:compile? #t))))
+                                   (eval-string data #:compile? #t)
+                                   )))
                             (call-with-error-handler thunk)))
                            
                       
@@ -212,14 +222,15 @@ signal is set up and that the language is available."
    (lambda ()
      (cond
       ((eqv? action 'run)
+       (pk 'omicron action data)
        ;; FIXME: insert with-stack-and-prompt here?
-       #;(eval (compile-shell-switches *cmdline*)
-       (interaction-envirnoment))
-       (error "not supposed to be here")
+       (eval (compile-shell-switches *cmdline*)
+             (interaction-envirnoment))
+       ;; (error "not supposed to be here")
        )
       
       ((eqv? action 'eval)
-       (pk 'in-eval action data)
+       ;; (pk 'in-eval action data)
        (with-stack-and-prompt
         (lambda ()
           (eval-string data #:compile? #t))))
@@ -263,14 +274,15 @@ error message. Traps are disabled."
   "This procedure calls THUNK. On error the error GUI error handler is used.
 On traps, the GUI trap handler is used. Will abort to prompt on a
 'quit signal."
-  (pk 'foxtrot)
+  ;; (pk 'foxtrot)
   (catch
     ;; key
     #t
     ;; thunk
     (with-default-trap-handler
      trap-handler
-     (start-stack #t thunk))
+     (lambda () (start-stack #t thunk))
+     )
     
     ;; On-unwind handler : catch
     (lambda (key . args)
@@ -307,7 +319,7 @@ On traps, the GUI trap handler is used. Will abort to prompt on a
 (define* (trap-handler frame #:optional (trap-idx #f) (trap-name "break"))
   "This trap handler launches Guidance's trap-handler UX."
   (gdn-set-input-mode! *gdn-application-window* 'trap)
-  (pk 'lima frame trap-idx trap-name)
+  ;; (pk 'lima frame trap-idx trap-name)
   (set-vm-trace-level! 0)
   (if trap-idx
       (begin
@@ -373,12 +385,12 @@ On traps, the GUI trap handler is used. Will abort to prompt on a
   "This pre-unwind handler launches Guidance's error-handler UX on all
 errors except 'quit."
   (gdn-set-input-mode! *gdn-application-window* 'error)
-  (pk 'india key subr message)
+  ;; (pk 'india key subr message args rest)
   (backtrace)
   (unless (eqv? key 'quit)
-    (pk 'juliette)
+    ;; (pk 'juliette)
     (let* ((stack (make-stack #t 3)))
-      (pk 'juilette stack)
+      ;; (pk 'juilette stack)
       (display-error
        #f ;;(stack-ref stack 0)
        (current-error-port)
@@ -398,12 +410,12 @@ errors except 'quit."
       (display "error>" %gdn-prompt-port)
       
       (while #t
-        (pk 'mike)
+        ;; (pk 'mike)
         (sleep 1)
         (let* ((input (gdn-get-user-input *gdn-lisp*))
                (action (car input))
                (data (cadr input)))
-          (pk 'kilo input)
+          ;; (pk 'kilo input)
           (cond
            ;; The Stop Button returns to eval mode
            ((eqv? action 'stop)
