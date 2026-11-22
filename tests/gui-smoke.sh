@@ -42,6 +42,26 @@ TRANSCRIPT=$WORK/transcript
 LOG=$WORK/log
 APP=
 
+# Guidance makes file descriptors 1 and 2 the Terminal's, for the
+# program's subprocesses.  So what a sanitizer would write to
+# descriptor 2 would be shown in the Terminal, and lost if Guidance
+# then died.  The sanitizers are told to write their reports to files
+# instead, named $SANITIZER_LOG.PID.
+SANITIZER_LOG=$WORK/sanitizer
+
+# sanitizer_reports: prints the sanitizers' reports, if there are any,
+# and succeeds if there were.
+sanitizer_reports () {
+    found=1
+    for report in "$SANITIZER_LOG".*; do
+        [ -f "$report" ] || continue
+        found=0
+        echo "--- sanitizer report $report ---"
+        cat "$report"
+    done
+    return $found
+}
+
 # start ARG...: starts Guidance with the command-line arguments ARG...,
 # and a fresh transcript.
 start () {
@@ -52,7 +72,8 @@ start () {
     GTK_A11Y=none \
     GDK_BACKEND=x11 \
     LC_ALL=C.UTF-8 \
-    ASAN_OPTIONS=detect_leaks=0 \
+    ASAN_OPTIONS="detect_leaks=0:log_path=$SANITIZER_LOG" \
+    UBSAN_OPTIONS="${UBSAN_OPTIONS:+$UBSAN_OPTIONS:}log_path=$SANITIZER_LOG" \
         "$BIN" "$@" > "$LOG" 2>&1 &
     APP=$!
     wait_for "[prompt repl>]"
@@ -64,11 +85,14 @@ start () {
 # stop_app: checks that Guidance is healthy, then closes it.
 stop_app () {
     kill -0 "$APP" 2>/dev/null || fail "Guidance exited"
-    # Sanitizer reports go to file descriptor 2, which is the
-    # Terminal's, so look in the transcript too.
+    # The transcript too: file descriptor 2 is the Terminal's, and not
+    # everything that writes to it can be told to write elsewhere.
     if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG" ||
        grep -E "runtime error|AddressSanitizer" "$TRANSCRIPT"; then
         fail "problems were logged"
+    fi
+    if sanitizer_reports > /dev/null; then
+        fail "a sanitizer reported a problem"
     fi
     kill "$APP" 2>/dev/null
     wait "$APP" 2>/dev/null
@@ -81,6 +105,7 @@ finish () {
     [ -n "${KNOWN_FAILURE:-}" ] && exit "$1"
     echo "--- transcript ---"; cat "$TRANSCRIPT"
     echo "--- log ---"; cat "$LOG"
+    sanitizer_reports
     rm -rf "$WORK"
     exit "$1"
 }
@@ -612,6 +637,9 @@ status=$?
 [ "$status" -eq 0 ] || fail "Guidance quit with status $status"
 if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
     fail "problems were logged"
+fi
+if sanitizer_reports > /dev/null; then
+    fail "a sanitizer reported a problem"
 fi
 echo "ok: quit"
 

@@ -1161,11 +1161,18 @@ Each item has a test: see "Tests for these" at the end of this phase.
   mistyped name at `repl>` enters Error mode, which then needs Stop.
   This follows from running expressions as programs, but is heavy for
   a typo.
-- File descriptors 1 and 2 are now the Terminal's, so what the C
+- Fixed: in part.  The descriptors stay the Terminal's, which is what
+  gives subprocesses the Terminal; what else writes straight to them
+  still appears there.  But the GUI test now tells the sanitizers to
+  write their reports to files (`log_path`), checks for them whenever
+  it checks that Guidance is healthy, and prints them when it fails,
+  so a report is no longer lost if Guidance dies.  This was checked
+  with a stand-in for Guidance that leaves a pretend report.  It was:
+  File descriptors 1 and 2 are now the Terminal's, so what the C
   library, GLib's fallbacks, or a sanitizer writes straight to them
-  appears in the Terminal, not where Guidance was started.  A
-  sanitizer report in CI would be in the test's transcript, not its
-  log, and lost if Guidance died first.
+  appears in the Terminal, not where Guidance was started. A sanitizer
+  report in CI would be in the test's transcript, not its log, and
+  lost if Guidance died first.
 - Fixed with the Source page item: Open Program showed the file with
   line 1 marked as the current line, though nothing was paused there.
 - The breakpoint mark in the Source page's margin is a thin bar,
