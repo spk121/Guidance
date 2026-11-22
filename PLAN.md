@@ -122,15 +122,16 @@ Phase 1 notes:
   stopping a later program.
 - The Scheme modules are compiled when they are loaded, because
   Guile's procedure traps cannot tell interpreted procedures apart.
-  This costs about a second at startup; installing the modules where
-  Guile can cache the compiled code would avoid it.
+  The compiled code is now kept in Guidance's cache (see the alpha
+  bugs below), so only the first start pays for it.
 - Tests: `meson test` runs `tests/repl-test.scm`, which tests the
   debugger core in plain Guile with the GUI stubbed out
   (`tests/stubs`), and `tests/gui-smoke.sh`, which drives the real app
   on Xvfb using a terminal transcript (`GUIDANCE_TRANSCRIPT`).  The
   smoke test is skipped if Xvfb or xdotool is missing.
-- Known cosmetic issue: output and error text arrive through separate
-  pseudoterminals, so their relative order in the terminal can vary.
+- Output and error text once arrived through separate
+  pseudoterminals, so their relative order in the terminal could vary.
+  They now share one (see the alpha bugs below).
 
 ### Phase 2: Finish the panels
 
@@ -170,9 +171,10 @@ Phase 2 notes:
 - Backtraces show at most 500 frames.
 - Requests are handled with asyncs blocked, so that a burst of them
   (as from the Modules page) cannot nest and starve the program.
-- Not yet: highlighting breakpoint lines in the Source page.  Nested
-  procedures can have line breakpoints, but the Modules page lists
-  only procedures bound at a module's top level.
+- Breakpoint lines are marked in the Source page's margin (see the
+  alpha bugs below).  Nested procedures can have line breakpoints, but
+  the Modules page lists only procedures bound at a module's top
+  level.
 
 ### Phase 3: README features
 
@@ -209,10 +211,7 @@ removed.
 
 ### Phase 5: Alpha release
 
-Status on 2026-11-22: eight of the nine blockers first listed are
-fixed, each with tests, and one new blocker was found and is open:
-Step Into can corrupt the program.  Everything under "Should fix"
-is open.
+Status: all the blockers are fixed, each with tests.
 
 Assessment date: 2026-11-22, on Ubuntu 24.04 with GTK 4.14.5 and
 Guile 3.0.9.  The build has no warnings and `meson test` passes (5 of
@@ -336,8 +335,11 @@ The open one is last in this list.
 
       Still open: the terminal always shows the end when something
       is printed, even if the operator has scrolled back to read.
-      The prompt stream can still run two prompts together, as
-      "repl>repl>", seen once.
+
+      Fixed later: the prompt stream could run two prompts together,
+      as "step>repl>", when a run ended just after a pause.  Each
+      prompt now ends with a newline, and the terminal shows the last
+      complete one.
 - [x] **Local variables lose their names.**  Programs were compiled
       at Guile's default optimization level, so a `let` variable `a`
       in a ten-line procedure was listed on the Backtrace page as
@@ -445,122 +447,344 @@ The open one is last in this list.
       list of recent programs; the window title does not name the
       program.
 
-- [ ] **Step Into can corrupt the program, or crash Guidance.**
-      Found on the last day of this work, and not fixed.  Step Into
-      (F11), pressed repeatedly through a line that throws and catches
-      an exception, or that calls `load`, makes the program go wrong:
-      a `catch` returns the wrong thing, an error appears that the
-      program does not have ("vector-ref: Wrong type argument ...
-      #<unspecified>", "Apply to non-list: (#<unspecified> .
-      #<unspecified>)"), or, once in about ten runs, Guidance dies
-      with a segmentation fault.  Step Over (F10) through the same
-      lines is correct every time.
+- [x] **Step Into can corrupt the program, or crash Guidance.**
+      Step Into (F11), pressed repeatedly through a line that throws
+      and catches an exception, or that calls `load`, made the program
+      go wrong: a `catch` returned `#<unspecified>`, errors appeared
+      that the program does not have, or Guidance crashed.  The
+      instruction-step buttons crashed Guidance every time on the same
+      code.  There were four causes, all fixed:
+      - **Debugging lookups in the instruction hook.**  Calling
+        `frame-source` or `frame-procedure-name` from an instruction
+        hook while Guile raises or catches an exception corrupts the
+        VM; this was reproduced in plain Guile, without Guidance.  The
+        apply, return and abort hooks are safe.  Steps now look up the
+        stepped frame's code and current line while the program is
+        paused, and their instruction hook only compares addresses
+        (`add-step-trap!` in `(gdn repl)`).  Entering a procedure of
+        the program (Step Into, a tail call), returning to the
+        program, and an exception caught by the program are found with
+        the other hooks.  Step Out's fallback, "pause at the next line
+        of the program", uses only those hooks too.
+      - **Callers shown as the executing frame.**  Pausing in a caller
+        whose callee's frame is still on the stack (after a return,
+        for Step Out, and for `_break_`) told Guile it was the
+        innermost frame.  Guile then listed the values the pending
+        call would define, whose slots hold garbage, and printing one
+        could crash.  These pauses now say it is not the top frame.
+      - **Bindings beyond the frame.**  At some instructions a frame
+        has bindings past its last slot; reading one reads past the
+        frame.  Guidance now skips them, as Guile's own
+        `frame-call-representation` does (`gdn-binding-readable?`).
+      - **Objects half built.**  Between the instruction that
+        allocates a pair and those that fill it in, showing the frame
+        printed an invalid object.  So the toolbar's instruction steps
+        now step by expression: to the next source position, line and
+        column, where the objects of earlier expressions are complete.
 
-      To reproduce: break in a procedure, then press F11 until past
-
-          (display (catch #t (lambda () (throw 'k 1)) (lambda args args)))
-
-      which should print `(k 1)`, or past `(load "other.scm")`.
-
-      This is older than this phase: the commit it started from
-      loses the `catch` result in 7 runs of 8, though it was not seen
-      to crash.  What the two step kinds have in common is
-      `trap-matching-instructions`, whose predicate Guile calls
-      before every instruction of the thread.  Step Over's predicate
-      returns after one comparison for frames inside the one being
-      stepped; Step Into's goes on to look up the source of every
-      frame, in Guile's own exception and `load` code too.  The same
-      thing was seen outside Guidance: a script that kept such a trap
-      on while Guile compiled a file got `#<unspecified>` where
-      values should be.  The likely cause is that Guile's VM is not
-      in a state, between some instructions, in which it is safe to
-      run that much Scheme; it has not been confirmed.
-
-      Ways to fix it, in order of preference: step into with the
-      apply hook, pausing when a procedure of the program is entered,
-      and keep the instruction hook for frames of the program only;
-      or make the predicate do no more than compare addresses until
-      the frame changes.  Until then, Step Into should be treated as
-      unsafe, and the README should say so.
+      Also, building a backtrace entry can no longer raise an error,
+      and `pause` reports a failure to update the pages rather than
+      let it unwind through the VM hook; a rest argument that is not
+      available no longer breaks the backtrace.  Tests: two in
+      `tests/repl-test.scm`, each walking through
+      `tests/programs/step-into.scm` three times; on the old code they
+      crash the test run.
 
 #### Should fix
 
-- [ ] **Other threads are outside the debugger.**  `_break_` in a
-      thread made with `call-with-new-thread` is ignored without a
-      word.  An error there prints Guile's own backtrace to the
-      Terminal and the thread dies; the debugger only notices the
-      knock-on error in the main thread.  Traps and the error handler
-      are installed for the REPL thread alone.  For an alpha, at
-      least report such errors cleanly and document the limit.
-- [ ] **Runaway recursion never ends.**  `(define (deep n) (+ 1 (deep
-      (+ n 1))))` reaches "stack overflow" in 13 s in plain Guile.
-      Under Guidance it was still running after 150 s.  Stop and Pause
-      do work.  Set a stack limit with
-      `call-with-stack-overflow-handler` and enter Error mode.
-- [ ] **Programs run about 25 times slower.**  `(fib 30)` takes 27 ms
-      in plain Guile and 680 ms under Guidance, because the VM trace
-      level is 1 for the whole run.  Worth a look at whether hooks
-      can be off when no trap, breakpoint, or step is active; if not,
-      say so in the README.
-- [ ] **Subprocess output misses the Terminal.**  Only Guile's ports
-      are redirected, not file descriptors 0 to 2, so the output of
-      `(system "echo hi")` goes to the terminal Guidance was started
-      from, or nowhere.
-- [ ] **No end-of-file for standard input.**  Ctrl+D in the entry does
-      nothing, so a program that reads until EOF can only be stopped.
-- [ ] **The entry takes one line, and has no history.**  An unfinished
-      expression is a read error ("unexpected end of input"), so
-      nothing longer than a line can be entered.  The Up key does
-      nothing: the history list in `guidance-terminal-view.c` is
-      filled but never read, and its duplicate check compares only a
-      prefix (from the code).  The `GtkMenuButton` beside the entry
-      is empty.
-- [ ] **Backtrace page layout.**  At the default window size the Value
+- [x] **Other threads are outside the debugger.**  `_break_` in a
+      thread made with `call-with-new-thread` was ignored without a
+      word, and an error there printed Guile's own backtrace.  Fixed
+      as far as an alpha needs: while a program runs, Guidance
+      replaces `call-with-new-thread` in `(ice-9 threads)`, which the
+      program's code and `begin-thread` refer to, and restores it
+      afterwards.  An error that a thread does not handle is then
+      reported in three lines, saying that the thread ended and that
+      Guidance can pause only the main thread; a thread given a
+      handler of its own keeps it.  `_break_` in another thread says
+      that it was ignored.  The README lists the limit.  Test: one in
+      `tests/repl-test.scm`, with `tests/programs/threads.scm`.
+
+      Still open: debugging other threads; threads started through
+      `make-thread`, futures, or `par-map`, which Guile's own code
+      starts, keep Guile's messages.
+- [x] **Runaway recursion never ends.**  `(define (deep n) (+ 1 (deep
+      (+ n 1))))` reaches "stack overflow" in 13 s in plain Guile, and
+      was still running after 150 s under Guidance: the apply hook of
+      the `_break_` trap made deep recursion quadratic (see the next
+      item).  Fixed: with that hook gone, and a limit of 256 MiB set
+      with `call-with-stack-overflow-handler`, the program enters
+      Error mode within a second or two.  Error mode cannot run inside
+      the overflow handler, because Stop would unwind out of it while
+      the stack is still deep, and Guile then puts the program's limit
+      back and it overflows again.  So the handler shows the backtrace
+      while the frames exist, then unwinds, and Error mode runs on a
+      shallow stack, with expressions at the top level.  Tests: one in
+      `tests/repl-test.scm` and one in `tests/gui-smoke.sh`, with
+      `tests/programs/deep.scm`.  With a breakpoint set, the apply
+      hook is back, and deep recursion is slow to reach the limit.
+- [x] **Programs run about 25 times slower.**  `(fib 30)` took 31 ms
+      in plain Guile and 750 ms under Guidance.  The cause was not the
+      trace level, which costs little by itself, but the trap that
+      Guidance set on `_break_` for every run: it uses the VM's apply
+      hook, so Guile called a Scheme procedure on every call the
+      program made.  Those calls allocate, and each collection scans
+      the whole stack, so deep recursion became quadratic.  Fixed:
+      `_break_` now pauses by itself, as Pause does, with tracing off
+      while paused.  `(fib 30)` takes 20 ms under Guidance.
+
+      Breakpoints at lines and procedures still use the apply hook:
+      that is how they attach to code loaded later and survive
+      reloading.  While one is set, `(fib 30)` takes 925 ms.  The
+      README says so.  Test: one in `tests/repl-test.scm`, with
+      `tests/programs/fib.scm`.
+- [x] **Subprocess output misses the Terminal.**  Only Guile's ports
+      were redirected, not file descriptors 0 to 2, so the output of
+      `(system "echo hi")` went to the terminal Guidance was started
+      from.  (`system*` and pipes already followed Guile's ports.)
+      Fixed: file descriptors 0 to 2 are now the Terminal's
+      pseudoterminals, each opened anew so that standard input stays
+      blocking for subprocesses.  Guidance's own messages keep their
+      destination: the C library's `stdout` and `stderr` use copies of
+      the original descriptors.  Sanitizer reports, written to
+      descriptor 2, now appear in the Terminal; the GUI test looks
+      for them in its transcript too.  Test: one in
+      `tests/gui-smoke.sh`, with `tests/programs/subprocess.scm`.
+- [x] **No end-of-file for standard input.**  Ctrl+D in the entry did
+      nothing, so a program that read until EOF could only be stopped.
+      Fixed: while a program runs, Ctrl+D sends the text in the entry,
+      if any, as a line, then end-of-file, using the pseudoterminal's
+      EOF character in canonical mode.  The input pseudoterminal's
+      echo is now off: the Terminal shows typed text itself, and the
+      echo piled up unread.  The shortcuts overlay and README list
+      Ctrl+D.  Test: one in `tests/gui-smoke.sh`, with
+      `tests/programs/eof.scm`.
+- [x] **The entry takes one line, and has no history.**  An unfinished
+      expression was a read error, so nothing longer than a line could
+      be entered; the history was filled but never read, its duplicate
+      check compared only a prefix, and the button beside the entry was
+      empty.  Fixed:
+      - While what has been entered ends part-way through an
+        expression, the REPL shows the prompt `...` and appends the next
+        line (`get-user-input` in `(gdn repl)`), in every mode.  Any
+        other action abandons the unfinished expression, and says so.
+      - Up and Down go through the entries, as in a shell, and Down past
+        the newest gives back what was being typed.  Empty entries and
+        repeats of the newest are not kept; at most 500 are.
+      - The button beside the entry lists the 15 most recent entries;
+        choosing one puts it back in the entry.
+
+      Tests: one in `tests/repl-test.scm`, one in `tests/gui-smoke.sh`.
+- [x] **Backtrace page layout.**  At the default window size the Value
       column, the one that matters, is off the right edge, and the
       Location column is cut to "fact.sc".  The Type column is blank
       except for "A" on arguments.  A top-level frame is shown as
-      `(_)`.
-- [ ] **Source page.**  No line numbers, and no mark on lines that
-      have breakpoints (already noted under Phase 2).
-- [ ] **Threads page.**  Rows read `#<thread 139940890986176
+      `(_)`.  Fixed:
+      - The variables columns are now Name, Value and Kind.  Value
+        expands to take the free width and ellipsizes at the end, with
+        the full text as a tooltip; any extra information Guile gives
+        about the value is appended after "⇒".  The separate
+        Representation and Info columns are gone.
+      - Kind reads "argument" or "local", plus how the value is stored
+        when it is not an ordinary Scheme object (for example
+        "local, f64").
+      - The Location label is wide enough for "program.scm:120" and,
+        when it is not, drops the start of the name rather than the
+        line number.  The stack pane starts wider (400 pixels) and the
+        default window is 1000×650, so both panes fit without
+        scrolling.
+      - A procedure with no name (Guile names it `_`) is shown as `λ`,
+        and the outermost frame, which is the top level of the program
+        being loaded, as "(top level)".  The REPL test checks the
+        latter.
+      - Later, while taking the release screenshot: Kind called an
+        argument "local" when its procedure had a closure, as every
+        procedure does in Guidance's non-declarative `(guile-user)`.
+        A binding was taken to be an argument if its index was below
+        the number of arguments in the call, but the closure is
+        binding 0.  Now the count comes from the procedure's arity
+        (`argument-binding-count` in `(gdn lib)`): the closure, if
+        any, then the required, optional, rest and keyword
+        arguments.  The REPL test checks an argument and two locals
+        (`tests/programs/inventory.scm`).
+- [x] **Source page.**  No line numbers, and no mark on lines that
+      have breakpoints (already noted under Phase 2).  Fixed:
+      - The text view has a left margin (a `GtkDrawingArea` given to
+        `gtk_text_view_set_gutter`) with the line numbers, dimmed, in
+        the text's font, and a red disc on lines with a breakpoint, or
+        a red ring when it is disabled.  It is redrawn as the text
+        scrolls or is laid out.
+      - The REPL keeps the trap index, file and line of each
+        breakpoint at a line, and sends them with every update of the
+        Traps page (`gdn-set-source-breakpoints!`), so the marks follow
+        breakpoints set, disabled, or deleted from any page.  The
+        REPL test checks what is sent.
+      - Clicking a line in the margin sets a breakpoint there, or
+        deletes the one there.  F9 and the context menu, now "Toggle
+        Breakpoint", do the same for the cursor's line; the GUI test
+        checks that F9 deletes.
+      - Setting a breakpoint while paused took several seconds, which
+        the marks made obvious: finding the code at a line decoded the
+        line table of every loaded procedure, twice.  Each table is
+        now decoded once and kept (`code-line-table` in `(gdn lib)`),
+        so after the first breakpoint it takes a fraction of a second;
+        line steps use the same tables.
+- [x] **Threads page.**  Rows read `#<thread 139940890986176
       (7f46c934c6c0)>` with an emoji as ID.  Nothing says which is the
-      program's thread, and Guidance's own threads are listed.
-- [ ] **Compiler chatter and ordering in the Terminal.**  The first
+      program's thread, and Guidance's own threads are listed.  Fixed:
+      - The REPL now makes the rows (`thread-rows` in `(gdn repl)`)
+        rather than the C side listing `all-threads`.  The first is
+        "Main thread", the program's, with the program's name and
+        whether it is running, paused, or waiting at the REPL.
+      - The replacement `call-with-new-thread` that Guidance installs
+        during runs records each thread the program starts.  They are
+        listed as "Thread 1", "Thread 2", ..., in the order they were
+        started, with the name of the procedure each was started with
+        (λ for an anonymous one), and "running" or "finished".  A new
+        run forgets the finished ones, and numbers from 1 again when
+        none is left.
+      - Guidance's own threads and Guile's internal ones (the GTK
+        thread, the finalizer, signal delivery) are no longer listed.
+      - The emoji column, and `guidance-emoji.c` with it, are gone.
+      - The REPL test checks the rows for a program with a finished
+        thread and a running one.
+- [x] **Compiler chatter and ordering in the Terminal.**  The first
       run of each file prints ";;; note: auto-compilation is enabled
       ...", ";;; compiling ..." and ";;; compiled ..." with long cache
       paths.  Because output and errors use separate pseudoterminals
       (noted under Phase 1), ";;; compiled" can arrive after "Break
       at", an error message after the `error>` prompt, and in one
       run a thread's backtrace landed in the middle of a line.  Hide
-      the compiler notes, and merge the two streams in order.
-- [ ] **Program output is not monospaced.**  Only echoed input and
-      error text get the monospace tag.
-- [ ] **Startup warnings.**  On Guile 3.0.9 Guidance prints
+      the compiler notes, and merge the two streams in order.  Fixed:
+      - The REPL's warning port is now a filter on the error port
+        (`compiler-note-filter` in `(gdn repl)`) that drops the lines
+        Guile prints when it compiles a file automatically: the
+        auto-compilation note, ";;; compiling", ";;; compiled", and
+        "source file ... newer than compiled".  It holds back a line
+        only while it may still be one of those, that is, until its
+        newline if it starts with ";;; ".  The compiler's warnings
+        are kept.  The REPL test compiles a new file with an unbound
+        variable, and checks.
+      - Output and error output, from Guile's ports and from file
+        descriptors 1 and 2, now go to one pseudoterminal, so the
+        Terminal shows them in the order they were written.
+      - To still show errors as such, Guile's error port is a port
+        type of its own (`gdn-error-port`, in `guidance-lisp.c`) that
+        writes each piece of text, in one write, between the ECMA-48
+        codes for red and for the default color.  The Terminal takes
+        red to mean error text, and drops the escape sequences, its
+        own and any the program prints, keeping one that a read cuts
+        short until the rest arrives.  So text that a program colors
+        red is shown as error text too.
+      - The GUI test runs a program that alternates output and error
+        output, and checks the order, and that an escape sequence of
+        the program's is not shown.
+- [x] **Program output is not monospaced.**  Only echoed input and
+      error text get the monospace tag.  Fixed: the whole Terminal is
+      monospaced (the text view's `monospace` property, and GTK's
+      `monospace` style class on the prompt and the entry), so
+      columns line up in output, errors, and what is typed alike.
+      Echoed entries, no longer set apart by their font, are bold.
+      The text has a small margin from the frame.  There is no
+      automatic test of fonts; checked by screenshot.
+- [x] **Startup warnings.**  On Guile 3.0.9 Guidance prints
       "possibly unbound variable `total-processor-count'" and
       "`current-processor-count'" to its own stderr at every start,
       and the Environment page shows 0 for both; `(gdn lib)` needs
       `(ice-9 threads)`.  Startup takes 1.7 s, most of it compiling
-      the Scheme modules (noted under Phase 1).
-- [ ] **Options.**  Guile options that Guidance does not know, such as
+      the Scheme modules (noted under Phase 1).  Fixed:
+      - `(gdn lib)` imports the two procedures from `(ice-9 threads)`,
+        so the warnings are gone and the Environment page shows the
+        counts.  The REPL test compiles `(gdn lib)` and `(gdn repl)`
+        and checks for warnings, and checks the counts.  (The GUI
+        test cannot see these warnings: `(gdn lib)` is loaded before
+        the standard ports are redirected, while Guile's error port
+        still buffers for a file.)
+      - Guidance's two modules are compiled once into
+        `$XDG_CACHE_HOME/guidance/modules/VERSION/SHA256/gdn/`, keyed
+        by the Guile version and a hash of the source, and loaded
+        from there with `load-compiled` on later starts.  They are
+        compiled with `compile-file` with that directory on the load
+        path, so their procedures still record `gdn/lib.scm` and
+        `gdn/repl.scm` as their files, by which the debugger knows
+        Guidance's own frames.  If the cache cannot be written, they
+        are compiled in memory as before.  Startup to the first
+        prompt went from about 2.7 s to 0.6 s here.  The GUI test
+        starts with an empty cache and checks that both are cached.
+- [x] **Options.**  Guile options that Guidance does not know, such as
       `--no-auto-compile` and `--debug`, are reported as unrecognized
       after the first prompt.  Accept the harmless ones.  `-e` only
       takes a plain symbol, not Guile's `(@ (module) name)` form (from
-      the code).
-- [ ] **Leftovers.**  The last 340 lines of `src/gdn/lib.scm` are a
+      the code).  Fixed (`gdn-parse-command-line` in `(gdn lib)`):
+      - `--debug`, `--no-debug`, `--auto-compile` and `-q` are
+        accepted silently: Guidance always uses the debugging VM and
+        its own compiler settings, and does not load `~/.guile`.
+        `--no-auto-compile` is accepted with a note that it is
+        ignored, since Guidance must compile the program to debug it.
+      - Three more of Guile's options are supported, being simple:
+        `-x EXTENSION` (added to `%load-extensions`),
+        `--use-srfi=LIST` (the SRFIs are imported into
+        `(guile-user)`), and `--fresh-auto-compile` (sets
+        `%fresh-auto-compile`).  Others, such as `--listen`, are
+        still reported as unrecognized.
+      - `-e` reads an argument that starts with "(" as an expression,
+        such as `(@ (my module) main)`, and evaluates it to find the
+        procedure; one that cannot be read is reported.
+      - `--help` lists the new options.  The REPL test checks the
+        parsing and runs programs with `-e (@ ...)` and
+        `--use-srfi`; the GUI test starts Guidance with `--debug
+        --no-auto-compile` and `-e (@ ...)`.
+- [x] **Leftovers.**  The last 340 lines of `src/gdn/lib.scm` are a
       commented-out copy of an old REPL.  `menus.ui` and the history
       fields are unused.  Tooltips are lower case and do not give the
-      shortcuts ("run process" rather than "Run (F5)").
-- [ ] **Release housekeeping.**  The AppStream metadata lists release
+      shortcuts ("run process" rather than "Run (F5)").  Fixed:
+      - The commented-out REPL is gone from `(gdn lib)`, which now
+        ends with the Environment page's procedures.
+      - `menus.ui` and the old history fields had already gone; the
+        Terminal's history is the one added for multi-line entry.
+        The emoji helper went with the Threads page fix.  Also
+        removed: the CSS rules for classes nothing uses (all but
+        `fat_border`), the Terminal's two style classes that had no
+        rules, and a commented-out debugging `printf` in
+        `guidance-frame-info.c`.
+      - The toolbar's tooltips are in title case and give their keys:
+        "Run or Continue (F5)", "Stop (Shift+F5)", "Step Over (F10)",
+        "Step Into (F11)", "Step Out (Shift+F11)"; the two expression
+        steps have no keys.  Checked by screenshot; the existing tests
+        cover the rest (the REPL test compiles `(gdn lib)` without
+        warnings).
+- [x] **Release housekeeping.**  The AppStream metadata lists release
       0.1.0 dated 2021-12-09 and has no screenshot.  There is no NEWS
       file.  Update the README's status paragraph and its list of
-      limits to match what is decided above.
+      limits to match what is decided above.  Done:
+      - The version is 0.2.0, an alpha.  The AppStream metadata has a
+        0.2.0 release dated 2026-11-22 (type "development") with a
+        description, a longer description of Guidance, and a
+        screenshot of the Backtrace page,
+        `data/screenshots/backtrace.png`, referred to by its address
+        on the master branch, which exists once this is merged.  It
+        passes `appstream-util validate`, not only the relaxed check
+        that `meson test` runs.
+      - `NEWS` describes 0.2.0.
+      - The README calls it an alpha, shows the screenshot, and points
+        to NEWS.  Its known limitations add those noted below under
+        "Other concerns" that a user would meet: libraries keep their
+        optimized names, code runs a little differently with
+        optimizations off, standard input is non-blocking, the
+        Terminal is not a terminal emulator, and the cache is never
+        cleaned.
+      - The screenshot's program is `tests/programs/inventory.scm`.
+        Taking it showed that Kind called arguments "local"; fixed in
+        its own commit (see the Backtrace page item).
 
 #### Other concerns
 
 Things noticed along the way that the items above do not cover.
 
 - **Sanitizers.**  None of this phase's changes were run locally
-  under ASan and UBSan; the GitHub workflow does that.  The GUI test
+  under ASan and UBSan; the GitHub workflow does that.  (The fixes of
+  the alpha bugs above were each run under both, locally, before they
+  were committed.)  The GUI test
   now has fifteen scenarios and takes 35 to 45 seconds, so its
   time limit, and that of the REPL test, was raised from 120 to 300
   seconds for the sanitizer job.
@@ -596,7 +820,9 @@ Things noticed along the way that the items above do not cover.
   optimization keywords (`#:partial-eval?` and the rest) are listed
   by `guild compile -O help` but not in the manual.  The tests call
   `set-module-declarative?!`.  Guidance already used
-  `vm-add-apply-hook!` and `module-submodules`.
+  `vm-add-apply-hook!` and `module-submodules`, and now also the
+  return and abort hooks, and `frame-num-locals`, which `(system vm
+  frame)` does not export.
 - **Programs run in a module that is not declarative.**  `main` sets
   `user-modules-declarative?` to false, with a comment that doubts
   it.  It is why procedures are not inlined across definitions and
@@ -605,10 +831,8 @@ Things noticed along the way that the items above do not cover.
 - **Stop does not stop everything.**  It ends the main thread's run.
   Threads the program started keep running, and keep printing, into
   the next run.
-- **`_break_` in a library frame.**  `break-handler` pauses in the
-  caller of `_break_` and tells Guile that it is the innermost
-  frame, which it is not.  This may show a wrong value for an
-  argument there.  Not seen, but not checked either (from the code).
+- **`_break_` in a library frame.**  Fixed with Step Into: the
+  caller of `_break_` is no longer shown as the innermost frame.
 - **Pause in library code.**  Pause looks at most 100 frames out
   for a frame of the program, and otherwise says "The program could
   not be paused here."  Not tried against deep library recursion.

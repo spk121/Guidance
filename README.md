@@ -7,9 +7,13 @@ It is a version of the Guile REPL with a GUI and some extra features.
 Largely, you call Guidance the way you would call Guile, then press
 Run.
 
-Guidance is under development.  The core debugger works: breakpoints,
-stepping, pausing, and inspecting the stack and variables.  See
-[PLAN.md](PLAN.md) for its status and what remains.
+Guidance 0.2.0 is an alpha release.  The debugger works: breakpoints,
+stepping, pausing, error mode, and inspecting the stack and variables
+of a paused program.  Expect rough edges; see the known limitations
+below, [NEWS](NEWS) for what is new, and [PLAN.md](PLAN.md) for its
+status and what remains.
+
+![The Backtrace page of a paused program](data/screenshots/backtrace.png)
 
 Philosophy
 ----------
@@ -72,13 +76,19 @@ These options are a subset of Guile's:
 | `-l FILE`      | Load FILE before running the program.                      |
 | `-s FILE`      | The program to run; the remaining arguments are its ARGs.  |
 | `-c EXPR`      | The program to run is the expression EXPR.                 |
-| `-e FUNCTION`  | After loading the program, call FUNCTION with its command line. |
+| `-e FUNCTION`  | After loading the program, call FUNCTION with its command line.  FUNCTION is a name, or `(@ (MODULE) NAME)` for a module's procedure. |
+| `-x EXTENSION` | Add EXTENSION to the file name extensions tried when loading. |
+| `--use-srfi=LIST` | Import the SRFIs in the comma-separated LIST, such as `1,26`. |
+| `--fresh-auto-compile` | Compile the program even if a compiled copy is cached. |
 | `--`           | Stop scanning options; the next argument is FILE.          |
 | `-h`, `--help` | Display help and exit.                                     |
 | `-v`, `--version` | Display version information and exit.                   |
 
 Options end at FILE, so `guidance foo.scm --help` passes `--help` to
-`foo.scm`.
+`foo.scm`.  Guile's `--debug`, `--no-debug`, `--auto-compile`,
+`--no-auto-compile` and `-q` are accepted, so that a `guile` command
+line can be reused, but make no difference: Guidance always debugs,
+and always compiles the program, in its own way.
 
 Modes
 -----
@@ -87,13 +97,17 @@ Guidance's REPL is in one of four modes.  The toolbar enables only the
 buttons that make sense in the current one, and the terminal's prompt
 shows which mode it is in.
 
-1. **REPL** (`repl>`).  Each line entered is evaluated, and its values
-   are printed.  Run (F5) runs the program from the command line.
+1. **REPL** (`repl>`).  Each expression entered is evaluated, and its
+   values are printed.  An expression can go over several lines: while
+   it is unfinished, the prompt is `...`.  Up and Down go through the
+   entries made so far, and the button beside the entry lists the
+   recent ones.  Run (F5) runs the program from the command line.
    Expressions are run in the same way as a program, so errors and
    traps in them are handled as below.
 
 2. **Run.**  The program is running.  Its output appears in the
    terminal, and what is typed in the entry is its standard input.
+   Ctrl+D sends what is in the entry, then ends the input.
    Pause (F6) pauses it in Trap mode; Stop (Shift+F5) abandons it and
    returns to the REPL.
 
@@ -117,23 +131,33 @@ shows which mode it is in.
    | Stop     | Shift+F5  | Abandon the program and return to the REPL.  |
 
    Stepping skips over Guile's own libraries.  The toolbar also has
-   buttons to step by machine instruction.
+   buttons to step by expression: to the next source position, which
+   can be finer than a line.
 
 Pages
 -----
 
-- **Terminal**: the REPL, and the program's input and output.
+- **Terminal**: the REPL, and the program's input and output, in a
+  monospace font, with the entries made in bold.  Error output is
+  shown in another color; so is text that the program colors
+  red.  Other terminal escape sequences, such as colors and cursor
+  movement, are dropped.
 - **Peek**: entries logged by `_pk_`; see below.
 - **Backtrace**: the stack of the paused program, innermost first.
   Clicking a frame shows its variables, and makes it the frame in
   which expressions are evaluated.  Clicking a frame's location shows
   it on the Source page.
 - **Source**: the source of the paused program, which follows it as it
-  pauses.  "Set Breakpoint Here" in the context menu, or F9, sets a
-  breakpoint at the cursor's line.
+  pauses.  The margin shows the line numbers, and a red dot on lines
+  with a breakpoint (a ring if it is switched off).  Clicking a line in
+  the margin sets a breakpoint there, or deletes the one there; F9, or
+  "Toggle Breakpoint" in the context menu, does the same for the
+  cursor's line.
 - **Traps**: the breakpoints and other traps.  Each can be switched off
   and on, or deleted.
-- **Threads**: Guile's threads.
+- **Threads**: the program's main thread, and the threads it started,
+  each with the procedure it was started with, and whether it is still
+  running.
 - **Modules**: the loaded modules.  Expanding one lists its procedures,
   each of which can be shown on the Source page or given a breakpoint.
 - **Environment**: information about the process, such as environment
@@ -176,8 +200,11 @@ Guidance compiles them, and the modules they use, with some of Guile's
 optimizations turned off, so that variables keep their names and
 stepping follows the lines as written.  It keeps what it compiles in a
 cache of its own, `$XDG_CACHE_HOME/guidance` or `~/.cache/guidance`,
-apart from Guile's.  A variable bound to the result of a call becomes
-visible one step after the line that binds it.
+apart from Guile's, along with Guidance's own Scheme modules, so that
+it starts quickly after the first time.  A variable bound to the result of a call becomes
+visible one step after the line that binds it.  Guile's notes about
+compiling (";;; compiling ...") are not shown, but the compiler's
+warnings are.
 
 The Peek log
 ------------
@@ -195,10 +222,20 @@ logs `foo.scm:2: (double 21)` when called with 21.
 Known limitations
 -----------------
 
-- Step Into is not yet safe to use through code that throws and
-  catches an exception, or that calls `load`: the program can go
-  wrong, and Guidance can crash.  Step Over does not have this
-  problem.  See [PLAN.md](PLAN.md).
+- A program may use up to 256 MiB of stack (on a 64-bit machine),
+  about eleven million frames of a simple recursive procedure.  Past
+  that, Guidance takes it to be recursing without end and enters Error
+  mode, with the stack shown on the Backtrace page but already unwound,
+  so expressions are evaluated at the top level.
+- A program runs about as fast under Guidance as under Guile, until a
+  breakpoint at a line or a procedure is set.  While one is, Guile
+  calls Guidance on every procedure call, and the program runs some
+  thirty times slower; deep recursion slows down more.  `_break_`,
+  Pause, and stepping cost nothing until used.
+- Guidance debugs only the program's main thread: the one that runs
+  the program.  An error in another thread that the program starts is
+  reported in a few lines, and ends that thread; `_break_` there is
+  reported and ignored.  Stop does not end other threads.
 - Which local variables can be seen at a given point is up to Guile's
   compiler.  For example, a variable may be unavailable just after its
   last use.
@@ -206,6 +243,17 @@ Known limitations
   assigning to them does not change the program.
 - Breakpoints at lines match exact lines.  A line with no code, such
   as a blank line, never pauses the program.
-- The terminal shows the program's output and error output as they
-  arrive, so their order can differ slightly from the order they were
-  written in.
+- Only what Guidance compiles itself is compiled for debugging.
+  Modules that are installed already compiled, or found through `-C`,
+  are used as they are, so their variables may show as `tmp`.
+- With some optimizations off, a program runs a little differently
+  under Guidance than under Guile, and a fault that depends on the
+  optimizer's inlining may not show.
+- While a program runs, Guile's port procedures are its versions
+  written in Scheme, and standard input is non-blocking.  A program
+  that reads file descriptor 0 by other means can see "would block".
+- The Terminal is not a terminal emulator.  It shows text, with error
+  output in another color, and drops escape sequences such as cursor
+  movement.
+- Guidance's cache, `~/.cache/guidance`, is never cleaned, as Guile's
+  own is not.

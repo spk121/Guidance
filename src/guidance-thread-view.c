@@ -17,20 +17,19 @@
  */
 
 #include "guidance-thread-view.h"
-#include "guidance-emoji.h"
 #include "guidance-thread-info.h"
 #include "guidance-xgtk.h"
-#include <glib-unix.h>
 
+/* The Threads page: the program's main thread, which runs it, and the
+ * threads it started.  The REPL makes the rows. */
 struct _GdnThreadView
 {
   GtkBox parent_instance;
 
-  GtkScrolledWindow *  scrolled_window;
   GtkColumnView *      column_view;
   GtkColumnViewColumn *name_col;
-  GtkColumnViewColumn *emoji_col;
-  GtkColumnViewColumn *active_col;
+  GtkColumnViewColumn *procedure_col;
+  GtkColumnViewColumn *state_col;
 
   GListStore *store;
 };
@@ -43,43 +42,9 @@ G_DEFINE_TYPE (GdnThreadView, gdn_thread_view, GTK_TYPE_BOX)
 
 static SCM scm_thread_view_type = SCM_BOOL_F;
 
-typedef void (*factory_func_t) (GtkListItemFactory *self,
-                                GtkListItem *       listitem,
-                                gpointer            user_data);
+typedef const char *(*text_getter_t) (GdnThreadInfo *info);
 
-static void set_column_view_model (GtkColumnView *view, GListModel *model);
-static void add_column_factory (GtkColumnViewColumn *col,
-                                factory_func_t       setup,
-                                factory_func_t       bind,
-                                factory_func_t       unbind);
-
-static void name_setup (GtkListItemFactory *factory,
-                        GtkListItem *       list_item,
-                        void *              user_data);
-static void name_bind (GtkListItemFactory *factory,
-                       GtkListItem *       list_item,
-                       void *              user_data);
-static void name_unbind (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void emoji_setup (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void emoji_bind (GtkListItemFactory *factory,
-                        GtkListItem *       list_item,
-                        void *              user_data);
-static void emoji_unbind (GtkListItemFactory *factory,
-                          GtkListItem *       list_item,
-                          void *              user_data);
-static void active_setup (GtkListItemFactory *factory,
-                          GtkListItem *       list_item,
-                          void *              user_data);
-static void active_bind (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void active_unbind (GtkListItemFactory *factory,
-                           GtkListItem *       list_item,
-                           void *              user_data);
+static void add_text_column (GtkColumnViewColumn *col, text_getter_t getter);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -98,8 +63,8 @@ gdn_thread_view_class_init (GdnThreadViewClass *klass)
 
   BIND (column_view);
   BIND (name_col);
-  BIND (emoji_col);
-  BIND (active_col);
+  BIND (procedure_col);
+  BIND (state_col);
 
 #undef BIND
 }
@@ -110,11 +75,13 @@ gdn_thread_view_init (GdnThreadView *self)
   gtk_widget_init_template (GTK_WIDGET (self));
   self->store = g_list_store_new (GDN_THREAD_INFO_TYPE);
 
-  set_column_view_model (self->column_view, G_LIST_MODEL (self->store));
-  add_column_factory (self->name_col, name_setup, name_bind, name_unbind);
-  add_column_factory (self->emoji_col, emoji_setup, emoji_bind, emoji_unbind);
-  add_column_factory (self->active_col, active_setup, active_bind,
-                      active_unbind);
+  gtk_column_view_set_model (
+      self->column_view,
+      GTK_SELECTION_MODEL (gtk_no_selection_new (
+          G_LIST_MODEL (g_object_ref (self->store)))));
+  add_text_column (self->name_col, gdn_thread_info_get_name);
+  add_text_column (self->procedure_col, gdn_thread_info_get_procedure);
+  add_text_column (self->state_col, gdn_thread_info_get_state);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -122,175 +89,52 @@ gdn_thread_view_init (GdnThreadView *self)
 ////////////////////////////////////////////////////////////////
 
 static void
-name_activate (G_GNUC_UNUSED GtkButton *self, G_GNUC_UNUSED gpointer user_data)
-{
-#if 1
-  g_debug ("activate thread");
-#else
-  GtkListItem *list_item = user_data;
-
-  GObject *      obj = gtk_list_item_get_item (list_item);
-  GdnThreadInfo *info = GDN_THREAD_INFO (obj);
-  SCM            bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
-  gdn_binding_info_update_all (bindings);
-#endif
-}
-
-static void
-name_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
+text_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
             GtkListItem *                     list_item,
             G_GNUC_UNUSED gpointer            user_data)
 {
-  GtkButton *button;
-  GtkLabel * label;
+  GtkLabel *label = GTK_LABEL (gtk_label_new (NULL));
 
-  button = GTK_BUTTON (gtk_button_new_with_label (NULL));
-  label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
-  gtk_label_set_width_chars (label, 30);
-  gtk_list_item_set_child (list_item, GTK_WIDGET (button));
-
-  g_signal_connect (G_OBJECT (button), "clicked", G_CALLBACK (name_activate),
-                    list_item);
+  gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
+  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
 static void
-name_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
+text_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
            GtkListItem *                     list_item,
-           G_GNUC_UNUSED gpointer            user_data)
+           gpointer                          user_data)
 {
-  GtkButton *    button;
-  GtkLabel *     label;
-  GdnThreadInfo *info;
-  GObject *      obj;
+  text_getter_t  getter = (text_getter_t) user_data;
+  GtkLabel *     label = GTK_LABEL (gtk_list_item_get_child (list_item));
+  GdnThreadInfo *info = GDN_THREAD_INFO (gtk_list_item_get_item (list_item));
 
-  button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = GTK_LABEL (gtk_button_get_child (button));
-  obj = gtk_list_item_get_item (list_item);
-  info = GDN_THREAD_INFO (obj);
-  gtk_label_set_text (label, gdn_thread_info_get_name (info));
-  if (label)
-    gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
+  gtk_label_set_text (label, getter (info));
 }
 
 static void
-name_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
+text_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
              GtkListItem *                     list_item,
              G_GNUC_UNUSED gpointer            user_data)
 {
-  GtkButton *button;
-  GtkLabel * label;
-
-  button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = GTK_LABEL (gtk_button_get_child (button));
-  gtk_label_set_text (label, "");
-}
-
-static void
-emoji_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
-             GtkListItem *                     list_item,
-             G_GNUC_UNUSED gpointer            user_data)
-{
-  GtkLabel *label;
-
-  label = GTK_LABEL (gtk_label_new (NULL));
-  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
-}
-
-static void
-emoji_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
-            GtkListItem *                     list_item,
-            G_GNUC_UNUSED gpointer            user_data)
-{
-  GtkLabel *     label;
-  GObject *      obj;
-  GdnThreadInfo *info;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  obj = gtk_list_item_get_item (list_item);
-  info = GDN_THREAD_INFO (obj);
-  const char *name = gdn_thread_info_get_name (info);
-  char *      emoji = gdn_string_hash_to_emoji (name);
-  gtk_label_set_text (label, emoji);
-  free (emoji);
-}
-
-static void
-emoji_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
-              GtkListItem *                     list_item,
-              G_GNUC_UNUSED gpointer            user_data)
-{
-  GtkLabel *label;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  gtk_label_set_text (label, "");
-}
-
-static void
-active_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
-              GtkListItem *                     list_item,
-              G_GNUC_UNUSED gpointer            user_data)
-{
-  GtkLabel *label;
-
-  label = GTK_LABEL (gtk_label_new (NULL));
-  gtk_list_item_set_child (list_item, GTK_WIDGET (label));
-}
-
-static void
-active_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
-             GtkListItem *                     list_item,
-             G_GNUC_UNUSED gpointer            user_data)
-{
-  GtkLabel *     label;
-  GObject *      obj;
-  GdnThreadInfo *info;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  obj = gtk_list_item_get_item (list_item);
-  info = GDN_THREAD_INFO (obj);
-  if (gdn_thread_info_get_active (info))
-    gtk_label_set_text (label, "Y");
-  else
-    gtk_label_set_text (label, "N");
-}
-
-static void
-active_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
-               GtkListItem *                     list_item,
-               G_GNUC_UNUSED gpointer            user_data)
-{
-  GtkLabel *label;
-
-  label = GTK_LABEL (gtk_list_item_get_child (list_item));
-  gtk_label_set_text (label, "");
+  gtk_label_set_text (GTK_LABEL (gtk_list_item_get_child (list_item)), "");
 }
 
 ////////////////////////////////////////////////////////////////
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
+/* Makes COL show the text that GETTER returns for each row. */
 static void
-set_column_view_model (GtkColumnView *view, GListModel *model)
+add_text_column (GtkColumnViewColumn *col, text_getter_t getter)
 {
-  GtkNoSelection *nosel_model;
-  nosel_model =
-      gtk_no_selection_new (G_LIST_MODEL (g_object_ref (G_OBJECT (model))));
-  gtk_column_view_set_model (view, GTK_SELECTION_MODEL (nosel_model));
-}
+  GtkListItemFactory *factory = gtk_signal_list_item_factory_new ();
 
-static void
-add_column_factory (GtkColumnViewColumn *col,
-                    factory_func_t       setup,
-                    factory_func_t       bind,
-                    factory_func_t       unbind)
-{
-  GtkSignalListItemFactory *factory;
-  factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (factory, "setup", G_CALLBACK (setup), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (bind), NULL);
-  g_signal_connect (factory, "unbind", G_CALLBACK (unbind), NULL);
-  gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
+  g_signal_connect (factory, "setup", G_CALLBACK (text_setup), NULL);
+  g_signal_connect (factory, "bind", G_CALLBACK (text_bind), getter);
+  g_signal_connect (factory, "unbind", G_CALLBACK (text_unbind), NULL);
+  gtk_column_view_column_set_factory (col, factory);
+  g_object_unref (factory);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -304,21 +148,28 @@ gdn_thread_view_to_scm (GdnThreadView *self)
   return scm_make_foreign_object_1 (scm_thread_view_type, self);
 }
 
+/* ROWS is a vector of vectors #(NAME PROCEDURE STATE), made by the
+ * REPL. */
 static SCM
-scm_update_threads_x (SCM s_self)
+scm_update_threads_x (SCM s_self, SCM s_rows)
 {
   scm_assert_foreign_object_type (scm_thread_view_type, s_self);
+  SCM_ASSERT_TYPE (scm_is_vector (s_rows), s_rows, SCM_ARG2,
+                   "gdn-update-threads!", "vector");
   GdnThreadView *self = scm_foreign_object_ref (s_self, 0);
 
-  /* Since this is Guile API, it is probably being called from a Guile
-   * thread instead of the Gtk thread.  GListModel's can only be
-   * updated from the Gtk thread, so the update is sent there. */
-  SCM        all_threads = scm_vector (scm_all_threads ());
-  size_t     len = scm_c_vector_length (all_threads);
+  size_t     len = scm_c_vector_length (s_rows);
   GPtrArray *items = g_ptr_array_new_full (len, g_object_unref);
   for (size_t i = 0; i < len; i++)
-    g_ptr_array_add (items, gdn_thread_info_new_from_scm (
-                                scm_c_vector_ref (all_threads, i)));
+    {
+      GdnThreadInfo *info =
+          gdn_thread_info_new_from_scm (scm_c_vector_ref (s_rows, i));
+      if (info != NULL)
+        g_ptr_array_add (items, info);
+    }
+
+  /* Probably called from the Guile thread; GListModels can only be
+   * updated from the GTK thread, so the update is sent there. */
   xgtk_list_store_replace_all_on_main (self->store, items);
   return SCM_UNSPECIFIED;
 }
@@ -332,6 +183,6 @@ gdn_thread_view_guile_init (void)
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_thread_view_type = scm_make_foreign_object_type (name, slots, NULL);
 
-  scm_c_define_gsubr ("gdn-update-threads!", 1, 0, 0, scm_update_threads_x);
+  scm_c_define_gsubr ("gdn-update-threads!", 2, 0, 0, scm_update_threads_x);
   scm_c_export ("gdn-update-threads!", NULL);
 }

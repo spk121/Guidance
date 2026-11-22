@@ -8,20 +8,25 @@
         <property name="vexpand">True</property>
         <child>
           <object class="GtkColumnView" id="column_view">
-            <property name="single-click-activate">True</property>
             <child>
               <object class="GtkColumnViewColumn" id="name_col">
-                <property name="title">Thread ID</property>
+                <property name="title">Thread</property>
+                <property name="resizable">True</property>
+                <property name="fixed-width">160</property>
               </object>
             </child>
             <child>
-              <object class="GtkColumnViewColumn" id="emoji_col">
-                <property name="title">ID</property>
+              <object class="GtkColumnViewColumn" id="procedure_col">
+                <property name="title">Started with</property>
+                <property name="resizable">True</property>
+                <property name="expand">True</property>
               </object>
             </child>
             <child>
-              <object class="GtkColumnViewColumn" id="active_col">
-                <property name="title">Active</property>
+              <object class="GtkColumnViewColumn" id="state_col">
+                <property name="title">State</property>
+                <property name="resizable">True</property>
+                <property name="fixed-width">180</property>
               </object>
             </child>
           </object>

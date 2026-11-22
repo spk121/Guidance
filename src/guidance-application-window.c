@@ -154,6 +154,9 @@ static void     handle_source_view_breakpoint (GdnSourceView *view,
                                                const char *   file,
                                                int            line,
                                                gpointer       user_data);
+static void     handle_source_view_delete_breakpoint (GdnSourceView *view,
+                                                      int            index,
+                                                      gpointer       user_data);
 static void     handle_process_pause (GSimpleAction *simple,
                                       GVariant *     parameter,
                                       gpointer       user_data);
@@ -306,7 +309,6 @@ gdn_application_window_init (GdnApplicationWindow *self)
   gdn_terminal_view_connect_ports (self->terminal_view,
                                    gdn_lisp_get_input_fd (self->lisp),
                                    gdn_lisp_get_input_prompt_fd (self->lisp),
-                                   gdn_lisp_get_input_error_fd (self->lisp),
                                    gdn_lisp_get_output_fd (self->lisp));
   g_signal_connect (self->terminal_view, "entry", G_CALLBACK (handle_entry),
                     self);
@@ -315,6 +317,8 @@ gdn_application_window_init (GdnApplicationWindow *self)
   gtk_box_append (self->source_box, GTK_WIDGET (self->source_view));
   g_signal_connect (self->source_view, "breakpoint",
                     G_CALLBACK (handle_source_view_breakpoint), self);
+  g_signal_connect (self->source_view, "delete-breakpoint",
+                    G_CALLBACK (handle_source_view_delete_breakpoint), self);
 
   self->trap_view = g_object_new (GDN_TYPE_TRAP_VIEW, NULL);
   gtk_scrolled_window_set_child (self->trap_window,
@@ -546,6 +550,15 @@ handle_source_view_breakpoint (G_GNUC_UNUSED GdnSourceView *view,
 }
 
 static void
+handle_source_view_delete_breakpoint (G_GNUC_UNUSED GdnSourceView *view,
+                                      int                          index,
+                                      gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_request_trap_delete (self->lisp, index);
+}
+
+static void
 handle_process_pause (G_GNUC_UNUSED GSimpleAction *simple,
                       G_GNUC_UNUSED GVariant *     parameter,
                       gpointer                     user_data)
@@ -555,14 +568,15 @@ handle_process_pause (G_GNUC_UNUSED GSimpleAction *simple,
     gdn_lisp_pause_async (self->lisp);
 }
 
-/* F9: a breakpoint at the cursor's line of the Source page. */
+/* F9: set or delete the breakpoint at the cursor's line of the Source
+ * page. */
 static void
 handle_set_breakpoint (G_GNUC_UNUSED GSimpleAction *simple,
                        G_GNUC_UNUSED GVariant *     parameter,
                        gpointer                     user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_source_view_request_breakpoint (self->source_view);
+  gdn_source_view_toggle_breakpoint (self->source_view);
 }
 
 static void

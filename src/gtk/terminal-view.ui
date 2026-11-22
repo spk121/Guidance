@@ -21,9 +21,8 @@
     <child type="tag">
       <object class="GtkTextTag">
         <property name="name">input</property>
-        <property name="weight">500</property>
+        <property name="weight">700</property>
         <property name="weight-set">True</property>
-        <property name="family">monospace</property>
       </object>
     </child>
     <child type="tag">
@@ -56,10 +55,11 @@
             <property name="vexpand">True</property>
             <property name="wrap-mode">char</property>
             <property name="editable">False</property>
+            <property name="monospace">True</property>
+            <property name="left-margin">6</property>
+            <property name="right-margin">6</property>
+            <property name="top-margin">4</property>
             <property name="buffer">text_buffer</property>
-            <style>
-              <class name="terminal_text_buffer" />
-            </style>
           </object>
         </child>
       </object>
@@ -69,8 +69,10 @@
         <child>
           <object class="GtkLabel" id="prompt_label">
             <property name="label">prompt&gt;</property>
+            <property name="margin-start">6</property>
+            <property name="margin-end">6</property>
             <style>
-              <class name="terminal_prompt" />
+              <class name="monospace" />
             </style>
           </object>
         </child>
@@ -78,10 +80,16 @@
           <object class="GtkEntry" id="input_entry">
             <property name="hexpand">True</property>
             <property name="placeholder-text">Enter Guile commands here</property>
+            <style>
+              <class name="monospace" />
+            </style>
           </object>
         </child>
         <child>
-          <object class="GtkMenuButton">
+          <object class="GtkMenuButton" id="history_button">
+            <property name="icon-name">pan-down-symbolic</property>
+            <property name="tooltip-text">Recent entries</property>
+            <property name="sensitive">False</property>
           </object>
         </child>
       </object>

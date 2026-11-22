@@ -17,6 +17,7 @@
  */
 
 #include "guidance-terminal-view.h"
+#include <errno.h>
 #include "guidance-xgtk.h"
 #include <glib-unix.h>
 
@@ -24,23 +25,30 @@ struct _GdnTerminalView
 {
   GtkBox parent_instance;
 
-  GList *        history;
-  GList *        history_cur;
+  GList *        history;      /* of char *, most recent first */
+  GList *        history_cur;  /* The entry shown, or NULL for the draft */
+  char *         history_draft; /* What was typed before Up was pressed */
+  guint          history_length;
+  GtkMenuButton *history_button;
+  GMenu *        history_menu;
   GtkTextView *  text_view;
   GtkTextBuffer *text_buffer;
   GtkLabel *     prompt_label;
   GtkEntry *     input_entry;
   guint          input_source;
   guint          prompt_source;
-  guint          error_source;
   int            output_fd;
-  int            input_fd; /* The program's output */
-  int            error_fd; /* The program's error output */
+  int            input_fd; /* The program's output and error output */
   /* Bytes read from each stream that end part-way through a UTF-8
    * character, kept until the rest arrives. */
   GByteArray *   input_pending;
   GByteArray *   prompt_pending;
-  GByteArray *   error_pending;
+  /* An escape sequence in the output, until it is complete, and
+   * whether the output is error text. */
+  GString *      escape_partial;
+  gboolean       in_error;
+  /* A prompt read so far, until the newline that ends it. */
+  GString *      prompt_partial;
   GtkTextMark *  end_mark; /* Stays at the end of the text */
   guint          scroll_source;
   /* For the transcript: whether old text has been dropped, whether
@@ -59,22 +67,31 @@ G_DEFINE_TYPE (GdnTerminalView, gdn_terminal_view, GTK_TYPE_BOX)
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 static void activate_terminal_entry (GtkEntry *entry, gpointer user_data);
+static gboolean history_step (GdnTerminalView *self, gboolean older);
+static void     recall_activated (GSimpleAction *action,
+                                  GVariant *     parameter,
+                                  gpointer       user_data);
+static void     add_to_history (GdnTerminalView *self, const char *text);
+static void     write_to_program (GdnTerminalView *self,
+                                  const char *     text,
+                                  size_t           len);
+static gboolean entry_key_pressed (GtkEventControllerKey *controller,
+                                   guint                  keyval,
+                                   guint                  keycode,
+                                   GdkModifierType        state,
+                                   gpointer               user_data);
 
 static gboolean
 poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data);
 static gboolean
 poll_terminal_prompt (gint fd, GIOCondition condition, gpointer user_data);
-static gboolean
-poll_terminal_error (gint fd, GIOCondition condition, gpointer user_data);
 
 static char *read_text (int fd, GByteArray *pending);
 static void  append_text (GdnTerminalView *self,
                           const char *     text,
                           const char *     tag_name);
-static void  drain_stream (GdnTerminalView *self,
-                           int              fd,
-                           GByteArray *     pending,
-                           const char *     tag_name);
+static void  append_program_text (GdnTerminalView *self, const char *text);
+static void  drain_stream (GdnTerminalView *self, int fd, GByteArray *pending);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -103,6 +120,7 @@ gdn_terminal_view_class_init (GdnTerminalViewClass *klass)
   BIND (text_buffer);
   BIND (prompt_label);
   BIND (input_entry);
+  BIND (history_button);
 #undef BIND
 
   signals[ENTRY] =
@@ -118,10 +136,14 @@ gdn_terminal_view_init (GdnTerminalView *self)
 
   self->history = NULL;
   self->history_cur = NULL;
+  self->history_draft = NULL;
+  self->history_length = 0;
   self->output_fd = STDOUT_FILENO;
   self->input_pending = g_byte_array_new ();
   self->prompt_pending = g_byte_array_new ();
-  self->error_pending = g_byte_array_new ();
+  self->prompt_partial = g_string_new (NULL);
+  self->escape_partial = g_string_new (NULL);
+  self->in_error = FALSE;
   {
     GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->text_view);
     GtkTextIter    end;
@@ -138,6 +160,26 @@ gdn_terminal_view_init (GdnTerminalView *self)
 
   g_signal_connect (self->input_entry, "activate",
                     G_CALLBACK (activate_terminal_entry), self);
+
+  /* Ctrl+D, for end-of-file.  The capture phase sees it before the
+   * entry's own key bindings. */
+  GtkEventController *keys = gtk_event_controller_key_new ();
+  gtk_event_controller_set_propagation_phase (keys, GTK_PHASE_CAPTURE);
+  g_signal_connect (keys, "key-pressed", G_CALLBACK (entry_key_pressed), self);
+  gtk_widget_add_controller (GTK_WIDGET (self->input_entry), keys);
+
+  /* The menu beside the entry offers the recent entries. */
+  self->history_menu = g_menu_new ();
+  gtk_menu_button_set_menu_model (self->history_button,
+                                  G_MENU_MODEL (self->history_menu));
+  GSimpleActionGroup *actions = g_simple_action_group_new ();
+  GSimpleAction *recall = g_simple_action_new ("recall", G_VARIANT_TYPE_STRING);
+  g_signal_connect (recall, "activate", G_CALLBACK (recall_activated), self);
+  g_action_map_add_action (G_ACTION_MAP (actions), G_ACTION (recall));
+  g_object_unref (recall);
+  gtk_widget_insert_action_group (GTK_WIDGET (self), "terminal",
+                                  G_ACTION_GROUP (actions));
+  g_object_unref (actions);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -148,7 +190,6 @@ void
 gdn_terminal_view_connect_ports (GdnTerminalView *self,
                                  int              input_fd,
                                  int              prompt_fd,
-                                 int              error_fd,
                                  int              output_fd)
 {
   /* The program's output is read when the GTK thread has nothing else
@@ -161,12 +202,8 @@ gdn_terminal_view_connect_ports (GdnTerminalView *self,
   self->prompt_source =
       g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, prompt_fd, G_IO_IN,
                           poll_terminal_prompt, self, NULL);
-  self->error_source =
-      g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, error_fd, G_IO_IN,
-                          poll_terminal_error, self, NULL);
   self->output_fd = output_fd;
   self->input_fd = input_fd;
-  self->error_fd = error_fd;
 
   /* A stream that is ready when the GTK thread looks may have been
    * read by drain_stream by the time its handler runs.  The read must
@@ -174,7 +211,6 @@ gdn_terminal_view_connect_ports (GdnTerminalView *self,
    * GTK thread. */
   g_unix_set_fd_nonblocking (input_fd, TRUE, NULL);
   g_unix_set_fd_nonblocking (prompt_fd, TRUE, NULL);
-  g_unix_set_fd_nonblocking (error_fd, TRUE, NULL);
 }
 
 void
@@ -184,8 +220,6 @@ gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *self)
   self->input_source = 0;
   g_source_remove (self->prompt_source);
   self->prompt_source = 0;
-  g_source_remove (self->error_source);
-  self->error_source = 0;
   self->output_fd = STDOUT_FILENO;
 }
 
@@ -228,12 +262,8 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
     }
   else
     {
-      int bytes_written = write (self->output_fd, text, strlen (text));
-      if (bytes_written == -1)
-        g_critical ("Could not push text to the Guile interpreter");
-      if (write (self->output_fd, "\n", 1) == -1)
-        g_critical ("Could not push newline to the Guile interpreter");
-      fsync (self->output_fd);
+      write_to_program (self, text, strlen (text));
+      write_to_program (self, "\n", 1);
     }
 
   if (self->echo_mode)
@@ -245,14 +275,176 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
       g_free (line);
     }
 
-  /* Append the entry to the history */
-  if (!self->history || strncmp (text, self->history->data, strlen (text)) != 0)
-    self->history =
-        g_list_prepend (self->history, strndup (text, strlen (text)));
-  self->history_cur = self->history;
+  add_to_history (self, text);
 
   /* Then clear the entry box. */
   gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
+}
+
+/* Writes all of TEXT to the program's standard input. */
+static void
+write_to_program (GdnTerminalView *self, const char *text, size_t len)
+{
+  while (len > 0)
+    {
+      ssize_t n = write (self->output_fd, text, len);
+      if (n < 0)
+        {
+          if (errno == EINTR)
+            continue;
+          g_critical ("Could not send input to the program: %s",
+                      g_strerror (errno));
+          return;
+        }
+      text += n;
+      len -= n;
+    }
+}
+
+/* Ctrl+D, while a program runs: the text in the entry, if any, as a
+ * line, then end-of-file.  The program's standard input is a
+ * pseudoterminal in canonical mode, where the EOF character at the
+ * start of a line makes a read return nothing: end-of-file.  (Without
+ * the newline, the EOF character would only end the line, as on a
+ * terminal, and another would be needed.) */
+static void
+send_end_of_file (GdnTerminalView *self)
+{
+  const char *text =
+      gtk_entry_buffer_get_text (gtk_entry_get_buffer (self->input_entry));
+  size_t len = strlen (text);
+
+  if (len > 0)
+    {
+      write_to_program (self, text, len);
+      write_to_program (self, "\n", 1);
+    }
+  write_to_program (self, "\004", 1);
+
+  if (self->echo_mode)
+    {
+      char *shown = g_strconcat (text, len > 0 ? "\n" : "", "^D\n", NULL);
+      append_text (self, shown, "input");
+      g_free (shown);
+    }
+  gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
+}
+
+static gboolean
+entry_key_pressed (G_GNUC_UNUSED GtkEventControllerKey *controller,
+                   guint                                keyval,
+                   G_GNUC_UNUSED guint                  keycode,
+                   GdkModifierType                      state,
+                   gpointer                             user_data)
+{
+  GdnTerminalView *self = user_data;
+
+  if (self->port_mode && (keyval == GDK_KEY_d || keyval == GDK_KEY_D)
+      && (state & GDK_CONTROL_MASK))
+    {
+      send_end_of_file (self);
+      return TRUE;
+    }
+  if (keyval == GDK_KEY_Up || keyval == GDK_KEY_KP_Up)
+    return history_step (self, TRUE);
+  if (keyval == GDK_KEY_Down || keyval == GDK_KEY_KP_Down)
+    return history_step (self, FALSE);
+  return FALSE;
+}
+
+/* The most entries the history keeps, and the most the menu shows. */
+#define MAX_HISTORY 500
+#define MAX_HISTORY_MENU 15
+
+static void
+set_entry_text (GdnTerminalView *self, const char *text)
+{
+  gtk_editable_set_text (GTK_EDITABLE (self->input_entry), text);
+  gtk_editable_set_position (GTK_EDITABLE (self->input_entry), -1);
+}
+
+/* Up (OLDER) and Down go through the history, as in a shell.  Down past
+ * the newest entry gives back what was being typed. */
+static gboolean
+history_step (GdnTerminalView *self, gboolean older)
+{
+  if (older)
+    {
+      GList *next = self->history_cur ? self->history_cur->next
+                                      : self->history;
+      if (next == NULL)
+        return self->history != NULL;
+      if (self->history_cur == NULL)
+        {
+          g_free (self->history_draft);
+          self->history_draft = g_strdup (
+              gtk_editable_get_text (GTK_EDITABLE (self->input_entry)));
+        }
+      self->history_cur = next;
+      set_entry_text (self, next->data);
+    }
+  else
+    {
+      if (self->history_cur == NULL)
+        return FALSE;
+      self->history_cur = self->history_cur->prev;
+      set_entry_text (self, self->history_cur ? self->history_cur->data
+                                              : (self->history_draft
+                                                     ? self->history_draft
+                                                     : ""));
+    }
+  return TRUE;
+}
+
+static void
+rebuild_history_menu (GdnTerminalView *self)
+{
+  GList *item = self->history;
+
+  g_menu_remove_all (self->history_menu);
+  for (int i = 0; item != NULL && i < MAX_HISTORY_MENU; item = item->next, i++)
+    {
+      GMenuItem *menu_item = g_menu_item_new (item->data, NULL);
+      g_menu_item_set_action_and_target (menu_item, "terminal.recall", "s",
+                                         (const char *) item->data);
+      g_menu_append_item (self->history_menu, menu_item);
+      g_object_unref (menu_item);
+    }
+  gtk_widget_set_sensitive (GTK_WIDGET (self->history_button),
+                            self->history != NULL);
+}
+
+/* Adds TEXT, just entered, to the history, unless it is empty or the
+ * same as the newest entry. */
+static void
+add_to_history (GdnTerminalView *self, const char *text)
+{
+  self->history_cur = NULL;
+  g_clear_pointer (&self->history_draft, g_free);
+  if (*text == '\0'
+      || (self->history != NULL && strcmp (text, self->history->data) == 0))
+    return;
+
+  self->history = g_list_prepend (self->history, g_strdup (text));
+  if (++self->history_length > MAX_HISTORY)
+    {
+      GList *oldest = g_list_last (self->history);
+      g_free (oldest->data);
+      self->history = g_list_delete_link (self->history, oldest);
+      self->history_length--;
+    }
+  rebuild_history_menu (self);
+}
+
+/* The history menu's items put an entry back in the entry. */
+static void
+recall_activated (G_GNUC_UNUSED GSimpleAction *action,
+                  GVariant *                   parameter,
+                  gpointer                     user_data)
+{
+  GdnTerminalView *self = user_data;
+  set_entry_text (self, g_variant_get_string (parameter, NULL));
+  gtk_widget_grab_focus (GTK_WIDGET (self->input_entry));
 }
 
 gboolean
@@ -265,22 +457,7 @@ poll_terminal_text (gint                       fd,
 
   if (text == NULL)
     return G_SOURCE_REMOVE;
-  append_text (self, text, NULL);
-  g_free (text);
-  return G_SOURCE_CONTINUE;
-}
-
-gboolean
-poll_terminal_error (gint                       fd,
-                     G_GNUC_UNUSED GIOCondition condition,
-                     gpointer                   user_data)
-{
-  GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
-  char *           text = read_text (fd, self->error_pending);
-
-  if (text == NULL)
-    return G_SOURCE_REMOVE;
-  append_text (self, text, "error");
+  append_program_text (self, text);
   g_free (text);
   return G_SOURCE_CONTINUE;
 }
@@ -298,38 +475,46 @@ poll_terminal_prompt (gint                       fd,
 
   /* The REPL prints its prompt after the output that goes before it,
    * but by another stream.  Show that output first. */
-  drain_stream (self, self->input_fd, self->input_pending, NULL);
-  drain_stream (self, self->error_fd, self->error_pending, "error");
-
-  /* Clear out the old label */
-  gtk_label_set_text (self->prompt_label, "");
+  drain_stream (self, self->input_fd, self->input_pending);
 
   /* Read from the port */
   buf = read_text (fd, self->prompt_pending);
   if (buf == NULL)
     return G_SOURCE_REMOVE;
 
-  /* How big a prompt should we handle? */
-  glong u8_len;
-  u8_len = g_utf8_strlen (buf, MAX_PROMPT_BYTES);
-  if (u8_len > MAX_PROMPT_CODEPOINTS)
-    {
-      gchar *substr = g_utf8_substring (buf, 0, MAX_PROMPT_CODEPOINTS);
-      gtk_label_set_text (self->prompt_label, substr);
-      g_free (substr);
-    }
-  else if (u8_len > 0)
-    gtk_label_set_text (self->prompt_label, buf);
+  /* The REPL ends each prompt with a newline.  One read can hold more
+   * than one prompt, or part of one: show the last complete one, and
+   * keep what follows until its newline arrives. */
+  g_string_append (self->prompt_partial, buf);
+  g_free (buf);
 
-  if (u8_len > 0)
+  char *newline;
+  while ((newline = strchr (self->prompt_partial->str, '\n')) != NULL)
     {
+      char *prompt = g_strndup (self->prompt_partial->str,
+                                newline - self->prompt_partial->str);
+      /* The pseudoterminal turns the newline into a carriage return
+       * and a newline. */
+      g_strdelimit (prompt, "\r", '\0');
+      g_string_erase (self->prompt_partial, 0,
+                      newline - self->prompt_partial->str + 1);
+
+      /* How big a prompt should we handle? */
+      if (g_utf8_strlen (prompt, MAX_PROMPT_BYTES) > MAX_PROMPT_CODEPOINTS)
+        {
+          gchar *substr = g_utf8_substring (prompt, 0, MAX_PROMPT_CODEPOINTS);
+          g_free (prompt);
+          prompt = substr;
+        }
+      gtk_label_set_text (self->prompt_label, prompt);
+
       /* Prompts are shown in a label, not the text view, so mark them
        * in the transcript. */
-      char *line = g_strdup_printf ("[prompt %s]\n", buf);
+      char *line = g_strdup_printf ("[prompt %s]\n", prompt);
       xgtk_transcribe (line);
       g_free (line);
+      g_free (prompt);
     }
-  g_free (buf);
 
   return G_SOURCE_CONTINUE;
 }
@@ -452,10 +637,7 @@ read_text (int fd, GByteArray *pending)
  * It stops after a few megabytes, in case another thread of the
  * program is printing without end. */
 static void
-drain_stream (GdnTerminalView *self,
-              int              fd,
-              GByteArray *     pending,
-              const char *     tag_name)
+drain_stream (GdnTerminalView *self, int fd, GByteArray *pending)
 {
   for (int i = 0; i < 64; i++)
     {
@@ -467,9 +649,104 @@ drain_stream (GdnTerminalView *self,
       text = read_text (fd, pending);
       if (text == NULL)
         break;
-      append_text (self, text, tag_name);
+      append_program_text (self, text);
       g_free (text);
     }
+}
+
+/* Applies the escape sequence SEQ, which is complete: an ECMA-48
+ * control sequence, ESC [ PARAMETERS FINAL.  Guidance's error port
+ * puts error text between ESC [ 31 m (red) and ESC [ 39 m (the default
+ * color), so red is taken to mean error text, and the default color or
+ * a reset to mean the end of it.  Other sequences are dropped. */
+static void
+apply_escape (GdnTerminalView *self, const char *seq, size_t len)
+{
+  if (len < 3 || seq[1] != '[' || seq[len - 1] != 'm')
+    return;
+
+  char * params = g_strndup (seq + 2, len - 3);
+  char **codes = g_strsplit (params, ";", -1);
+  for (char **code = codes; *code != NULL; code++)
+    {
+      int n = (**code == '\0') ? 0 : atoi (*code);
+      if (n == 31)
+        self->in_error = TRUE;
+      else if (n == 0 || n == 39)
+        self->in_error = FALSE;
+    }
+  g_strfreev (codes);
+  g_free (params);
+}
+
+/* The length of the escape sequence at the start of TEXT, which begins
+ * with ESC, or 0 if TEXT ends before the sequence does.  A sequence
+ * is ESC [, parameter and intermediate bytes, and a final byte; any
+ * other escape is taken to be ESC and one character. */
+static size_t
+escape_length (const char *text)
+{
+  if (text[1] == '\0')
+    return 0;
+  if (text[1] != '[')
+    return 2;
+  for (size_t i = 2; text[i] != '\0'; i++)
+    if ((unsigned char) text[i] >= 0x40 && (unsigned char) text[i] <= 0x7e)
+      return i + 1;
+    else if ((unsigned char) text[i] < 0x20 || (unsigned char) text[i] > 0x7e)
+      /* Not a control sequence after all: drop just the ESC [. */
+      return 2;
+  return 0;
+}
+
+/* The longest escape sequence kept while waiting for its end. */
+#define MAX_ESCAPE_LEN 64
+
+/* Shows TEXT, which came from the program's output, with error text
+ * as such, and without escape sequences. */
+static void
+append_program_text (GdnTerminalView *self, const char *text)
+{
+  char *      joined = NULL;
+  const char *p;
+
+  /* An escape sequence that the last read cut short. */
+  if (self->escape_partial->len > 0)
+    {
+      joined = g_strconcat (self->escape_partial->str, text, NULL);
+      g_string_truncate (self->escape_partial, 0);
+      text = joined;
+    }
+
+  p = text;
+  while (*p != '\0')
+    {
+      const char *esc = strchr (p, '\033');
+      if (esc == NULL)
+        {
+          append_text (self, p, self->in_error ? "error" : NULL);
+          break;
+        }
+      if (esc > p)
+        {
+          char *piece = g_strndup (p, esc - p);
+          append_text (self, piece, self->in_error ? "error" : NULL);
+          g_free (piece);
+        }
+
+      size_t len = escape_length (esc);
+      if (len == 0)
+        {
+          /* Keep the start of the sequence for the next read, unless it
+           * is too long to be one. */
+          if (strlen (esc) < MAX_ESCAPE_LEN)
+            g_string_assign (self->escape_partial, esc);
+          break;
+        }
+      apply_escape (self, esc, len);
+      p = esc + len;
+    }
+  g_free (joined);
 }
 
 static gboolean

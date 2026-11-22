@@ -64,7 +64,10 @@ start () {
 # stop_app: checks that Guidance is healthy, then closes it.
 stop_app () {
     kill -0 "$APP" 2>/dev/null || fail "Guidance exited"
-    if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
+    # Sanitizer reports go to file descriptor 2, which is the
+    # Terminal's, so look in the transcript too.
+    if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG" ||
+       grep -E "runtime error|AddressSanitizer" "$TRANSCRIPT"; then
         fail "problems were logged"
     fi
     kill "$APP" 2>/dev/null
@@ -122,6 +125,26 @@ type_line () {
     xdotool key Return
 }
 
+# Guidance compiles its own Scheme modules into its cache the first
+# time, and loads them from there afterwards.  (The REPL test checks
+# that they compile without warnings.)
+OLD_CACHE=${XDG_CACHE_HOME-}
+export XDG_CACHE_HOME=$WORK/cache
+start
+for module in lib repl; do
+    ls "$XDG_CACHE_HOME"/guidance/modules/*/*/gdn/$module.go >/dev/null 2>&1 ||
+        fail "gdn/$module.go is not in the cache"
+done
+echo "ok: modules cached"
+stop_app
+start
+stop_app
+if [ -n "$OLD_CACHE" ]; then
+    export XDG_CACHE_HOME=$OLD_CACHE
+else
+    unset XDG_CACHE_HOME
+fi
+
 # Break, step, continue, then an error and Stop.
 start "$PROGRAMS/break.scm"
 key F5
@@ -158,6 +181,37 @@ key F5
 wait_for "Breakpoint at break.scm:6, at break.scm:6"
 key shift+F5
 wait_for "Stopped."
+stop_app
+
+# F9 on a line with a breakpoint deletes it.  The Source page learns
+# of the breakpoint from the REPL, which marks it in the margin.
+start "$PROGRAMS/break.scm"
+key F5
+wait_for "[prompt break>]"
+sleep 0.5
+key F9
+wait_for "Trap 0: Breakpoint at break.scm:6"
+sleep 0.5
+key F9
+key F5
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "Break at break.scm:6" 2
+refute "Breakpoint at break.scm:6, at"
+key shift+F5
+wait_for "Stopped."
+stop_app
+
+# Output and error output appear in the order they were written, and
+# escape sequences are not shown.
+start "$PROGRAMS/interleave.scm"
+key F5
+wait_for "plain bold plain"
+tr '\r\n' '..' < "$TRANSCRIPT" | sed 's/\.\.*/./g' |
+    grep -q "out 1.err 1.out 2.err 2.out 3.err 3.out 4.err 4.out 5.err 5" ||
+    fail "output and error output are out of order"
+echo "ok: in order"
+refute ";;; compiling"
 stop_app
 
 # Stepping out of the program, and past its last line, lets it finish
@@ -298,6 +352,54 @@ key shift+F5
 wait_for "Stopped."
 stop_app
 
+# Recursion without end enters error mode, and Stop leaves it.
+start "$PROGRAMS/deep.scm"
+key F5
+wait_for "Stack overflow: the program used more than"
+wait_for "[prompt error>]"
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+stop_app
+
+# A subprocess's output and input are the Terminal's.
+start "$PROGRAMS/subprocess.scm"
+key F5
+wait_for "output from a subprocess"
+wait_for "errors from a subprocess"
+wait_for "Type a line for a subprocess:"
+type_line "hello"
+wait_for "the subprocess read: hello"
+wait_for "[prompt repl>]" 2
+stop_app
+
+# Ctrl+D ends a running program's input, after any text in the entry.
+start "$PROGRAMS/eof.scm"
+key F5
+wait_for "Type lines, then Ctrl+D:"
+type_line "first"
+xdotool type --delay 20 "last"
+key ctrl+d
+wait_for 'end of input after ("first" "last")'
+wait_for "[prompt repl>]" 2
+stop_app
+
+# An expression over several lines, and the history.
+start
+type_line "(define (twice x)"
+wait_for "[prompt ...]"
+type_line "  (* 2 x))"
+wait_for "[prompt repl>]" 2
+type_line "(twice 21)"
+wait_for "→ 42"
+key Up
+key Return
+wait_for "→ 42" 2
+key Up Up Down
+key Return
+wait_for "→ 42" 3
+stop_app
+
 # _pk_ logs on the Peek page.
 start "$PROGRAMS/peek.scm"
 key F5
@@ -322,6 +424,16 @@ key F5
 wait_for "Hello, world"
 wait_for "args.scm one two))"
 wait_for "(main ("
+stop_app
+
+# Guile's harmless options are accepted, and -e takes a module's
+# procedure.
+start --debug --no-auto-compile -L "$PROGRAMS/modules" \
+      -e "(@ (guidance-test greeting) greet-arguments)" "$PROGRAMS/args.scm" one
+wait_for "guidance: --no-auto-compile is ignored"
+key F5
+wait_for "(greet-arguments ("
+refute "unrecognized option"
 stop_app
 
 # Stop interrupts a running program.

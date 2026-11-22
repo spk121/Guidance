@@ -40,8 +40,9 @@ gboolean gdn_source_view_get_cursor_location (GdnSourceView *self,
                                               const char **  file,
                                               int *          line);
 
-/* Emits "breakpoint" (file, line) for the cursor's line. */
-void gdn_source_view_request_breakpoint (GdnSourceView *self);
+/* For the cursor's line, emits "delete-breakpoint" (index) if it has
+ * a breakpoint, or else "breakpoint" (file, line). */
+void gdn_source_view_toggle_breakpoint (GdnSourceView *self);
 
 // GUILE API
 SCM  gdn_source_view_to_scm (GdnSourceView *self);

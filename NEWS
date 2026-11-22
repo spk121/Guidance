@@ -1,0 +1,52 @@
+Guidance NEWS
+=============
+
+0.2.0 (2026-11-22), an alpha release
+------------------------------------
+
+The first release that works as a debugger.
+
+* Running programs.  Guidance takes a subset of Guile's command line
+  (-L, -C, -l, -s, -c, -e, -x, --use-srfi, --fresh-auto-compile) and
+  runs the program as `guile` would, with its own command line.  Open
+  Program (Ctrl+O) chooses another.  Guile's --debug, --no-debug,
+  --auto-compile, --no-auto-compile and -q are accepted and ignored.
+
+* Pausing.  Breakpoints at lines (from the Source page, F9, or a click
+  in its margin) and at procedures (from the Modules page, or with
+  add-trap-at-procedure-call! in the REPL) last from run to run.
+  `_break_` pauses at the line that calls it; Pause (F6) pauses a
+  running program.  Programs are compiled with some optimizations off,
+  so that variables keep their names.
+
+* Stepping.  Step Over (F10), Step Into (F11) and Step Out
+  (Shift+F11) go by line, and two more buttons go by expression.
+  Stepping skips Guile's own libraries.
+
+* Inspecting.  In Error and Trap mode, the Backtrace page shows the
+  program's stack and the arguments and local variables of each frame,
+  and expressions are evaluated in the selected frame.  `_pk_` logs
+  values on the Peek page.
+
+* The Terminal shows output and error output in the order they were
+  written, in a monospace font, takes multi-line expressions, keeps a
+  history (Up, Down, and a menu), and sends end-of-file with Ctrl+D.
+  Guile's notes about compiling are hidden.
+
+* Safety.  Errors in a program's other threads are reported without
+  disturbing Guidance, and recursion without end stops at a 256 MiB
+  stack with the stack shown.
+
+* The Threads page lists the program's threads; the Source page has
+  line numbers and marks breakpoints.  Guidance caches its own
+  compiled Scheme modules, so it starts in well under a second after
+  the first time.
+
+* Tests: a REPL test of the debugger core in plain Guile, and a GUI
+  test on Xvfb, run by `meson test` and by GitHub Actions, with and
+  without the address and undefined-behavior sanitizers.
+
+0.1.0 (2021-12-09)
+------------------
+
+An early prototype.

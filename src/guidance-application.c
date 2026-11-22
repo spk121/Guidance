@@ -118,7 +118,7 @@ on_activate (GdnApplication *app)
   set_accels (app);
   if (window == NULL)
     window = g_object_new (GDN_TYPE_APPLICATION_WINDOW, "application", app,
-                           "default-width", 700, "default-height", 400, NULL);
+                           "default-width", 1000, "default-height", 650, NULL);
   gtk_window_present (window);
   gdn_application_window_focus_entry (GDN_APPLICATION_WINDOW (window));
 }

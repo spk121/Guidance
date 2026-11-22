@@ -26,7 +26,12 @@
 #include "guidance-thread-view.h"
 #include "guidance-trap-info.h"
 #include "guidance-trap-view.h"
+#include <errno.h>
 #include <fcntl.h>
+#include <string.h>
+#include <termios.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <gio/gio.h>
 #include <glib.h>
 #include <libguile.h>
@@ -52,8 +57,8 @@ struct _GdnLisp
   int input_fd;
   SCM output_port;     /* A substitute `current-output-port` */
   SCM output_port_var; /* A Guile variable that holds output_port */
-  int input_error_fd;  /* Receives data from Guile's error ports */
-  SCM error_port;      /* A substitute `current-error-port` */
+  SCM error_port;      /* A substitute `current-error-port`, which
+                        * writes marked text to INPUT_FD's terminal */
   SCM error_port_var;  /* A Guile variable that hold the error port */
   int input_prompt_fd; /* Receives data from the Guile prompt port */
   SCM prompt_port;     /* A new port for use with REPL prompts */
@@ -104,7 +109,9 @@ static void *after_gc_handler (void *hook_data, void *fn_data, void *data);
 static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
 
 static int  unix_pty_fd_new (void);
+static void redirect_standard_fds (GdnLisp *self);
 static SCM  port_from_unix_input_fd (int fd);
+static SCM  marked_port_from_unix_input_fd (int fd);
 static SCM  port_from_unix_output_fd (int fd);
 static void eval_resource (const char *path, const char *file_name);
 static void mark_async_poll (GdnLisp *self);
@@ -184,9 +191,11 @@ gdn_lisp_init (GdnLisp *self)
   self->output_port = port_from_unix_input_fd (self->input_fd);
   scm_set_current_output_port (self->output_port);
 
+  /* Errors go to the same pseudoterminal as the output, so that the
+   * Terminal shows the two in the order they were written.  What
+   * Guile's error port writes is marked, to be shown as errors. */
   self->original_error_port = scm_current_error_port ();
-  self->input_error_fd = unix_pty_fd_new ();
-  self->error_port = port_from_unix_input_fd (self->input_error_fd);
+  self->error_port = marked_port_from_unix_input_fd (self->input_fd);
   scm_set_current_error_port (self->error_port);
 
   /* Note that we are combining Guile's error and warning ports. */
@@ -196,6 +205,8 @@ gdn_lisp_init (GdnLisp *self)
    * `repl>` from the REPL. */
   self->input_prompt_fd = unix_pty_fd_new ();
   self->prompt_port = port_from_unix_input_fd (self->input_prompt_fd);
+
+  redirect_standard_fds (self);
 
   self->user_input_queue = g_async_queue_new ();
   self->request_queue = g_async_queue_new ();
@@ -272,13 +283,6 @@ gdn_lisp_get_input_fd (GdnLisp *self)
 {
   g_assert (GDN_IS_LISP (self));
   return self->input_fd;
-}
-
-int
-gdn_lisp_get_input_error_fd (GdnLisp *self)
-{
-  g_assert (GDN_IS_LISP (self));
-  return self->input_error_fd;
 }
 
 int
@@ -502,10 +506,79 @@ after_sweep_handler (G_GNUC_UNUSED void *hook_data,
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
+/* Compiles the source file SRC to GO, unless GO exists, with ROOT at
+ * the front of the load path, so that the file names recorded in the
+ * compiled code are relative to ROOT; then loads GO.  Returns #f if
+ * any of that fails. */
+static const char compile_and_load_code[] =
+    "(lambda (root src go)\n"
+    "  (catch #t\n"
+    "    (lambda ()\n"
+    "      (unless (file-exists? go)\n"
+    "        (let ((old-path %load-path))\n"
+    "          (dynamic-wind\n"
+    "            (lambda () (set! %load-path (cons root old-path)))\n"
+    "            (lambda ()\n"
+    "              ((@ (system base compile) compile-file) src\n"
+    "               #:output-file go))\n"
+    "            (lambda () (set! %load-path old-path)))))\n"
+    "      (load-compiled go)\n"
+    "      #t)\n"
+    "    (lambda args #f)))";
+
+/* Loads the Scheme file in CONTENTS, whose name on the load path would
+ * be FILE_NAME, compiled, from Guidance's cache.  It is compiled into
+ * the cache the first time.  The cache is keyed by the Guile version
+ * and the file's contents, so a new version of either is compiled
+ * afresh.  Returns FALSE if it could not be done. */
+static gboolean
+load_cached_resource (GBytes *contents, const char *file_name)
+{
+  static SCM compile_and_load = SCM_BOOL_F;
+  gboolean   ok = FALSE;
+  char *     hash = g_compute_checksum_for_bytes (G_CHECKSUM_SHA256, contents);
+  char *     version = scm_to_utf8_string (scm_version ());
+  char *     root = g_build_filename (g_get_user_cache_dir (), "guidance",
+                                      "modules", version, hash, NULL);
+  char *     src = g_build_filename (root, file_name, NULL);
+  char *     base = g_strndup (src, strlen (src)
+                                          - (g_str_has_suffix (src, ".scm")
+                                                 ? strlen (".scm")
+                                                 : 0));
+  char *     go = g_strconcat (base, ".go", NULL);
+  char *     dir = g_path_get_dirname (src);
+
+  if (!g_file_test (go, G_FILE_TEST_EXISTS))
+    {
+      gsize       len;
+      const char *data = g_bytes_get_data (contents, &len);
+      if (g_mkdir_with_parents (dir, 0700) != 0
+          || !g_file_set_contents (src, data, len, NULL))
+        goto out;
+    }
+
+  if (scm_is_false (compile_and_load))
+    compile_and_load =
+        scm_permanent_object (scm_c_eval_string (compile_and_load_code));
+  ok = scm_is_true (scm_call_3 (compile_and_load, scm_from_utf8_string (root),
+                                scm_from_utf8_string (src),
+                                scm_from_utf8_string (go)));
+out:
+  g_free (dir);
+  g_free (go);
+  g_free (base);
+  g_free (src);
+  g_free (root);
+  free (version);
+  g_free (hash);
+  return ok;
+}
+
 /* Evaluates a Scheme file stored in the GResource bundle.  It is
  * compiled rather than interpreted: compiled procedures are faster,
  * and Guile's procedure traps can only tell compiled procedures
- * apart.
+ * apart.  The compiled code is kept in Guidance's cache, so that later
+ * starts need not compile it again.
  *
  * FILE_NAME is recorded as the source file of its procedures, as if it
  * had been loaded from the load path.  The debugger recognizes
@@ -522,11 +595,16 @@ eval_resource (const char *path, const char *file_name)
   contents = g_resource_lookup_data (guidance_get_resource (), path,
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   g_assert_nonnull (contents);
-  data = g_bytes_get_data (contents, &len);
-  eval_string = scm_c_public_ref ("ice-9 eval-string", "eval-string");
-  scm_call_5 (eval_string, scm_from_utf8_stringn (data, len),
-              scm_from_utf8_keyword ("compile?"), SCM_BOOL_T,
-              scm_from_utf8_keyword ("file"), scm_from_utf8_string (file_name));
+  if (!load_cached_resource (contents, file_name))
+    {
+      /* Without the cache, compile it in memory. */
+      data = g_bytes_get_data (contents, &len);
+      eval_string = scm_c_public_ref ("ice-9 eval-string", "eval-string");
+      scm_call_5 (eval_string, scm_from_utf8_stringn (data, len),
+                  scm_from_utf8_keyword ("compile?"), SCM_BOOL_T,
+                  scm_from_utf8_keyword ("file"),
+                  scm_from_utf8_string (file_name));
+    }
   g_bytes_unref (contents);
 }
 
@@ -556,6 +634,60 @@ spawn_handler (G_GNUC_UNUSED void *data, SCM key, SCM args)
                      scm_from_utf8_string ("Guile has exited.~%Key: ~S Args: ~S~%"),
                      scm_list_2 (key, args));
   return SCM_UNSPECIFIED;
+}
+
+/* Opens the slave side of the pseudoterminal whose master is
+ * MASTER_FD, with FLAGS, and makes it file descriptor TARGET_FD. */
+static void
+redirect_fd_to_pty (int master_fd, int flags, int target_fd)
+{
+  const char *name = ptsname (master_fd);
+  int         fd;
+
+  if (name == NULL)
+    g_error ("Could not find the pseudoterminal for FD #%d", master_fd);
+  fd = open (name, flags | O_NOCTTY);
+  if (fd < 0)
+    g_error ("Could not open pseudoterminal %s", name);
+  if (dup2 (fd, target_fd) < 0)
+    g_error ("Could not redirect FD #%d", target_fd);
+  close (fd);
+}
+
+/* Guile's ports for the program are the Terminal's pseudoterminals, but
+ * a subprocess, such as one started by `system', inherits file
+ * descriptors 0 to 2 instead.  So those are made the pseudoterminals
+ * too.  Guidance's own messages, from GLib and the C library, keep
+ * going where they went: `stdout' and `stderr' are given copies of
+ * the original descriptors.
+ *
+ * Each descriptor is a new opening of its pseudoterminal, not a copy
+ * of the one Guile's port uses, so that it does not share that one's
+ * settings: the program's standard input is non-blocking, which would
+ * make a subprocess's reads fail. */
+static void
+redirect_standard_fds (GdnLisp *self)
+{
+  int original_out = dup (STDOUT_FILENO);
+  int original_err = dup (STDERR_FILENO);
+  FILE *out, *err;
+
+  fflush (stdout);
+  fflush (stderr);
+  out = original_out >= 0 ? fdopen (original_out, "w") : NULL;
+  err = original_err >= 0 ? fdopen (original_err, "w") : NULL;
+  if (out != NULL)
+    stdout = out;
+  if (err != NULL)
+    {
+      setvbuf (err, NULL, _IONBF, 0);
+      stderr = err;
+    }
+
+  redirect_fd_to_pty (self->output_fd, O_RDONLY, STDIN_FILENO);
+  redirect_fd_to_pty (self->input_fd, O_WRONLY, STDOUT_FILENO);
+  /* The same terminal as the output, as in a terminal emulator. */
+  redirect_fd_to_pty (self->input_fd, O_WRONLY, STDERR_FILENO);
 }
 
 /*
@@ -601,6 +733,76 @@ port_from_unix_input_fd (int master_fd)
       scm_fdopen (scm_from_int (slave_fd), scm_from_utf8_string ("w0")));
 }
 
+/* What Guile's error port writes is put between these: the ECMA-48
+ * codes for red text and for the default color, which the Terminal
+ * takes to mean error text. */
+#define ERROR_START "\033[31m"
+#define ERROR_END "\033[39m"
+
+static scm_t_port_type *marked_port_type;
+
+/* Writes all of DATA to FD, unless it can't be written. */
+static void
+write_all (int fd, const char *data, size_t len)
+{
+  while (len > 0)
+    {
+      ssize_t n = write (fd, data, len);
+      if (n < 0 && errno == EINTR)
+        continue;
+      if (n <= 0)
+        return;
+      data += n;
+      len -= n;
+    }
+}
+
+static size_t
+marked_port_write (SCM port, SCM src, size_t start, size_t count)
+{
+  int    fd = (int) SCM_STREAM (port);
+  size_t len = strlen (ERROR_START) + count + strlen (ERROR_END);
+  char * buf = g_malloc (len);
+
+  /* One write, so that it is not split by output from another
+   * thread. */
+  memcpy (buf, ERROR_START, strlen (ERROR_START));
+  memcpy (buf + strlen (ERROR_START),
+          (const char *) SCM_BYTEVECTOR_CONTENTS (src) + start, count);
+  memcpy (buf + strlen (ERROR_START) + count, ERROR_END, strlen (ERROR_END));
+  write_all (fd, buf, len);
+  g_free (buf);
+  return count;
+}
+
+/*
+ * This procedure creates a write-only, unbuffered Guile port that
+ * writes to the terminal of MASTER_FD, marking all it writes as error
+ * text.
+ */
+static SCM
+marked_port_from_unix_input_fd (int master_fd)
+{
+  char *name;
+  int   slave_fd;
+  SCM   port;
+
+  if (marked_port_type == NULL)
+    marked_port_type =
+        scm_make_port_type ("gdn-error-port", NULL, marked_port_write);
+
+  name = ptsname (master_fd);
+  if (name == NULL)
+    g_error ("Could not acquire slave pseudoterminal device for FD #%d",
+             master_fd);
+  slave_fd = open (name, O_WRONLY | O_NOCTTY);
+  if (slave_fd < 0)
+    g_error ("Could not open pseudoterminal %s", name);
+  port = scm_c_make_port (marked_port_type, SCM_WRTNG, (scm_t_bits) slave_fd);
+  scm_setvbuf (port, scm_from_utf8_symbol ("none"), SCM_UNDEFINED);
+  return set_port_utf8 (port);
+}
+
 /*
  * This procedure creates a read-only Guile port paired with an output fd.
  */
@@ -614,11 +816,20 @@ port_from_unix_output_fd (int master_fd)
   if (name == NULL)
     g_error ("Could not acquire slave pseudoterminal device for FD #%d",
              master_fd);
-  /* FIXME: do I need to set a terminal mode w/ tcsetattr here?
-   * If I do, it is the slave file descriptor that needs to be adjusted. */
   slave_fd = open (name, O_RDONLY | O_NOCTTY);
   if (slave_fd < 0)
     g_error ("Could not open pseudoterminal %s", name);
+
+  /* The pseudoterminal stays in canonical mode, which gives the program
+   * a line at a time, and end-of-file for Ctrl+D (see the terminal
+   * view).  Echo is off: the Terminal shows typed text itself, and the
+   * echo would pile up unread on the other side. */
+  struct termios modes;
+  if (tcgetattr (slave_fd, &modes) == 0)
+    {
+      modes.c_lflag &= ~(ECHO | ECHOE | ECHOK | ECHONL);
+      tcsetattr (slave_fd, TCSANOW, &modes);
+    }
   return set_port_utf8 (
       scm_fdopen (scm_from_int (slave_fd), scm_from_utf8_string ("r0")));
 }

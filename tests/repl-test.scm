@@ -163,6 +163,25 @@ in the REPL thread, as the GUI does while a program runs."
            (not (memq 'error (modes))))
     (check "shows the repl prompt" (string-contains (prompts) "repl>"))))
 
+(define-test "eval: an expression can be entered over several lines"
+  (run-repl
+   (list '(eval "(define (twice x)")
+         '(eval "  (* 2 x))")
+         '(eval "(twice 21)")
+         '(eval "(string-length \"one")
+         '(eval "two\")")
+         '(eval "(+ 1")
+         '(run #f)
+         '(quit 0)))
+  (check "an unfinished line asks for more"
+         (string-contains (prompts) "..."))
+  (check "a definition over two lines works" (output-contains? "→ 42"))
+  (check "a string can go on to the next line" (output-contains? "→ 7"))
+  (check "another action abandons the unfinished expression"
+         (output-order? "The unfinished expression was abandoned."
+                        "No program was given"))
+  (check "no read errors" (not (output-contains? "end of input"))))
+
 (define-test "eval: an error enters error mode until Stop"
   (run-repl
    (list '(eval "(car 5)")
@@ -195,6 +214,10 @@ in the REPL thread, as the GUI does while a program runs."
            (and (>= (vector-length bt) 2)
                 (string-prefix? "(outer" (vector-ref (vector-ref bt 1) 0)))))
   (check "argument value is shown" (equal? (top-frame-binding "x") "5"))
+  (check "the outermost frame is shown as the top level"
+         (let ((bt (last-backtrace)))
+           (equal? (vector-ref (vector-ref bt (1- (vector-length bt))) 0)
+                   "(top level)")))
   (check "the program stops at the error"
          (not (output-contains? "not reached"))))
 
@@ -386,6 +409,63 @@ in the REPL thread, as the GUI does while a program runs."
          (output-contains? "The program exited with status 3."))
   (check "the REPL keeps working" (output-contains? "→ 4")))
 
+(define-test "run: errors and _break_ in other threads are reported"
+  (let ((original (@ (ice-9 threads) call-with-new-thread)))
+    (run-repl (list '(run #f) '(quit 0)) (program "threads.scm"))
+    (check "an error in a thread is reported in a few lines"
+           (output-order? "An error in a thread of the program ended the thread"
+                          "In procedure car"
+                          "Guidance can pause and inspect only"
+                          "joined the failed thread"))
+    (check "without Guile's backtrace"
+           (not (output-contains? "Backtrace:")))
+    (check "_break_ in another thread is reported, and ignored"
+           (output-order? "_break_ was called in a thread other"
+                          "after _break_ in a thread"))
+    (check "a thread's own handler is kept"
+           (output-contains? "(handled oops)"))
+    (check "the main thread is not paused"
+           (not (or (memq 'trap (modes)) (memq 'error (modes)))))
+    (check "the program finishes" (output-contains? "end"))
+    (check "call-with-new-thread is Guile's again after the run"
+           (eq? original (@ (ice-9 threads) call-with-new-thread)))))
+
+(define (fib-direct n)
+  (if (< n 2) n (+ (fib-direct (- n 1)) (fib-direct (- n 2)))))
+
+(define-test "run: programs run at about Guile's speed"
+  (let ((start (get-internal-real-time)))
+    (fib-direct 30)
+    (let ((direct-ms (max 1 (quotient (* 1000 (- (get-internal-real-time) start))
+                                      internal-time-units-per-second))))
+      (run-repl (list '(run #f) '(quit 0)) (program "fib.scm"))
+      (let* ((i (string-contains *output* "fib-ms: "))
+             (debugged-ms (and i (call-with-input-string
+                                  (substring *output* (+ i 8)) read))))
+        (format #t "    fib 30: ~a ms directly, ~a ms under the debugger~%"
+                direct-ms debugged-ms)
+        (check "within five times the speed of running it directly"
+               (and debugged-ms (< debugged-ms (* 5 (max direct-ms 20)))))))))
+(define-test "run: recursion without end enters error mode"
+  (let ((start (get-internal-real-time)))
+    (run-repl
+     (list '(run #f)
+           (checkpoint "the backtrace shows the recursion"
+                       (lambda () (and (string-prefix? "(deep" (top-frame-call))
+                                       (string-suffix? "deep.scm"
+                                                       (top-frame-file))))
+                       '(stop #f))
+           '(eval "(+ 1 2)")
+           '(quit 0))
+     (program "deep.scm"))
+    (check "the overflow is reported"
+           (output-contains? "Stack overflow: the program used more than 256 MiB"))
+    (check "error mode, then Stop returns to the REPL"
+           (and (memq 'error (modes)) (output-order? "Stopped." "→ 3")))
+    (check "within a minute"
+           (< (- (get-internal-real-time) start)
+              (* 60 internal-time-units-per-second)))))
+
 (define-test "run: no program given"
   (run-repl (list '(run #f) '(quit 0)))
   (check "says so" (output-contains? "No program was given")))
@@ -476,6 +556,151 @@ INPUT."
   (check "the trap fires once" (= 1 (count (lambda (e) (equal? e '(mode trap)))
                                            *events*)))
   (check "a deleted trap does not fire" (output-contains? "→ 16")))
+
+(define (current-source-breakpoints)
+  "The breakpoints at lines most recently sent to the Source page."
+  (let loop ((events (reverse (events))))
+    (cond
+     ((null? events) #f)
+     ((eq? (car (car events)) 'source-breakpoints) (cadr (car events)))
+     (else (loop (cdr events))))))
+
+(define-test "traps: the Source page is told of line breakpoints"
+  (define file (program "procs.scm"))
+  (define (marks)
+    (map (lambda (bp) (list (vector-ref bp 1) (vector-ref bp 2)
+                            (vector-ref bp 3)))
+         (or (current-source-breakpoints) '())))
+  (define (index-of line)
+    (vector-ref (find (lambda (bp) (= line (vector-ref bp 2)))
+                      (current-source-breakpoints))
+                0))
+  (run-repl
+   (list (load-expression "procs.scm")
+         (request '(wake #f) 'add-source-trap file 2)
+         (request '(wake #f) 'add-proc-trap-by-name "(guile-user)" "square")
+         (request '(wake #f) 'add-source-trap file 5)
+         (checkpoint "both lines are marked, and not the procedure"
+                     (lambda () (equal? (marks) `((,file 2 #t) (,file 5 #t))))
+                     '(wake #f))
+         (lambda ()
+           (push-request! (list 'disable-trap (index-of 2)))
+           '(wake #f))
+         (checkpoint "a disabled breakpoint is marked as such"
+                     (lambda () (equal? (marks) `((,file 2 #f) (,file 5 #t))))
+                     '(wake #f))
+         (lambda ()
+           (push-request! (list 'delete-trap (index-of 5)))
+           '(wake #f))
+         (checkpoint "a deleted breakpoint is unmarked"
+                     (lambda () (equal? (marks) `((,file 2 #f))))
+                     '(quit 0)))))
+
+(define (current-thread-rows)
+  "The rows most recently sent to the Threads page, as lists."
+  (let loop ((events (reverse (events))))
+    (cond
+     ((null? events) #f)
+     ((eq? (car (car events)) 'threads)
+      (map vector->list (vector->list (cadr (car events)))))
+     (else (loop (cdr events))))))
+
+(define-test "threads: the Threads page lists the program's threads"
+  (run-repl
+   (list '(run #f)
+         (checkpoint "the main thread, then the program's, by procedure"
+                     (lambda ()
+                       (equal? (current-thread-rows)
+                               '(("Main thread" "thread-list.scm" "paused")
+                                 ("Thread 1" "finisher" "finished")
+                                 ("Thread 2" "reader" "running"))))
+                     '(continue #f))
+         (checkpoint "after the program, both threads have finished"
+                     (lambda ()
+                       (equal? (current-thread-rows)
+                               '(("Main thread" "thread-list.scm"
+                                  "waiting at the REPL")
+                                 ("Thread 1" "finisher" "finished")
+                                 ("Thread 2" "reader" "finished"))))
+                     '(run #f))
+         (checkpoint "a new run forgets them, and numbers from 1 again"
+                     (lambda ()
+                       (equal? (map car (current-thread-rows))
+                               '("Main thread" "Thread 1" "Thread 2")))
+                     '(continue #f))
+         '(quit 0))
+   (program "thread-list.scm"))
+  (check "the program finishes" (output-contains? "threads done")))
+
+(define-test "run: the compiler's notes are hidden, its warnings kept"
+  ;; A file of a new name, so that it is compiled afresh.
+  (define dir (string-append (or (getenv "TMPDIR") "/tmp")
+                             "/guidance-test-" (number->string (getpid))))
+  (define file (string-append dir "/fresh.scm"))
+  (unless (file-exists? dir) (mkdir dir))
+  (call-with-output-file file
+    (lambda (port)
+      (display "(define (f) (no-such-procedure))\n" port)
+      (display "(display \"fresh ran\")\n(newline)\n" port)))
+  (run-repl (list '(run #f) '(quit 0)) file)
+  (delete-file file)
+  (rmdir dir)
+  (check "the program runs" (output-contains? "fresh ran"))
+  (check "no notes" (not (or (output-contains? ";;; compiling")
+                             (output-contains? ";;; compiled")
+                             (output-contains? "auto-compilation"))))
+  (check "the warning is shown"
+         (output-contains? "possibly unbound variable `no-such-procedure'")))
+
+(define-test "Guidance's own modules compile without warnings"
+  (for-each
+   (lambda (file)
+     (let* ((go (string-append (or (getenv "TMPDIR") "/tmp")
+                               "/guidance-test-" (number->string (getpid))
+                               ".go"))
+            (warnings
+             (call-with-output-string
+               (lambda (port)
+                 (parameterize ((current-warning-port port))
+                   ((@ (system base compile) compile-file)
+                    file #:output-file go))))))
+       (delete-file go)
+       (unless (string-null? warnings)
+         (display warnings))
+       (check (string-append file " has no warnings")
+              (not (string-contains warnings "warning:")))))
+   (list (%search-load-path "gdn/lib.scm")
+         (%search-load-path "gdn/repl.scm"))))
+
+(define-test "environment: the processor counts are found"
+  ;; Each category is #(NAME "" #(#(KEY VALUE) ...)).
+  (define (entry key)
+    (any (lambda (category)
+           (any (lambda (e) (and (string=? (vector-ref e 0) key)
+                                 (vector-ref e 1)))
+                (vector->list (vector-ref category 2))))
+         (vector->list (gdn-get-environment))))
+  (check "Processor Count is not 0"
+         (positive? (string->number (entry "Processor Count"))))
+  (check "Processors Used is not 0"
+         (positive? (string->number (entry "Processors Used")))))
+
+(define-test "backtrace: arguments and local variables are told apart"
+  (define (kinds)
+    ;; Each binding is #(NAME ARGUMENT? REPRESENTATION VALUE EXTRA).
+    (map (lambda (b) (cons (vector-ref b 0) (vector-ref b 1)))
+         (vector->list (vector-ref (top-frame) 5))))
+  (run-repl
+   (list '(run #f)
+         (checkpoint "item is an argument; count and price are locals"
+                     (lambda ()
+                       (format #t "  kinds: ~s~%" (kinds))
+                       (equal? (kinds)
+                               '(("item" . #t) ("count" . #f)
+                                 ("price" . #f))))
+                     '(stop #f))
+         '(quit 0))
+   (program "inventory.scm")))
 
 (define-test "modules: list modules and their procedures"
   (run-repl
@@ -570,10 +795,38 @@ INPUT."
            (and (equal? (ref a 'expression) "(f)")
                 (equal? (ref a 'arguments) '("p")))))
   (check "bad options are reported"
-         (and (equal? (ref (parse "-x" "f.scm") 'errors)
-                      '("unrecognized option -x"))
+         (and (equal? (ref (parse "--bogus" "f.scm") 'errors)
+                      '("unrecognized option --bogus"))
               (equal? (ref (parse "-L") 'errors)
-                      '("option -L requires an argument")))))
+                      '("option -L requires an argument"))))
+  (check "Guile's harmless options are accepted"
+         (let ((a (parse "--debug" "--no-debug" "--auto-compile" "-q"
+                         "f.scm")))
+           (and (null? (ref a 'errors)) (null? (ref a 'notes))
+                (equal? (ref a 'script) "f.scm"))))
+  (check "--no-auto-compile is accepted, with a note"
+         (let ((a (parse "--no-auto-compile" "f.scm")))
+           (and (null? (ref a 'errors))
+                (equal? (ref a 'notes)
+                        '("--no-auto-compile is ignored: Guidance compiles \
+programs, to debug them"))
+                (equal? (ref a 'script) "f.scm"))))
+  (check "--fresh-auto-compile, -x, and --use-srfi"
+         (let ((a (parse "--fresh-auto-compile" "-x" ".ss" "-x" ".sls"
+                         "--use-srfi=1,26" "f.scm")))
+           (and (ref a 'fresh-auto-compile?)
+                (equal? (ref a 'extensions) '(".ss" ".sls"))
+                (equal? (ref a 'srfis) '(1 26))
+                (null? (ref a 'errors)))))
+  (check "a bad SRFI list is reported"
+         (equal? (ref (parse "--use-srfi=1,x") 'errors)
+                 '("bad SRFI list in --use-srfi=1,x")))
+  (check "-e takes a symbol or an expression"
+         (and (eq? (ref (parse "-e" "main") 'entry) 'main)
+              (equal? (ref (parse "-e" "(@ (my module) main)") 'entry)
+                      '(@ (my module) main))
+              (equal? (ref (parse "-e" "(@ (my") 'errors)
+                      '("cannot read the function (@ (my given to -e")))))
 
 (define-test "command line: running a program with options and arguments"
   (run-repl (list '(run #f) '(quit 0))
@@ -588,13 +841,24 @@ INPUT."
   (check "-e calls the function with the command line"
          (output-order? "Hello, world" "(main (" "args.scm a b))")))
 
+(define-test "command line: -e with a module's procedure"
+  (run-repl (list '(run #f) '(quit 0))
+            "-L" (program "modules")
+            "-e" "(@ (guidance-test greeting) greet-arguments)"
+            (program "args.scm") "a")
+  (check "-e calls the procedure from the module"
+         (output-order? "Hello, world" "(greet-arguments (" "args.scm a))")))
+
 (define-test "command line: -c and bad options"
   (run-repl (list '(run #f) '(quit 0))
-            "-q" "-c" "(display (command-line))" "p")
-  (check "the expression runs with its arguments"
-         (output-contains? "(guidance p)"))
+            "--bogus" "--no-auto-compile" "--use-srfi=26" "-c"
+            "(display (list (command-line) ((cut + 1 <>) 41)))" "p")
+  (check "the expression runs with its arguments, and the SRFI"
+         (output-contains? "((guidance p) 42)"))
   (check "unrecognized options are reported"
-         (output-contains? "guidance: unrecognized option -q")))
+         (output-contains? "guidance: unrecognized option --bogus"))
+  (check "ignored options are noted"
+         (output-contains? "guidance: --no-auto-compile is ignored")))
 
 (define-test "peek: _pk_ logs on the Peek page"
   (run-repl (list '(run #f) '(eval "(_pk_ 'from-repl 7)") '(quit 0))
@@ -869,6 +1133,46 @@ INPUT."
                         "Returned from visit with 4"
                         "(2 4)" "Returned from visit-all" "end"))
   (check "never pauses outside the program" (stays-in-program?)))
+
+(define (last-mode)
+  (let loop ((events (reverse (events))))
+    (cond
+     ((null? events) #f)
+     ((eq? (car (car events)) 'mode) (cadr (car events)))
+     (else (loop (cdr events))))))
+
+(define (step-until-done action)
+  "Script elements that send ACTION while the program is paused, Stop
+in error mode, and quit once the REPL is back at its prompt."
+  (map (lambda (i)
+         (lambda ()
+           (case (last-mode)
+             ((repl) '(quit 0))
+             ((error) '(stop #f))
+             (else (list action #f)))))
+       (iota 400)))
+
+(define (step-through-catch-and-load action)
+  ;; The bug this guards against did not happen every time.
+  (do ((i 0 (1+ i))) ((= i 3))
+    (run-repl (cons '(run #f) (step-until-done action))
+              (program "step-into.scm"))
+    (check (format #f "run ~a: the caught exception's value is right" i)
+           (output-contains? "(k 1)"))
+    (check (format #f "run ~a: the loaded file ran" i)
+           (output-order? "(other 42)" "done"))
+    (check (format #f "run ~a: no error appears" i)
+           (not (memq 'error (modes))))))
+
+(define-test "step: Step Into through catch and load keeps the program right"
+  (step-through-catch-and-load 'step-into)
+  (check "pauses in the procedures that catch calls"
+         (>= (count-occurrences "Step to step-into.scm:5") 2)))
+
+(define-test "step: expression steps through catch and load"
+  ;; These used to stop at each instruction, which could show an
+  ;; object half built, and crash.
+  (step-through-catch-and-load 'step-into-instruction))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

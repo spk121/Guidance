@@ -7,14 +7,32 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description>
-    <p>Guidance is a graphical debugging environment for GNU Guile.
-    It provides a graphical representation of breakpoints, traps,
-    stack information, threads, and environment variables.</p>
+    <p>Guidance is a graphical debugger for GNU Guile.  You call it the
+    way you would call Guile, then press Run.</p>
+    <p>It pauses a program at breakpoints, set on a line of the source
+    or on a procedure, or with Pause; steps through it by line or by
+    expression; and shows its stack, with the variables of each frame,
+    where expressions can be evaluated.  It also shows the source, the
+    traps, the program's threads, the loaded modules, and the
+    process's environment.</p>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>The stack and variables of a paused program</caption>
+      <image>https://raw.githubusercontent.com/spk121/Guidance/master/data/screenshots/backtrace.png</image>
+    </screenshot>
+  </screenshots>
   <url type="homepage">https://github.com/spk121/Guidance</url>
   <url type="bugtracker">https://github.com/spk121/Guidance/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.2.0" date="2026-11-22" type="development">
+      <description>
+        <p>The first release that works as a debugger: breakpoints at
+        lines and procedures, stepping, Pause, error mode, and
+        inspecting the stack and variables of a paused program.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2021-12-09" />
   </releases>
 </component>

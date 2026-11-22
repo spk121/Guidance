@@ -279,7 +279,7 @@ frame_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
   button = GTK_BUTTON (gtk_button_new_with_label (NULL));
   label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
-  gtk_label_set_width_chars (label, 24);
+  gtk_label_set_width_chars (label, 16);
   gtk_list_item_set_child (list_item, GTK_WIDGET (button));
 
   GdnBacktraceViewAndListItem *bvli;
@@ -332,6 +332,9 @@ location_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
   button = GTK_BUTTON (gtk_button_new_with_label (NULL));
   label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
+  /* Room for a file name and line, like "program.scm:120". */
+  gtk_label_set_width_chars (label, 16);
+  gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_START);
   gtk_list_item_set_child (list_item, GTK_WIDGET (button));
 
   GdnBacktraceViewAndListItem *bvli;
@@ -415,10 +418,18 @@ type_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   obj = gtk_list_item_get_item (list_item);
   info = GDN_BINDING_INFO (obj);
-  if (gdn_binding_info_get_argument (info))
-    gtk_label_set_text (label, "A");
-  else
-    gtk_label_set_text (label, "");
+  /* "argument" or "local", and how the value is stored when that is
+   * not as an ordinary Scheme object. */
+  {
+    const char *kind = gdn_binding_info_get_argument (info) ? "argument"
+                                                            : "local";
+    const char *rep = gdn_binding_info_get_representation (info);
+    char *text = (rep != NULL && *rep != '\0' && strcmp (rep, "scm") != 0)
+                     ? g_strdup_printf ("%s, %s", kind, rep)
+                     : g_strdup (kind);
+    gtk_label_set_text (label, text);
+    g_free (text);
+  }
 }
 
 static void
@@ -517,6 +528,10 @@ value_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
 
   label = GTK_LABEL (gtk_label_new (NULL));
   gtk_label_set_xalign (label, 0);
+  /* Long values are cut short; the tooltip has all of it. */
+  gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode (label, TRUE);
+  gtk_widget_set_hexpand (GTK_WIDGET (label), TRUE);
   gtk_list_item_set_child (list_item, GTK_WIDGET (label));
 }
 
@@ -532,7 +547,17 @@ value_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
   label = GTK_LABEL (gtk_list_item_get_child (list_item));
   obj = gtk_list_item_get_item (list_item);
   info = GDN_BINDING_INFO (obj);
-  gtk_label_set_text (label, gdn_binding_info_get_value (info));
+  {
+    /* For a fluid, the extra information is its current value. */
+    const char *value = gdn_binding_info_get_value (info);
+    const char *extra = gdn_binding_info_get_extra (info);
+    char *text = (extra != NULL && *extra != '\0')
+                     ? g_strdup_printf ("%s ⇒ %s", value, extra)
+                     : g_strdup (value);
+    gtk_label_set_text (label, text);
+    gtk_widget_set_tooltip_text (GTK_WIDGET (label), text);
+    g_free (text);
+  }
 }
 
 static void

@@ -19,7 +19,7 @@
 #pragma once
 
 /*
- * An object that holds information about a Guile thread.
+ * One row of the Threads page: a thread of the program.
  */
 
 #include <gtk/gtk.h>
@@ -30,8 +30,12 @@ G_BEGIN_DECLS
 #define GDN_THREAD_INFO_TYPE (gdn_thread_info_get_type ())
 G_DECLARE_FINAL_TYPE (GdnThreadInfo, gdn_thread_info, GDN, THREAD_INFO, GObject)
 
-const char *gdn_thread_info_get_name (GdnThreadInfo *info);
-gboolean    gdn_thread_info_get_active (GdnThreadInfo *info);
-GdnThreadInfo *gdn_thread_info_new_from_scm (SCM thread);
+GdnThreadInfo *gdn_thread_info_new (const char *name,
+                                    const char *procedure,
+                                    const char *state);
+GdnThreadInfo *gdn_thread_info_new_from_scm (SCM row);
+const char *   gdn_thread_info_get_name (GdnThreadInfo *info);
+const char *   gdn_thread_info_get_procedure (GdnThreadInfo *info);
+const char *   gdn_thread_info_get_state (GdnThreadInfo *info);
 
 G_END_DECLS

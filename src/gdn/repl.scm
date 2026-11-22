@@ -42,13 +42,19 @@
   #:use-module (gdn ports)
   #:use-module (gdn widgets)
   #:use-module (ice-9 format)
+  #:use-module ((rnrs io ports) #:select (make-custom-textual-output-port))
   #:use-module (ice-9 suspendable-ports)
   #:use-module (srfi srfi-1)
   #:use-module (system base compile)
   #:use-module (system vm frame)
   #:use-module (system vm program)
   #:use-module (system vm traps)
+  #:use-module ((ice-9 threads) #:select (current-thread make-mutex thread-exited?
+                                               with-mutex))
+  #:use-module ((system foreign) #:select (sizeof))
   #:use-module (system vm vm)
+  #:use-module ((system vm debug)
+                #:select (find-program-sources source-post-pc))
   #:use-module (system vm trap-state)
   #:use-module ((system vm trap-state)
                 #:select ((add-trap-at-procedure-call!
@@ -173,6 +179,12 @@ with KEY and ARGS."
    (else
     (format port "Uncaught exception ~a: ~s~%" key args))))
 
+(define (show-prompt prompt)
+  "Shows PROMPT in the GUI.  Each ends with a newline, so that the GUI
+can tell two prompts that arrive together apart."
+  (display prompt %gdn-prompt-port)
+  (newline %gdn-prompt-port))
+
 (define (print-return-values . return-vals)
   "Prints the return values of an expression, which could be multiple
 values."
@@ -230,7 +242,8 @@ values.  If a name is bound more than once, the first binding is used."
         (reverse locals)
         (let* ((binding (car bindings))
                (name (binding-name binding)))
-          (if (or (not name) (assq name locals))
+          (if (or (not name) (assq name locals)
+                  (not (gdn-binding-readable? frame binding)))
               (loop (cdr bindings) locals)
               (let ((value (false-if-exception (binding-ref binding))))
                 (loop (cdr bindings) (acons name value locals))))))))
@@ -278,11 +291,29 @@ scope.  Errors are reported, but do not change the mode."
       (set! *last-module-list* modules)
       (gdn-update-modules! *gdn-module-view* modules))))
 
+(define *line-breakpoints* (make-hash-table))
+
+(define (line-breakpoints)
+  "Returns the breakpoints at lines that still exist, as a list of
+vectors #(INDEX FILE LINE ENABLED?)."
+  (filter-map (lambda (idx)
+                (let ((where (hashv-ref *line-breakpoints* idx)))
+                  (and where
+                       (vector idx (car where) (cdr where)
+                               (trap-enabled? idx)))))
+              (list-traps)))
+
+(define (refresh-traps!)
+  "Sends the trap list to the Traps page, and the breakpoints at lines
+to the Source page."
+  (gdn-update-traps! *gdn-trap-view* (list-traps))
+  (gdn-set-source-breakpoints! *gdn-source-view* (line-breakpoints)))
+
 (define (refresh-views!)
   "Updates the information pages of the GUI."
   (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
-  (gdn-update-traps! *gdn-trap-view* (list-traps))
-  (gdn-update-threads! *gdn-thread-view*)
+  (refresh-traps!)
+  (gdn-update-threads! *gdn-thread-view* (thread-rows))
   (refresh-modules!))
 
 (define (enable-trap-hooks!)
@@ -348,6 +379,7 @@ again.  Otherwise it is Guile's trap, for PROC itself."
                                  (if (*paused*) (*pause-frames*) '()))))
     (set! idx (add-trap! trap (format #f "Breakpoint at ~a:~a"
                                       (basename file) line)))
+    (hashv-set! *line-breakpoints* idx (cons file line))
     (unless (gdn-loaded-code-at-line? file line)
       (format #t "~&No code is loaded at ~a:~a yet.  The breakpoint will \
 take effect if some is.~%" (basename file) line))
@@ -421,9 +453,9 @@ element says what it is."
       ;; program resumes, so leave it alone.
       (when (and (*in-run*) (not (*paused*)))
         (enable-trap-hooks!))
-      (gdn-update-traps! *gdn-trap-view* (list-traps)))))
+      (refresh-traps!))))
 
-(define (get-user-input)
+(define (get-action)
   "Waits for the operator's next action, handling any requests that
 arrive in the meantime.  Returns a list (ACTION DATA)."
   (let loop ()
@@ -438,6 +470,42 @@ arrive in the meantime.  Returns a list (ACTION DATA)."
         (gdn-async-poll)
         (loop))
        (else input)))))
+
+(define (unfinished-expression? str)
+  "True if STR ends part-way through an expression, so that more lines
+are needed: reading it runs out of input inside a form or string."
+  (catch 'read-error
+    (lambda ()
+      (call-with-input-string str
+        (lambda (port)
+          (let loop ()
+            (unless (eof-object? (read port))
+              (loop)))))
+      #f)
+    (lambda (key subr message args rest)
+      (and (string? message)
+           (string-contains message "end of input")
+           #t))))
+
+(define (get-user-input)
+  "Waits for the operator's next action, handling any requests that
+arrive in the meantime.  Returns a list (ACTION DATA).  An expression
+entered over several lines arrives as one: while what has been entered
+is unfinished, a continuation prompt asks for more.  Any other action
+abandons the unfinished expression."
+  (let loop ((input (get-action)))
+    (if (and (eq? (car input) 'eval)
+             (unfinished-expression? (cadr input)))
+        (begin
+          (show-prompt "...")
+          (let ((next (get-action)))
+            (if (eq? (car next) 'eval)
+                (loop (list 'eval (string-append (cadr input) "\n"
+                                                 (cadr next))))
+                (begin
+                  (format #t "~&The unfinished expression was abandoned.~%")
+                  next))))
+        input)))
 
 (define (gdn-async-poll)
   "The GUI runs this asynchronously in the REPL thread, while a program
@@ -505,7 +573,7 @@ replaces, for any other port."
 that error mode can show the stack.  Error mode only returns by
 aborting to the stop prompt."
   (unless (memq key '(quit stack-overflow out-of-memory
-                      read-error syntax-error))
+                      read-error syntax-error gdn-stack-limit))
     (error-mode key args)))
 
 (define (exception-handler-unwind key . args)
@@ -518,11 +586,151 @@ aborting to the stop prompt."
                  "")))
     ((stack-overflow)
      (format (current-error-port) "Stack overflow!~%"))
+    ;; The stack is shallow again here: see stack-limit-reached.
+    ((gdn-stack-limit)
+     (error-mode-after-unwind (car args)))
     ((out-of-memory)
      (format (current-error-port) "Out of memory!~%"))
     (else
      (print-exception-message (current-error-port) key args)))
   (values))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; THREADS
+;;
+;; Guidance debugs one thread: the one that runs the program, the REPL
+;; thread.  Traps and error mode belong to it.  For other threads that
+;; the program starts, Guidance at least reports what it cannot do,
+;; rather than leaving Guile's own messages, or nothing.
+
+;; While a program runs, the thread that runs it; otherwise #f.
+(define *program-thread* #f)
+
+;; call-with-new-thread from (ice-9 threads), as Guile defines it.
+(define %call-with-new-thread
+  (module-ref (resolve-interface '(ice-9 threads)) 'call-with-new-thread))
+
+(define (report-thread-error key args)
+  (let ((port (current-error-port)))
+    (format port "~&An error in a thread of the program ended the thread:~%")
+    (print-exception-message port key args)
+    (format port "Guidance can pause and inspect only the program's \
+main thread.~%")))
+
+;; The threads that the program has started, newest first, as a list
+;; of vectors #(THREAD NUMBER PROCEDURE-NAME), for the Threads page.
+;; They are numbered from 1 in the order they were started.  Program
+;; threads add to it, so it is guarded by a mutex.
+(define *program-threads* '())
+(define *program-thread-count* 0)
+(define *program-threads-mutex* (make-mutex))
+
+(define (procedure-display-name proc)
+  "The name of PROC, as the Backtrace page shows it: λ if it has none."
+  (let ((name (and (procedure? proc) (procedure-name proc))))
+    (if (and name (not (eq? name '_)))
+        (symbol->string name)
+        "λ")))
+
+(define (add-program-thread! thread thunk)
+  (with-mutex *program-threads-mutex*
+    (set! *program-thread-count* (1+ *program-thread-count*))
+    (set! *program-threads*
+      (cons (vector thread *program-thread-count*
+                    (procedure-display-name thunk))
+            *program-threads*))))
+
+(define (forget-finished-threads!)
+  "Removes the threads that have finished from the Threads page, as a
+new run of the program starts.  When none is left, numbering starts
+again from 1."
+  (with-mutex *program-threads-mutex*
+    (set! *program-threads*
+      (filter (lambda (entry) (not (thread-exited? (vector-ref entry 0))))
+              *program-threads*))
+    (when (null? *program-threads*)
+      (set! *program-thread-count* 0))))
+
+(define (thread-rows)
+  "The rows of the Threads page, as a vector of vectors #(NAME
+PROCEDURE STATE): the program's main thread, which is the REPL's, then
+the threads the program started.  Guidance's own threads, and Guile's,
+are left out."
+  (list->vector
+   (cons (vector "Main thread"
+                 (or (program-name) "REPL")
+                 (cond ((*paused*) "paused")
+                       ((*in-run*) "running")
+                       (else "waiting at the REPL")))
+         (map (lambda (entry)
+                (vector (format #f "Thread ~a" (vector-ref entry 1))
+                        (vector-ref entry 2)
+                        (if (thread-exited? (vector-ref entry 0))
+                            "finished"
+                            "running")))
+              (reverse
+               (with-mutex *program-threads-mutex* *program-threads*))))))
+
+(define* (debugger-call-with-new-thread thunk #:optional handler)
+  "call-with-new-thread, as used while Guidance runs a program.  If the
+thread raises an error that it does not handle, the error is reported
+in a few lines, and the thread ends.  The thread is listed on the
+Threads page."
+  (let ((thread
+         (if handler
+             (%call-with-new-thread thunk handler)
+             (%call-with-new-thread
+              (lambda ()
+                (catch #t
+                  thunk
+                  (lambda (key . args)
+                    (unless (eq? key 'quit)
+                      (report-thread-error key args))
+                    #f)))))))
+    (add-program-thread! thread thunk)
+    thread))
+
+(define (call-with-thread-reports thunk)
+  "Calls THUNK with call-with-new-thread replaced by
+debugger-call-with-new-thread, for the program, and the REPL thread
+marked as the program's.  Code that refers to call-with-new-thread,
+including the expansion of begin-thread, uses the variable of (ice-9
+threads), so it sees the replacement."
+  (let ((variable (module-variable (resolve-module '(ice-9 threads))
+                                   'call-with-new-thread)))
+    (dynamic-wind
+      (lambda ()
+        (set! *program-thread* (current-thread))
+        (variable-set! variable debugger-call-with-new-thread))
+      thunk
+      (lambda ()
+        (variable-set! variable %call-with-new-thread)
+        (set! *program-thread* #f)))))
+
+;; The most stack a program may use, in words: 256 MiB on a 64-bit
+;; machine, enough for some eleven million frames of a simple
+;; recursive procedure.  Past that, the program is taken to be
+;; recursing without end, and enters error mode.  Without a limit of
+;; its own, Guile lets the stack grow until memory runs short, which
+;; under Guidance took minutes.
+(define %stack-limit (* 32 1024 1024))
+
+(define (stack-limit-reached)
+  "Guile calls this where a program exceeded %stack-limit.  Error mode
+cannot stay here: Stop would unwind out of this handler, at which Guile
+puts the program's limit back while the stack is still deep, and the
+limit would be exceeded again.  So the backtrace is shown now, while
+the frames exist, and the program is unwound first; error mode then
+runs from exception-handler-unwind."
+  (set-vm-trace-level! 0)
+  (print-error-on-exception
+   (lambda ()
+     (gdn-update-backtrace! *gdn-backtrace-view*
+                            (gdn-error-frames %stack-tag))))
+  (throw 'gdn-stack-limit
+         (format #f "Stack overflow: the program used more than ~a MiB \
+of stack, so it is probably recursing without end."
+                 (quotient (* %stack-limit (sizeof '*)) (* 1024 1024)))))
 
 (define (run-under-debugger thunk)
   "Runs THUNK in Run mode, with Guidance's error and trap handlers.
@@ -535,23 +743,24 @@ exception."
       (parameterize ((*in-run* #t))
         (with-default-trap-handler trap-handler
           (lambda ()
-            (let ((disable-break #f))
-              (dynamic-wind
-                (lambda ()
-                  (set! disable-break
-                    (trap-at-procedure-call _break_ break-handler)))
+            (dynamic-wind
+                (lambda () #t)
                 (lambda ()
                   (catch #t
                     (lambda ()
                       (enable-trap-hooks!)
-                      (call-with-prompt %stack-tag
-                        thunk
-                        (lambda (k . vals) (apply values vals))))
+                      (call-with-thread-reports
+                       (lambda ()
+                         (call-with-stack-overflow-handler %stack-limit
+                           (lambda ()
+                             (call-with-prompt %stack-tag
+                               thunk
+                               (lambda (k . vals) (apply values vals))))
+                           stack-limit-reached))))
                     exception-handler-unwind
                     exception-handler-pre-unwind))
                 (lambda ()
-                  (cancel-pending-steps!)
-                  (disable-break))))))))
+                  (cancel-pending-steps!)))))))
     (lambda (k . args)
       (format #t "~&Stopped.~%")
       (values))))
@@ -577,6 +786,7 @@ files given with -l, then calling the function given with -e."
       (format #t "Cannot find the program ~s.~%" script))
      (else
       (let ((path (and script (canonicalize-path script))))
+        (forget-finished-threads!)
         (format #t "Running ~a~%" (or path (program-name)))
         (run-under-debugger
          (lambda ()
@@ -588,18 +798,35 @@ files given with -l, then calling the function given with -e."
                (load path)
                (eval-forms expression))
            (when entry
-             ((module-ref (current-module) entry) (command-line))))))))))
+             ((if (symbol? entry)
+                  (module-ref (current-module) entry)
+                  (eval entry (current-module)))
+              (command-line))))))))))
 
 (define (apply-command-line! args)
   "Parses Guidance's command-line ARGS and applies the options that
 take effect at once."
   (set! *options* (gdn-parse-command-line args))
   (for-each (lambda (message)
+              (format #t "guidance: ~a~%" message))
+            (option 'notes))
+  (for-each (lambda (message)
               (format (current-error-port) "guidance: ~a~%" message))
             (option 'errors))
   (set! %load-path (append (option 'load-path) %load-path))
   (set! %load-compiled-path
-    (append (option 'compiled-path) %load-compiled-path)))
+    (append (option 'compiled-path) %load-compiled-path))
+  (set! %load-extensions (append (option 'extensions) %load-extensions))
+  (when (option 'fresh-auto-compile?)
+    (set! %fresh-auto-compile #t))
+  ;; As Guile's --use-srfi does, for the program and the operator.
+  (for-each (lambda (n)
+              (module-use! (resolve-module '(guile-user))
+                           (resolve-interface
+                            (list 'srfi
+                                  (string->symbol
+                                   (format #f "srfi-~a" n))))))
+            (option 'srfis)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ERROR MODE
@@ -630,7 +857,7 @@ program until they press Stop."
   (format #t "When ready, press the Stop button to return to the REPL.~%")
   (let loop ()
     (refresh-views!)
-    (display "error>" %gdn-prompt-port)
+    (show-prompt "error>")
     (let* ((input (get-user-input))
            (action (car input))
            (data (cadr input)))
@@ -642,6 +869,35 @@ program until they press Stop."
          (loop))
         (else
          (loop))))))
+
+(define (error-mode-after-unwind message)
+  "Error mode for an error whose stack is gone, though the Backtrace
+page still shows it.  Expressions are evaluated at the top level."
+  (set-vm-trace-level! 0)
+  (set! *selected-frame* 0)
+  (parameterize ((*paused* #t)
+                 (*pause-frames* '())
+                 (*pause-top-frame?* #f))
+    (gdn-set-input-mode! *gdn-application-window* 'error)
+    (format (current-error-port) "~&~a~%" message)
+    (format #t "~&Entering error mode.  The Backtrace page shows where \
+the program was; it has been unwound, so expressions are evaluated at \
+the top level.~%")
+    (format #t "When ready, press the Stop button to return to the REPL.~%")
+    (let loop ()
+      (print-error-on-exception refresh-views!)
+      (show-prompt "error>")
+      (let* ((input (get-user-input))
+             (action (car input))
+             (data (cadr input)))
+        (case action
+          ((stop)
+           (abort-to-prompt %stop-tag))
+          ((eval)
+           (eval-and-print data)
+           (loop))
+          (else
+           (loop)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TRAP MODE
@@ -694,59 +950,175 @@ next run or expression, outside the program."
   "True if stepping may pause in FRAME: it has source code, and is not
 in Guile's own libraries, unless INTERNAL?, which is true when the
 step began in them.  Stepping never pauses in Guidance's own code,
-which is what runs the program."
+which is what runs the program.
+
+This looks up FRAME's debugging information, so it must not be called
+from an instruction hook: see add-step-trap!."
   (and (frame-source frame)
        (not (guidance-frame? frame))
        (or internal? (not (guile-internal-frame? frame)))))
 
+;; Low-level traps on the VM's hooks.  Each has the interface of Guile's
+;; low-level traps: calling it disables it, and returns a procedure that
+;; enables it again.
+
+(define (hook-trap add-hook! remove-hook! hook)
+  (add-hook! hook)
+  (lambda* (#:optional frame)
+    (remove-hook! hook)
+    (lambda* (#:optional frame)
+      (hook-trap add-hook! remove-hook! hook))))
+
+(define (combine-traps traps)
+  (lambda* (#:optional frame)
+    (for-each (lambda (trap) (trap frame)) traps)
+    (lambda* (#:optional frame) #f)))
+
+;; Stepping.
+;;
+;; Guile runs an instruction hook before every instruction of the
+;; thread, in whatever state the VM is in between them.  Looking up
+;; debugging information there, as frame-source and
+;; frame-procedure-name do, corrupts the program or crashes Guile when
+;; it happens while an exception is being raised or caught: values
+;; become #<unspecified>.  The apply, return and abort hooks run
+;; between procedures, where it is safe.
+;;
+;; So a step's instruction hook only compares addresses: it watches
+;; the one frame being stepped, whose code and current line are looked
+;; up beforehand, while the program is paused.  The other hooks decide
+;; everything else: whether a procedure being entered, or a frame
+;; being returned or aborted to, belongs to the program.
+
+(define (frame-code-extent frame)
+  "The start and end addresses of the code of FRAME's procedure, or #f
+and #f."
+  (code-extent (frame-instruction-pointer frame)))
+
+(define (current-position-range frame start end)
+  "The instruction range, as a list of one (START . END) pair, of the
+source position, line and column, that FRAME is at, in its procedure,
+whose code runs from START to END."
+  (let loop ((sources (if start (find-program-sources start) '()))
+             (found #f))
+    (cond
+     ((null? sources)
+      (if found (list (cons found end)) '()))
+     ((<= (source-post-pc (car sources)) (frame-instruction-pointer frame))
+      (loop (cdr sources) (source-post-pc (car sources))))
+     (found
+      (list (cons found (source-post-pc (car sources)))))
+     (else '()))))
+
+(define (current-line-ranges frame start)
+  "The instruction ranges of the line FRAME is at, in its procedure,
+whose code starts at START."
+  (let ((source (frame-source frame)))
+    (if (and start source (source:file source))
+        (code-line-ranges start (source:file source) (source:line source))
+        '())))
+
+(define (add-step-trap! frame into? expression?)
+  "Pauses the program at the next line reached in FRAME, or, with
+EXPRESSION?, at the next source position, line and column.
+
+Steps pause at source positions rather than at machine instructions.
+In the middle of an expression, the VM can be part way through
+building an object: between the instruction that allocates a pair and
+those that fill it in, say.  Showing such an object, as the Backtrace
+page does, can crash Guile.  A new source position starts a new
+expression, whose predecessors are complete.  If FRAME returns, pauses in its
+caller, if that is the program's.  With INTO?, also pauses on entering
+a procedure of the program that FRAME calls, directly or through
+Guile's libraries.  Once the step leaves the program, it pauses at the
+first code of the program that runs again, if any; if the program ends
+first, it just ends.  Code in Guile's own libraries is skipped, unless
+FRAME is in it."
+  (let* ((fp (frame-address frame))
+         (internal? (guile-internal-frame? frame))
+         (in-frame? #t))
+    (call-with-values (lambda () (frame-code-extent frame))
+      (lambda (start end)
+        (let ((here (if expression?
+                        (current-position-range frame start end)
+                        (current-line-ranges frame start))))
+          (define (moved? ip)
+            (not (ip-in-ranges? ip here)))
+          (define (program? f)
+            (and f (step-frame? f internal?)))
+          (add-ephemeral-trap!
+           (lambda (handler)
+             (combine-traps
+              (list
+               ;; In the stepped frame: addresses only.
+               (trap-matching-instructions
+                (lambda (f)
+                  (and in-frame?
+                       start
+                       (= (frame-address f) fp)
+                       (let ((ip (frame-instruction-pointer f)))
+                         (and (<= start ip) (< ip end) (moved? ip)))))
+                handler)
+               ;; Entering a procedure: one that FRAME calls, with
+               ;; INTO?; one that replaces FRAME, by a tail call; or,
+               ;; once the step has left the program, any.
+               (hook-trap
+                vm-add-apply-hook! vm-remove-apply-hook!
+                (lambda (f)
+                  (when (and (or (not in-frame?)
+                                 (= (frame-address f) fp)
+                                 (and into? (> (frame-address f) fp)))
+                             (program? f))
+                    (handler f))))
+               ;; Returning: from FRAME, to its caller; or, once the
+               ;; step has left the program, from anything to the
+               ;; program.
+               (hook-trap
+                vm-add-return-hook! vm-remove-return-hook!
+                (lambda (f)
+                  (when (or (not in-frame?) (= (frame-address f) fp))
+                    (let ((caller (frame-previous f)))
+                      (if (program? caller)
+                          (handler caller #f)
+                          (set! in-frame? #f))))))
+               ;; An exception caught outside FRAME, or caught anywhere
+               ;; once the step has left the program.
+               (hook-trap
+                vm-add-abort-hook! vm-remove-abort-hook!
+                (lambda (f)
+                  (when (or (not in-frame?) (< (frame-address f) fp))
+                    (if (program? f)
+                        (handler f #f)
+                        (set! in-frame? #f))))))))
+           step-handler))))))
+
 (define (add-line-step-trap! frame into?)
-  "Pauses the program at the next line reached in FRAME, or in a frame
-that FRAME returns to.  With INTO?, also pauses in procedures that FRAME
-calls.  Code in Guile's own libraries is skipped, unless FRAME is in
-it.  If the program ends first, it just ends."
-  (let ((fp (frame-address frame))
-        (line (frame-line frame))
-        (internal? (guile-internal-frame? frame)))
-    (add-ephemeral-trap!
-     (lambda (handler)
-       (trap-matching-instructions
-        (lambda (f)
-          (and (or into? (<= (frame-address f) fp))
-               (step-frame? f internal?)
-               (or (not (= (frame-address f) fp))
-                   (not (eqv? (frame-line f) line)))))
-        handler))
-     step-handler)))
+  "Pauses the program at the next line; see add-step-trap!."
+  (add-step-trap! frame into? #f))
+
+(define (add-expression-step-trap! frame into?)
+  "Pauses the program at the next source position; see add-step-trap!."
+  (add-step-trap! frame into? #t))
 
 (define (add-next-line-trap! internal?)
-  "Pauses the program at the next line it reaches, in any frame in
-which stepping may pause; see step-frame?."
+  "Pauses the program at the next code of its own that runs: a
+procedure of the program being entered, or a frame of the program
+being returned or aborted to.  Uses no instruction hook; see
+add-step-trap!."
+  (define (program? f) (and f (step-frame? f internal?)))
   (add-ephemeral-trap!
    (lambda (handler)
-     (trap-matching-instructions
-      (lambda (f) (step-frame? f internal?))
-      handler))
+     (combine-traps
+      (list
+       (hook-trap vm-add-apply-hook! vm-remove-apply-hook!
+                  (lambda (f) (when (program? f) (handler f))))
+       (hook-trap vm-add-return-hook! vm-remove-return-hook!
+                  (lambda (f)
+                    (let ((caller (frame-previous f)))
+                      (when (program? caller) (handler caller #f)))))
+       (hook-trap vm-add-abort-hook! vm-remove-abort-hook!
+                  (lambda (f) (when (program? f) (handler f #f)))))))
    step-handler))
-
-(define (add-instruction-step-trap! frame into? outermost)
-  "Pauses the program at the next instruction in FRAME, or in a frame
-it returns to.  With INTO?, also in procedures that FRAME calls.
-
-Unlike line steps, these go through Guile's libraries too.  So that
-they stay in the program, they do not go further out than OUTERMOST,
-the outermost frame of the program: when that returns to the code that
-runs the program, the program just runs on."
-  (let ((fp (frame-address frame))
-        (limit (frame-address outermost)))
-    (add-ephemeral-trap!
-     (lambda (handler)
-       (trap-matching-instructions
-        (lambda (f)
-          (and (or into? (<= (frame-address f) fp))
-               (>= (frame-address f) limit)
-               (not (guidance-frame? f))))
-        handler))
-     step-handler)))
 
 (define (add-step-out-trap! frame)
   "Pauses the program in FRAME's caller, when FRAME returns.
@@ -771,9 +1143,10 @@ line of its own that it reaches, if it reaches one."
                                    ""
                                    (format #f " with ~{~s~^, ~}" values)))))
          (if (and caller (step-frame? caller internal?))
+             ;; The returning frame is still on the stack.
              (pause caller
                     (format #f "~a, to ~a" message (frame-location caller))
-                    "step>")
+                    "step>" #:top-frame? #f)
              (begin
                (format #t "~&~a~%" message)
                (add-next-line-trap! internal?))))))))
@@ -781,19 +1154,17 @@ line of its own that it reaches, if it reaches one."
 (define* (pause frame message prompt #:key (top-frame? #t))
   "Pauses the program at FRAME and lets the operator inspect it, then
 continue, step, or stop.  TOP-FRAME? says whether FRAME is the frame
-that is executing, as it is when a trap fires."
-  (let ((frames (gdn-frame-frames frame %stack-tag)))
+that is executing, as it is when an instruction or apply hook fires.
+It must be false for a caller whose callee's frame is still on the
+stack: Guile then lists the values the pending call will define, whose
+slots hold garbage, and printing one can crash Guile."
+  (let ((frames (or (false-if-exception (gdn-frame-frames frame %stack-tag))
+                    (list frame))))
     (set! *selected-frame* 0)
     (parameterize ((*paused* #t)
                    (*pause-frames* frames)
                    (*pause-top-frame?* top-frame?))
       (pause-interact frame frames message prompt))))
-
-(define (outermost-frame frame frames)
-  "The outermost frame of the program paused at FRAME, given FRAMES,
-its stack as shown in the backtrace: innermost first, without the
-frames of the code that runs the program."
-  (if (null? frames) frame (last frames)))
 
 (define (pause-interact frame frames message prompt)
   (begin
@@ -801,10 +1172,15 @@ frames of the code that runs the program."
     ;; by the mode, and they may act as soon as they see the message.
     (gdn-set-input-mode! *gdn-application-window* 'trap)
     (format #t "~&~a~%" message)
-    (gdn-update-backtrace! *gdn-backtrace-view* frames (*pause-top-frame?*))
+    ;; This runs in a VM hook, through which an exception must not
+    ;; unwind, so a failure to show something is reported instead.
+    (print-error-on-exception
+     (lambda ()
+       (gdn-update-backtrace! *gdn-backtrace-view* frames
+                              (*pause-top-frame?*))))
     (let loop ()
-      (refresh-views!)
-      (display prompt %gdn-prompt-port)
+      (print-error-on-exception refresh-views!)
+      (show-prompt prompt)
       (let* ((input (get-user-input))
              (action (car input))
              (data (cadr input)))
@@ -812,10 +1188,12 @@ frames of the code that runs the program."
           ((run continue) #t)
           ((step) (add-line-step-trap! frame #f))
           ((step-into) (add-line-step-trap! frame #t))
+          ;; The GUI's "instruction" steps go by source position; see
+          ;; add-step-trap!.
           ((step-instruction)
-           (add-instruction-step-trap! frame #f (outermost-frame frame frames)))
+           (add-expression-step-trap! frame #f))
           ((step-into-instruction)
-           (add-instruction-step-trap! frame #t (outermost-frame frame frames)))
+           (add-expression-step-trap! frame #t))
           ((step-out) (add-step-out-trap! frame))
           ((stop) (abort-to-prompt %stop-tag))
           ((eval)
@@ -832,15 +1210,12 @@ frames of the code that runs the program."
                  (frame-location frame))
          (format #f "trap ~a>" trap-idx)))
 
-(define (step-handler frame)
-  (pause frame (format #f "Step to ~a" (frame-location frame)) "step>"))
-
-(define (break-handler frame)
-  "Guidance traps calls to _break_ while a program runs.  FRAME is the
-frame of _break_, so pause in its caller."
-  (let ((caller (or (frame-previous frame) frame)))
-    (pause caller (format #f "Break at ~a" (frame-location caller))
-           "break>")))
+(define* (step-handler frame #:optional (top-frame? #t))
+  "Pauses at the end of a step.  TOP-FRAME? is false when FRAME is not
+the frame that is executing, but a caller that a frame is returning to;
+see pause."
+  (pause frame (format #f "Step to ~a" (frame-location frame)) "step>"
+         #:top-frame? top-frame?))
 
 (define (pause-here)
   "Pauses the program where it is, in response to the Pause button.
@@ -898,9 +1273,40 @@ with where it was called from, and returns the last of them."
       *unspecified*
       (car (last-pair values))))
 
+(define (break-in-caller)
+  "Pauses the program in the caller of _break_.  This runs in the
+program, not in a VM hook, so tracing is turned off while paused, and
+restored afterwards, as for Pause.  _break_'s own frame is still on the
+stack, so the caller is not the frame that is executing."
+  (let* ((break-frame (let loop ((frame (stack-ref (make-stack #t) 0)))
+                        (cond
+                         ((not frame) #f)
+                         ((eq? (frame-procedure-name frame) '_break_) frame)
+                         (else (loop (frame-previous frame))))))
+         (caller (and break-frame (frame-previous break-frame)))
+         (saved-level (vm-trace-level)))
+    (when caller
+      (set-vm-trace-level! 0)
+      (pause caller (format #f "Break at ~a" (frame-location caller))
+             "break>" #:top-frame? #f)
+      (set-vm-trace-level! saved-level))))
+
 (define (_break_)
   "Pauses the program in trap mode at the caller of _break_, when the
-program is run by Guidance.  Otherwise, does nothing."
+program is run by Guidance.  Otherwise, does nothing.
+
+It pauses by itself, rather than through a trap on its calls: such a
+trap uses the VM's apply hook, which Guile then calls on every call the
+program makes, and which made programs many times slower."
+  (cond
+   ((not *program-thread*) #t)
+   ((not (eq? (current-thread) *program-thread*))
+    (format (current-error-port) "~&_break_ was called in a thread other \
+than the program's main thread, and ignored: Guidance can pause only \
+that one.~%"))
+   ;; In an expression entered while the program is paused.
+   ((*paused*) #t)
+   (else (break-in-caller)))
   *unspecified*)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -920,7 +1326,7 @@ command arrives.  Returns the exit status."
   (let loop ()
     (gdn-set-input-mode! *gdn-application-window* 'repl)
     (refresh-views!)
-    (display "repl>" %gdn-prompt-port)
+    (show-prompt "repl>")
     (let* ((input (get-user-input))
            (action (car input))
            (data (cadr input)))
@@ -940,6 +1346,56 @@ command arrives.  Returns the exit status."
         (else
          (loop))))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; COMPILER NOTES
+
+;; The lines that Guile prints, by the warning port, when it compiles
+;; a file automatically.  They say nothing about the program, and
+;; their cache paths are long.  The compiler's warnings are kept.
+(define %compiler-note-prefixes
+  '(";;; compiling "
+    ";;; compiled "
+    ";;; note: auto-compilation is enabled"
+    ";;;       or pass the --no-auto-compile argument"
+    ";;; note: source file "
+    ";;;       newer than compiled "))
+
+(define (compiler-note? line)
+  (any (lambda (prefix) (string-prefix? prefix line))
+       %compiler-note-prefixes))
+
+(define (compiler-note-filter port)
+  "Returns a port that passes what is written to it on to PORT, except
+the compiler's notes.  A line is held back only while it may still turn
+out to be a note: until its newline, if it begins with \";;; \"."
+  (define pending "")
+  (define (maybe-note? text)
+    (if (< (string-length text) 4)
+        (string-prefix? text ";;; ")
+        (string-prefix? ";;; " text)))
+  (define (emit! text)
+    (unless (string-null? text)
+      (display text port)))
+  (make-custom-textual-output-port
+   "warnings"
+   (lambda (str start count)
+     (let loop ((text (string-append pending
+                                     (substring str start (+ start count)))))
+       (set! pending "")
+       (let ((newline (string-index text #\newline)))
+         (cond
+          (newline
+           (let ((line (substring text 0 (1+ newline))))
+             (unless (compiler-note? line)
+               (emit! line))
+             (loop (substring text (1+ newline)))))
+          ((maybe-note? text)
+           (set! pending text))
+          (else
+           (emit! text)))))
+     count)
+   #f #f #f))
+
 (define (gdn-top-repl)
   "Kick off the REPL for Guidance."
   ;; Note that there is no signal handler here, because we handle
@@ -949,6 +1405,8 @@ command arrives.  Returns the exit status."
   ;; Make the trap procedures, like add-trap-at-procedure-call!,
   ;; available to the operator.
   (module-use! (current-module) (resolve-interface '(system vm trap-state)))
+  ;; Warnings go where errors do, without the compiler's notes.
+  (current-warning-port (compiler-note-filter (current-error-port)))
   (compile-for-debugging!)
   (apply-command-line! (cdr (command-line)))
   (repl-welcome)

@@ -36,10 +36,17 @@ static const char usage[] =
     "  -s FILE        the program to run; the remaining arguments are its ARGs\n"
     "  -c EXPR        the program to run is the expression EXPR\n"
     "  -e FUNCTION    after loading the program, call FUNCTION with the\n"
-    "                 program's command line, as a list of strings\n"
+    "                 program's command line, as a list of strings;\n"
+    "                 FUNCTION can be a name or (@ (MODULE) NAME)\n"
+    "  -x EXTENSION   add EXTENSION to the extensions tried when loading\n"
+    "  --use-srfi=LIST  import the SRFIs in the comma-separated LIST\n"
+    "  --fresh-auto-compile  compile the program even if it is cached\n"
     "  --             stop scanning options; the next argument is FILE\n"
     "  -h, --help     display this help and exit\n"
-    "  -v, --version  display version information and exit\n";
+    "  -v, --version  display version information and exit\n"
+    "\n"
+    "Guile's --debug, --no-debug, --auto-compile, --no-auto-compile, and -q\n"
+    "are accepted and make no difference.\n";
 
 /* Scans Guidance's options, by the same rules as gdn-parse-command-line
  * in (gdn lib), for --help and --version.  Everything else is parsed
@@ -66,7 +73,8 @@ handle_info_options (int argc, char **argv)
           return TRUE;
         }
       if (strcmp (arg, "-L") == 0 || strcmp (arg, "-C") == 0
-          || strcmp (arg, "-l") == 0 || strcmp (arg, "-e") == 0)
+          || strcmp (arg, "-l") == 0 || strcmp (arg, "-e") == 0
+          || strcmp (arg, "-x") == 0)
         i++; /* skip the option's argument */
       else if (strcmp (arg, "-s") == 0 || strcmp (arg, "-c") == 0
                || strcmp (arg, "--") == 0 || arg[0] != '-' || arg[1] == '\0')

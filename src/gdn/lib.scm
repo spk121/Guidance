@@ -22,6 +22,8 @@
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-43)
+  #:use-module ((ice-9 threads)
+                #:select (total-processor-count current-processor-count))
   #:use-module (system vm debug)
   #:use-module (system vm frame)
   #:use-module (system vm program)
@@ -38,6 +40,10 @@
             gdn-trap-at-binding
             gdn-procedure-binding
             gdn-loaded-code-at-line?
+            code-extent
+            code-line-ranges
+            ip-in-ranges?
+            gdn-binding-readable?
             gdn-parse-command-line
             gdn-get-backtrace
             gdn-get-environment))
@@ -50,6 +56,23 @@
 ;; --version itself, before starting the GUI, using the same rules
 ;; for where the options end, and has the usage message.
 
+(define %ignored-options
+  ;; Guile options that make no difference under Guidance.  Guidance
+  ;; always uses the debugging VM and its own compiler settings, and
+  ;; does not load ~/.guile.
+  '("--debug" "--no-debug" "--auto-compile" "-q"))
+
+(define (parse-entry-point value)
+  "Parses the argument of -e: a symbol, or an expression such as
+(@ (my module) main).  Returns it, or #f if it cannot be read."
+  (if (string-prefix? "(" value)
+      (catch #t
+        (lambda ()
+          (let ((datum (call-with-input-string value read)))
+            (and (pair? datum) datum)))
+        (lambda args #f))
+      (string->symbol value)))
+
 (define (gdn-parse-command-line args)
   "Parses Guidance's command-line arguments, ARGS, not including the
 program name.  Returns an alist with these keys:
@@ -57,62 +80,96 @@ program name.  Returns an alist with these keys:
   load-path       directories from -L, in order
   compiled-path   directories from -C, in order
   load-files      files from -l, in order
+  extensions      file name extensions from -x, in order
+  srfis           SRFI numbers from --use-srfi, in order
+  fresh-auto-compile?  whether --fresh-auto-compile was given
   script          the program FILE, or #f
   expression      the program EXPR from -c, or #f
-  entry           the FUNCTION from -e, as a symbol, or #f
+  entry           the FUNCTION from -e: a symbol, an expression such
+                  as (@ (my module) main), or #f
   arguments       the program's ARGs
+  notes           a list of messages about options that are ignored
   errors          a list of messages about bad arguments"
-  (let loop ((args args)
-             (load-path '()) (compiled-path '()) (load-files '())
-             (entry #f) (errors '()))
-    (define (finish script expression arguments errors)
-      `((load-path . ,(reverse load-path))
-        (compiled-path . ,(reverse compiled-path))
-        (load-files . ,(reverse load-files))
-        (script . ,script)
-        (expression . ,expression)
-        (entry . ,entry)
-        (arguments . ,arguments)
-        (errors . ,(reverse errors))))
-    (define (missing option)
-      (finish #f #f '()
-              (cons (format #f "option ~a requires an argument" option)
-                    errors)))
+  (define load-path '())
+  (define compiled-path '())
+  (define load-files '())
+  (define extensions '())
+  (define srfis '())
+  (define fresh? #f)
+  (define entry #f)
+  (define notes '())
+  (define errors '())
+  (define (note! fmt . args)
+    (set! notes (cons (apply format #f fmt args) notes)))
+  (define (error! fmt . args)
+    (set! errors (cons (apply format #f fmt args) errors)))
+  (define (finish script expression arguments)
+    `((load-path . ,(reverse load-path))
+      (compiled-path . ,(reverse compiled-path))
+      (load-files . ,(reverse load-files))
+      (extensions . ,(reverse extensions))
+      (srfis . ,(reverse srfis))
+      (fresh-auto-compile? . ,fresh?)
+      (script . ,script)
+      (expression . ,expression)
+      (entry . ,entry)
+      (arguments . ,arguments)
+      (notes . ,(reverse notes))
+      (errors . ,(reverse errors))))
+  (define (use-srfis! arg list)
+    (let ((numbers (map string->number (string-split list #\,))))
+      (if (and (pair? numbers) (every (lambda (n) (and (exact-integer? n) (>= n 0))) numbers))
+          (set! srfis (append (reverse numbers) srfis))
+          (error! "bad SRFI list in ~a" arg))))
+  (let loop ((args args))
     (if (null? args)
-        (finish #f #f '() errors)
+        (finish #f #f '())
         (let ((arg (car args))
               (rest (cdr args)))
           (cond
-           ((member arg '("-L" "-C" "-l" "-e" "-s" "-c"))
+           ((member arg '("-L" "-C" "-l" "-x" "-e" "-s" "-c"))
             (if (null? rest)
-                (missing arg)
+                (begin
+                  (error! "option ~a requires an argument" arg)
+                  (finish #f #f '()))
                 (let ((value (car rest)))
                   (cond
-                   ((string=? arg "-L")
-                    (loop (cdr rest) (cons value load-path) compiled-path
-                          load-files entry errors))
-                   ((string=? arg "-C")
-                    (loop (cdr rest) load-path (cons value compiled-path)
-                          load-files entry errors))
-                   ((string=? arg "-l")
-                    (loop (cdr rest) load-path compiled-path
-                          (cons value load-files) entry errors))
-                   ((string=? arg "-e")
-                    (loop (cdr rest) load-path compiled-path load-files
-                          (string->symbol value) errors))
-                   ((string=? arg "-s")
-                    (finish value #f (cdr rest) errors))
-                   (else              ; -c
-                    (finish #f value (cdr rest) errors))))))
+                   ((string=? arg "-s") (finish value #f (cdr rest)))
+                   ((string=? arg "-c") (finish #f value (cdr rest)))
+                   (else
+                    (cond
+                     ((string=? arg "-L") (set! load-path (cons value load-path)))
+                     ((string=? arg "-C")
+                      (set! compiled-path (cons value compiled-path)))
+                     ((string=? arg "-l") (set! load-files (cons value load-files)))
+                     ((string=? arg "-x") (set! extensions (cons value extensions)))
+                     (else              ; -e
+                      (let ((parsed (parse-entry-point value)))
+                        (if parsed
+                            (set! entry parsed)
+                            (error! "cannot read the function ~a given to -e"
+                                    value)))))
+                    (loop (cdr rest)))))))
            ((string=? arg "--")
             (if (null? rest)
-                (finish #f #f '() errors)
-                (finish (car rest) #f (cdr rest) errors)))
+                (finish #f #f '())
+                (finish (car rest) #f (cdr rest))))
+           ((member arg %ignored-options)
+            (loop rest))
+           ((string=? arg "--no-auto-compile")
+            (note! "~a is ignored: Guidance compiles programs, to debug them" arg)
+            (loop rest))
+           ((string=? arg "--fresh-auto-compile")
+            (set! fresh? #t)
+            (loop rest))
+           ((string-prefix? "--use-srfi=" arg)
+            (use-srfis! arg (substring arg (string-length "--use-srfi=")))
+            (loop rest))
            ((and (> (string-length arg) 1) (char=? (string-ref arg 0) #\-))
-            (loop rest load-path compiled-path load-files entry
-                  (cons (format #f "unrecognized option ~a" arg) errors)))
+            (error! "unrecognized option ~a" arg)
+            (loop rest))
            (else
-            (finish arg #f rest errors)))))))
+            (finish arg #f rest)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; STACKS
@@ -327,6 +384,35 @@ includes the address CODE, or #f and #f."
                    (program-debug-info-size info)))
         (values #f #f))))
 
+;; Decoding a procedure's line table from its debug information is
+;; slow, and finding the code at a line looks at every loaded
+;; procedure.  A procedure's code never changes once loaded, so each
+;; table is decoded once and kept, keyed by the code's start address.
+;; Only the REPL thread, which runs the traps, uses it.
+(define *line-tables* (make-hash-table))
+
+(define (code-line-table start end)
+  "Returns the line table of the procedure whose code runs from START
+to END: a list of entries (FILE LINE PC . NEXT-PC), one for each
+source position."
+  (or (hashv-ref *line-tables* start)
+      (let ((table
+             (let loop ((sources (find-program-sources start)) (acc '()))
+               (if (null? sources)
+                   (reverse! acc)
+                   (let* ((source (car sources))
+                          (next (if (pair? (cdr sources))
+                                    (source-post-pc (cadr sources))
+                                    end)))
+                     (loop (cdr sources)
+                           (cons (cons* (source-file source)
+                                        (source-line source)
+                                        (source-post-pc source)
+                                        next)
+                                 acc)))))))
+        (hashv-set! *line-tables* start table)
+        table)))
+
 (define (code-line-ranges code file line)
   "Returns the instruction ranges, as a list of absolute (START . END)
 pairs, of the code at LINE of FILE in the procedure whose code begins
@@ -335,24 +421,13 @@ at LINE.  (Lines with no code are not moved to the next line with
 code: procedures nest, so the next line may belong to another.)"
   (call-with-values (lambda () (code-extent code))
     (lambda (start end)
-      (let* ((sources (if start (find-program-sources start) '()))
-             ;; Each entry is (LINE START . END), for the sources in FILE.
-             (entries
-              (let loop ((sources sources) (acc '()))
-                (if (null? sources)
-                    acc
-                    (let* ((source (car sources))
-                           (next (if (pair? (cdr sources))
-                                     (source-post-pc (cadr sources))
-                                     end)))
-                      (loop (cdr sources)
-                            (if (same-source-file? (source-file source) file)
-                                (cons (cons* (source-line source)
-                                             (source-post-pc source)
-                                             next)
-                                      acc)
-                                acc)))))))
-        (map cdr (filter (lambda (e) (= (car e) line)) entries))))))
+      (if start
+          (filter-map (lambda (entry)
+                        (and (eqv? (cadr entry) line)
+                             (same-source-file? (car entry) file)
+                             (cddr entry)))
+                      (code-line-table start end))
+          '()))))
 
 (define (procedures-at-line file line)
   "Returns a list of (CODE . RANGES) for the compiled procedures in the
@@ -526,7 +601,43 @@ such as the closures made by one `lambda', are not told apart."
 ;; - representation (string)
 ;; - value (string)
 ;; - extra (string)
+(define (call-argument-count args)
+  "The number of arguments in ARGS, the arguments of a call
+representation.  When a rest argument is not available, Guile gives
+them as an improper list, ending in _ rather than ()."
+  (let loop ((args args) (n 0))
+    (if (pair? args) (loop (cdr args) (1+ n)) n)))
+
+(define (argument-binding-count frame nargs)
+  "The number of FRAME's bindings that are its procedure's arguments.
+They come first, in the order of the procedure's arity: the closure, if
+it has one, then the required, optional, rest, and keyword arguments.
+NARGS, the number of arguments in the call, is the guess when the arity
+cannot be found."
+  (let ((arity (false-if-exception
+                (find-program-arity (frame-instruction-pointer frame)))))
+    (if arity
+        (+ (if (arity-has-closure? arity) 1 0)
+           (arity-nreq arity)
+           (arity-nopt arity)
+           (if (arity-has-rest? arity) 1 0)
+           (length (arity-keyword-args arity)))
+        nargs)))
+
 (define (frame->backtrace-entry frame top-frame?)
+  "A backtrace entry for FRAME.  This must not fail: it is called while
+the program is paused in a VM hook, and an exception that unwinds
+through a hook can corrupt the program.  So if anything goes wrong,
+the entry just says less."
+  (catch #t
+    (lambda () (frame->backtrace-entry* frame top-frame?))
+    (lambda args
+      (vector (format #f "(~a)" (or (false-if-exception
+                                     (frame-procedure-name frame))
+                                    "λ"))
+              "" 0 0 0 (vector)))))
+
+(define (frame->backtrace-entry* frame top-frame?)
   ;; A frame may be inspected at any instruction, where some of its
   ;; information may not be available, so each part falls back to a
   ;; default rather than failing.  TOP-FRAME? tells Guile that FRAME
@@ -538,7 +649,7 @@ such as the closures made by one `lambda', are not told apart."
          (col (if source (source:column source) 0))
          (call (false-if-exception
                 (frame-call-representation frame #:top-frame? top-frame?)))
-         (nargs (if (pair? call) (length (cdr call)) 0))
+         (nargs (if (pair? call) (call-argument-count (cdr call)) 0))
          (bindings (or (false-if-exception
                         (frame-bindings frame top-frame?))
                        '())))
@@ -555,7 +666,10 @@ such as the closures made by one `lambda', are not told apart."
       (filter-map (lambda (binding)
                     ;; Unnamed bindings are compiler temporaries.
                     (and (binding-name binding)
-                         (false-if-exception (unpack-binding nargs binding))))
+                         (gdn-binding-readable? frame binding)
+                         (false-if-exception
+                          (unpack-binding (argument-binding-count frame nargs)
+                                          binding))))
                   bindings)))))
 
 (define* (gdn-get-backtrace frames #:optional top-frame?)
@@ -565,11 +679,24 @@ TOP-FRAME? should be true if the first frame is the one executing, as
 when the program is paused by a trap.  Returns a vector of backtrace
 entries, as described above."
   (if (and frames (pair? frames))
-      (list->vector
-       (cons (frame->backtrace-entry (car frames) top-frame?)
-             (map (lambda (f) (frame->backtrace-entry f #f))
-                  (cdr frames))))
+      (let ((entries
+             (list->vector
+              (cons (frame->backtrace-entry (car frames) top-frame?)
+                    (map (lambda (f) (frame->backtrace-entry f #f))
+                         (cdr frames))))))
+        (name-top-level! entries)
+        entries)
       (vector)))
+
+(define (name-top-level! entries)
+  "The outermost frame of a program, if it is a procedure with no name
+and no arguments, is the top level of a file, or an expression from the
+REPL: show it as such, rather than as (λ)."
+  (let* ((last (1- (vector-length entries)))
+         (entry (vector-ref entries last)))
+    (when (and (string=? (vector-ref entry 0) "(λ)")
+               (zero? (vector-ref entry 4)))
+      (vector-set! entry 0 "(top level)"))))
 
 (define (object->extra-info x)
   (cond
@@ -586,29 +713,50 @@ entries, as described above."
 
 (define (format-call call)
   "Formats a call representation (PROCEDURE-NAME ARG ...), with each
-argument on its own line."
+argument on its own line.  The arguments may be an improper list,
+ending in _ for a rest argument that is not available."
   (with-output-to-string
     (lambda ()
       (display "(")
-      (display (or (car call) 'λ))
-      (for-each
-       (lambda (arg)
-         (newline)
-         (display "  ")
-         (display arg))
-       (cdr call))
+      ;; Guile gives _ for a procedure with no name.
+      (display (if (memq (car call) '(#f _)) 'λ (car call)))
+      (let loop ((args (cdr call)))
+        (cond
+         ((pair? args)
+          (newline)
+          (display "  ")
+          (display (car args))
+          (loop (cdr args)))
+         ((null? args) #t)
+         (else
+          (newline)
+          (display "  . ")
+          (display args))))
       (display ")"))))
 
-(define (unpack-binding n_args binding)
+;; The number of local slots in a frame.  Guile does not export this,
+;; but its own frame-call-representation uses it for the same check as
+;; gdn-binding-readable?, and there is no other way to make it.
+(define frame-num-locals (@@ (system vm frame) frame-num-locals))
+
+(define (gdn-binding-readable? frame binding)
+  "True if BINDING's slot is within FRAME, so that its value can be
+read.  A frame can have bindings beyond its locals, as Guile notes in
+frame-call-representation, especially at an instruction in the middle
+of a procedure; reading one of those reads past the frame, and can
+crash Guile when the value is printed."
+  (< (binding-slot binding) (frame-num-locals frame)))
+
+(define (unpack-binding argument-count binding)
+  "A binding of the backtrace, as described above.  The first
+ARGUMENT-COUNT bindings of a frame are its arguments."
   (let ((name (binding-name binding))
         (val (binding-ref binding)))
     (vector
      (if name
          (symbol->string name)
          "(anonymous)")
-     (if (< (binding-index binding) n_args)
-         #t
-         #f)
+     (< (binding-index binding) argument-count)
      (object->string (binding-representation binding))
      (object->string val)
      (object->extra-info val))))
@@ -815,342 +963,3 @@ shown with a single row describing the error."
    (category "process" get-process-information)
    (category "time" get-time-entries)
    (category "user" get-user-information-entries)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 
-#|
-(use-modules
- ((system repl debug) #:select (stack->vector) #:prefix __)
- ((system vm frame) #:select (frame-bindings binding-representation binding-index binding-ref binding-name) #:prefix __)
- ((system vm program) #:select (source:file source:column source:line-for-user) #:prefix __)
- (system vm trap-state)
- (system repl common)
- (system repl debug)
- (system repl error-handling)
- ((ice-9 command-line) #:select (compile-shell-switches) #:prefix __)
- ((ice-9 top-repl) #:select (top-repl) #:prefix __)
- ((ice-9 i18n) #:select (number->locale-string) #:prefix __)
- (ice-9 rdelim)
- ((ice-9 threads) #:select()))
-
-(define (gdn-string-starts-with prefix str)
-  (let ((len (string-length prefix)))
-    (cond
-     ((< (string-length str) len)
-      #f)
-     (else
-      (string= prefix str 0 len 0 len)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; BACKTRACE
-
-(define (gdn-value->string x)
-  (format #f "~A" x))
-
-(define (gdn-value->extra-info x)
-  (cond
-   ;; ((procedure? x)
-   ;;  (or (procedure-name x) "λ"))
-   ;; ((and (variable? x) (variable-bound? x))
-   ;;  (gdn-value->string (variable-ref x)))
-   ;; ((and (variable? x) (not (variable-bound? x)))
-   ;;  "undefined")
-   ((fluid? x)
-    (gdn-value->string (or (false-if-exception (fluid-ref x)) "unbound")))
-   (else
-    "")))
-
-
-(define (gdn-format-frame-arguments frame)
-  (with-output-to-string
-    (lambda ()
-      (display "(")
-      (display (or (frame-procedure-name frame) 'λ))
-      (for-each
-       (lambda (arg)
-         (newline)
-         (display "  ")
-         (display arg))
-       (frame-arguments frame))
-      (display ")"))))
-
-(define (gdn-test-backtrace x)
-  (write (gdn-get-backtrace
-          (vector-ref (__stack->vector (make-stack #t 1)) 0)))
-  (newline)
-  x)
-
-#|
-(define (func y)
-(funk (1+ y)))
-|#
-
-#|
-(define (get-traps)
-(list->vector
-(map (lambda (trap-id)
-(list trap-id (trap-name trap-id) (trap-enabled? trap-id)))
-(list-traps))))
-|#
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Entry point for REPL
-
-;; The REPL entry point is different than the standard REPL
-;; in that
-;; - it uses the Guidance 'run' error handler
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Entry point for running
-
-;; 'Run' error handler
-
-;; When running code that creates an error, we want to
-;; end up in a debug mode.
-;; Capture the stack for the error.
-;; Update the backtrace and environment info.
-;; Enter a debug mode where
-;; -  the limited debug repl works.
-                                        ;  -  allow traps to be created or destroyed
-;; -  allow "stop", "restart"
-;; If "stop" or "restart", the stack is unwound.
-
-
-;; (call-with-error-handling repl-handler
-;;   #:on-error error-handler
-;;   #:trap-handler trap-handler)
-
-;; (define (repl-handler)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Break function handling
-
-;; Break function handling is similar to run error handler. It
-;; is caused by placing a call to (*break*) in the code, or by
-;; clicking the pause button.
-
-;; It has the same features as the 'run' error handler plus
-;; it allows all the step and next actions, as well as the
-;; continue action.
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Trap error handling
-
-;; Basically the same as the Break handler except
-;; for its entry point.  Also, it highlights
-;; the trap that triggered it in the trap list view until
-;; the source location changes.
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Setting traps
-
-;; You can set traps by
-;; - using the add-trap commands at the REPL
-;; - right-clicking on a source file
-;; - choosing a function from the module explorer
-
-;; (interaction-environment) is the same as
-;; (current-module) for the current thread.
-
-(define (gdn-run-repl)
-  (let loop ()
-    (unless (char-ready?)
-      (display "poop>" %gdn-prompt-port))
-    (force-output)
-    (gdn-update-traps! *gdn-trap-view* (list-traps))
-    ;; (run-hook before-read-hook)
-    ;; (%gdn-update-thread-info)
-    ;; (%gdn-update-environment-info (gdn-get-environment))
-    #;(gdn-update-backtrace
-     (vector-ref (__stack->vector (make-stack #t
-                                              8 ; layers to get out of repl-reader
-                                              )) 0))
-    (let ((input (read-line (current-input-port))))
-      (let ((result (false-if-exception (eval-string input))))
-        (write result)
-        (loop)))))
-
-(define (gdn-run-argv argv)
-  "Process the command line argument list and then run a Guile
-interpreter."
-  ;;(eval (__compile-shell-switches argv) (current-module)))
-  (display "ARGV: ")
-  (write argv)
-  (newline)
-  (call-with-error-handling (__compile-shell-switches argv)))
-
-(define gdn-run-trap (add-trap-at-procedure-call! gdn-run-argv))
-
-(define (gdn-run-trap-enable)
-  (false-if-exception (enable-trap! gdn-run-trap)))
-
-(define (gdn-run-trap-disable)
-  (false-if-exception (disable-trap! gdn-run-trap)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; HOOKS
-
-;; Note that the GC and Sweep handlers are created with the C API
-
-(set! %load-hook gdn-load-handler)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Module handlers
-
-#;(define (gdn-module-defined-hook directory)
-  "Inform Guidance every time a module is loaded"
-  (let* ((name (module-name directory))
-         ;; NAME is a list of symbols, e.g. '(srfi srfi-1)
-         (name-str (format #f "~a" name))
-         (filename ((record-accessor module-type 'filename) directory))
-         (abs-filename (%search-load-path filename))
-         (category
-          (cond
-           ((gdn-string-starts-with (%library-dir) abs-filename)
-            'library)
-           ((gdn-string-starts-with (%site-dir) abs-filename)
-            'site)
-           ((gdn-string-starts-with (%global-site-dir) abs-filename)
-            'global-site)
-           ((gdn-string-starts-with (%package-data-dir) abs-filename)
-            'package-data)
-           (else
-            'other))))
-    (gdn-add-module category name-str abs-filename)))
-
-;(add-hook! module-defined-hook gdn-add-module)
-
-#|
-(define (gdn-exit-hook)
-  "Inform Guidance that this repl is about to quit"
-  (%gdn-exit-handler))
-
-(add-hook! exit-hook gdn-exit-hook)
-|#
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Reader
-
-;; Like a regular REPL reader, except that the prompt is printed to
-;; %gdn-prompt-port. Does not handle readline-like commands.  Each
-;; iteration, it runs the help functions that update the information
-;; GtkStack pages.
-
-(define gdn-repl-reader
-  (lambda* (prompt #:optional (reader (fluid-ref current-reader)))
-    (unless (char-ready?)
-      (display (if (string? prompt) prompt (prompt)) %gdn-prompt-port))
-    (force-output)
-    (run-hook before-read-hook)
-    (gdn-update-traps! *gdn-trap-view* (list-traps))
-    (gdn-update-threads)
-    (write *gdn-lisp*) (newline)
-    (write (gdn-get-user-input *gdn-lisp*)) (newline)
-    ((or reader read) (current-input-port))))
-
-(set! repl-reader gdn-repl-reader)
-
-;; We has to use our own prompting-meta-read because we want to
-;; update the tabs for each iteration with debug information
-
-(define (gdn-prompting-meta-read repl)
-  (catch #t
-    (lambda ()
-      (error "in custom prompting-meta-read~%")
-      (%gdn-update-thread-info)
-      (%gdn-update-environment-info (gdn-get-environment))
-      (if (and (repl-debug repl)
-               (debug-frames (repl-debug repl)))
-          (begin
-            (format #t "updating backtrace~%")
-            (gdn-update-backtrace
-             (debug-frames (repl-debug repl))))
-          ;; else
-          (begin
-            (format #t "not updating backtrace ~A~%" (repl-debug repl))
-            (gdn-update-backtrace #f)))
-      (repl-reader (lambda () (repl-prompt repl))
-                   ((@@ (system repl repl) meta-reader) (repl-language repl) (current-module))))
-    (lambda (key . args)
-      (case key
-        ((quit)
-         (apply throw key args))
-        (else
-         (format (current-output-port) "While reading expression:\n")
-         (print-exception (current-output-port) #f key args)
-         ;; (flush-all-input)
-         *unspecified*)))))
-
-(module-set! (resolve-module '(system repl repl))
-             'prompting-meta-read
-             gdn-prompting-meta-read)
-
-(write (module-ref (resolve-module '(system repl repl)) 'prompting-meta-read)) (newline)
-
-(define (gdn-start-repl)
-  ((@@ (system repl repl) start-repl*) (current-language) #f gdn-prompting-meta-read))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Trap Handler
-
-;; The trap handler receives
-;; - a <frame>
-;; - trap index
-;; - trap name
-;; see debug-trap-handler in (system repl error-handling)
-;;
-
-;; - extracts all of the current stack, locals, threads, env into the
-;;   tree models
-;; - walks up the tree to find a source location, and, if found, highlights
-;;   that in the appropriate file viewer
-;; - signals that it is paused
-;; - prints the "debug>" prompt
-;; - waits until it either receives a continue / step / return / stop or a 'eval' + entry string
-;;   - if it is an evalentry string, just evaluate it under (false-if-exception)
-;;   - if it is a step, adds the appropriate emphemeral trap, if necessary
-;; - returns to continue execution
-
-(define (gdn-trap-handler frame trap-idx trap-name)
-  "A trap and break handler. To indicate a break, TRAP-IDX should be
-#f and TRAP-NAME should be 'break'.  Otherwise the trap-idx and
-trap-name indicate the current trap."
-  (%gdn-set-trap-buttons)
-  (%gdn-update-thread-info)
-  (%gdn-update-environment-info (gdn-get-environment))
-  (%gdn-update-trap-info trap-idx)
-  (gdn-update-backtrace frame)
-  (display "trap>" %gdn-prompt-port)
-  
-  ;; This is a blocking operation, awaiting a response from the
-  ;; operator. This cannot be run in the Gtk main thread.
-  (let loop ((response (%gdn-get-trap-response)))
-    (let ((type (car response))
-          (data (cdr response)))
-      (cond
-       ((eq? type 'step-into-instruction)
-        (add-ephemeral-stepping-trap! frame gdn-trap-handler #:into? #t #:instruction? #t))
-       ((eq? type 'step-into)
-        (add-ephemeral-stepping-trap! frame gdn-trap-handler #:into? #t #:instruction? #f))
-       ((eq? type 'step-instruction)
-        (add-ephemeral-stepping-trap! frame gdn-trap-handler #:into? #f #:instruction? #t))
-       ((eq? type 'step)
-        (add-ephemeral-stepping-trap! frame gdn-trap-handler #:into? #f #:instruction? #t))
-       ((eq? type 'step-out)
-        (add-ephemeral-trap-at-frame-finish! frame gdn-trap-handler))
-       ((eq? type 'continue)
-        (%gdn-disable-trap-buttons)
-        *unspecified*)
-       ((eq? type 'restart)
-        (%gdn-disable-trap-buttons)
-        (abort-to-prompt *start-prompt* "trap restart"))
-       ((eq? type 'eval)
-        (display data (current-output-port))
-        (newline (current-output-port))
-        (display "=> " (current-output-port))
-        (write (false-if-exception (eval-string data)) (current-output-port))
-        (newline (current-output-port))
-        (loop (%gdn-get-trap-response)))))))
-
-|#

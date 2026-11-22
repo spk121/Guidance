@@ -17,6 +17,7 @@
 (define-module (gdn gui)
   #:use-module (gdn lib)
   #:use-module (ice-9 threads)
+  #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-43)
   #:export (gdn-get-user-input
             gdn-take-requests!
@@ -28,6 +29,7 @@
             gdn-update-backtrace!
             gdn-update-environments!
             gdn-update-traps!
+            gdn-set-source-breakpoints!
             gdn-update-threads!
             gdn-update-modules!
             gdn-set-module-procedures!
@@ -150,8 +152,25 @@
 (define (gdn-update-traps! view traps)
   (log! 'traps (length traps)))
 
-(define (gdn-update-threads! view)
-  #t)
+(define (gdn-set-source-breakpoints! view breakpoints)
+  (for-each (lambda (bp)
+              (unless (and (vector? bp) (= 4 (vector-length bp))
+                           (integer? (vector-ref bp 0))
+                           (string? (vector-ref bp 1))
+                           (integer? (vector-ref bp 2))
+                           (boolean? (vector-ref bp 3)))
+                (error "Malformed source breakpoint" bp)))
+            breakpoints)
+  (log! 'source-breakpoints breakpoints))
+
+(define (gdn-update-threads! view rows)
+  (unless (and (vector? rows)
+               (every (lambda (row)
+                        (and (vector? row) (= 3 (vector-length row))
+                             (every string? (vector->list row))))
+                      (vector->list rows)))
+    (error "Malformed thread rows" rows))
+  (log! 'threads rows))
 
 (define (gdn-update-modules! view modules)
   (vector-for-each

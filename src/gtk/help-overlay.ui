@@ -29,6 +29,12 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
+                <property name="accelerator">&lt;ctrl&gt;D</property>
+                <property name="title" translatable="yes">End the running program's input</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
                 <property name="accelerator">F10</property>
                 <property name="title" translatable="yes">Step over</property>
               </object>
@@ -48,7 +54,7 @@
             <child>
               <object class="GtkShortcutsShortcut">
                 <property name="accelerator">F9</property>
-                <property name="title" translatable="yes">Set a breakpoint at the cursor's line on the Source page</property>
+                <property name="title" translatable="yes">Set or delete the breakpoint at the cursor's line on the Source page</property>
               </object>
             </child>
           </object>
