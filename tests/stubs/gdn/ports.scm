@@ -13,6 +13,7 @@
             %gdn-output-port
             %gdn-error-port
             %gdn-prompt-port
+            gdn-open-error-port
             prompts
             send-input))
 
@@ -25,6 +26,10 @@
   "Sends STR to the program's standard input."
   (display str (cdr %input-pipe))
   (force-output (cdr %input-pipe)))
+
+;; Guidance opens a second error port to the Terminal for the program.
+;; The tests' error port is a string port, which has no second.
+(define (gdn-open-error-port) #f)
 
 (define %gdn-output-port (current-output-port))
 (define %gdn-error-port (current-error-port))

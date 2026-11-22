@@ -1319,8 +1319,7 @@ still leaves the value on a line of its own."
 ;; Guidance's messages belong in the Terminal, whatever the program
 ;; has done with its ports.
 
-(define-known-failure "ports: a pause while output goes to a string"
-  "Phase 6, Guidance writes its own messages to the program's ports"
+(define-test "ports: a pause while output goes to a string"
   (run-repl
    (list '(run #f)
          '(eval "(+ 40 2)")
@@ -1332,8 +1331,7 @@ still leaves the value on a line of its own."
   (check "the break and the expression's value are shown, in order"
          (output-order? "Break at redirect.scm:5" "→ 42" "= ")))
 
-(define-known-failure "ports: a program that changes the output port"
-  "Phase 6, Guidance writes its own messages to the program's ports"
+(define-test "ports: a program that changes the output port"
   (run-repl
    (list '(run #f)
          '(eval "(+ 40 2)")
@@ -1341,10 +1339,25 @@ still leaves the value on a line of its own."
    (program "steal-port.scm"))
   (check "the program's output before the change is shown"
          (output-contains? "= before"))
+  (check "what it wrote afterwards went where it sent it"
+         (not (output-contains? "hidden")))
   (check "an expression entered afterwards shows its value"
          (output-contains? "→ 42"))
   (check "the REPL says that it has ended"
          (output-contains? "The REPL has ended")))
+
+(define-test "ports: an expression at a pause prints to the Terminal"
+  ;; The program is paused with its output going to a string.
+  (run-repl
+   (list '(run #f)
+         '(eval "(begin (display \"from the operator\") (newline))")
+         '(continue #f)
+         '(quit 0))
+   (program "redirect.scm"))
+  (check "what the expression displays is shown"
+         (output-order? "Break at redirect.scm:5" "from the operator"))
+  (check "and is not in the program's string"
+         (equal? (program-lines) '("= \"AB\""))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Stop ends the whole program.

@@ -975,7 +975,7 @@ these" at the end of this phase.
       Step Over and Step Into gave the same output as Guile for all of
       it.
 
-- [ ] **Guidance writes its own messages to the program's ports.**
+- [x] **Guidance writes its own messages to the program's ports.**
       "Break at ...", "Step to ...", the values of the operator's
       expressions, "Stopped." and the rest go to whatever
       `(current-output-port)` is at the time, which the program
@@ -998,6 +998,19 @@ these" at the end of this phase.
       `%gdn-error-port` explicitly, and give each run fresh bindings
       of the current ports, restored when it ends.  The operator's
       expressions while paused should print to the Terminal too.
+
+      Fixed: Guidance has its own ports to the Terminal, which it writes
+      all its messages to (`say` and `say-error` in `(gdn repl)`) and
+      never hands out.  The program gets others: a duplicate of the
+      output port, and a second error port from the new `gdn-open-error-
+      port`.  They are made the current ports afresh for each run, so
+      what a program does to the current ports ends with the run, and
+      they are replaced if the program closed them.  An expression
+      entered at a pause prints to the Terminal too.  The two REPL tests
+      are now ordinary tests, with a third for expressions at a pause,
+      and the GUI test has a program that closes its output port.  Still
+      open: the program's standard input is shared, so a program that
+      closes that is not protected.
 
 #### P1: fix before the alpha if at all possible
 

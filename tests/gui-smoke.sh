@@ -488,6 +488,25 @@ type_line "(+ 40 2)"
 wait_for "→ 42"
 stop_app
 
+# A program that closes its output port does not close Guidance's: the
+# error is shown, the REPL goes on, and the next run has a port again.
+start "$PROGRAMS/close-port.scm"
+key F5
+wait_for "closing"
+wait_for "[prompt error>]"
+type_line "(+ 40 2)"
+wait_for "→ 42"
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "closing" 2
+wait_for "[prompt error>]" 2
+key shift+F5
+wait_for "Stopped." 2
+refute "Guile has exited"
+stop_app
+
 ################################################################
 # Known failures: faults found by the review recorded in PLAN.md as
 # Phase 6, and not yet fixed.  See known_failure.

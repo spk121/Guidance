@@ -164,10 +164,28 @@ gdn_lisp_class_init (GdnLispClass *klass)
   scm_c_define_module ("gdn gui", gdn_gui_guile_init, NULL);
 }
 
+/* The interpreter whose ports (gdn ports) describes. */
+static GdnLisp *ports_lisp = NULL;
+
+static SCM marked_port_from_unix_input_fd (int master_fd);
+
+/* (gdn-open-error-port): a new port that writes error text to the
+ * Terminal, like %gdn-error-port.  The REPL gives the program one of
+ * its own, so that a program that closes its error port does not
+ * close Guidance's. */
+static SCM
+scm_open_error_port (void)
+{
+  return marked_port_from_unix_input_fd (ports_lisp->input_fd);
+}
+
 static void
 gdn_ports_guile_init (void *user_data)
 {
   GdnLisp *self = user_data;
+  ports_lisp = self;
+  scm_c_define_gsubr ("gdn-open-error-port", 0, 0, 0, scm_open_error_port);
+  scm_c_export ("gdn-open-error-port", NULL);
   self->input_port_var = scm_c_define ("%gdn-input-port", self->input_port);
   self->output_port_var = scm_c_define ("%gdn-output-port", self->output_port);
   self->error_port_var = scm_c_define ("%gdn-error-port", self->error_port);
