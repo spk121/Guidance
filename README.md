@@ -117,7 +117,8 @@ shows which mode it is in.
    | Stop     | Shift+F5  | Abandon the program and return to the REPL.  |
 
    Stepping skips over Guile's own libraries.  The toolbar also has
-   buttons to step by machine instruction.
+   buttons to step by expression: to the next source position, which
+   can be finer than a line.
 
 Pages
 -----
@@ -195,10 +196,6 @@ logs `foo.scm:2: (double 21)` when called with 21.
 Known limitations
 -----------------
 
-- Step Into is not yet safe to use through code that throws and
-  catches an exception, or that calls `load`: the program can go
-  wrong, and Guidance can crash.  Step Over does not have this
-  problem.  See [PLAN.md](PLAN.md).
 - Which local variables can be seen at a given point is up to Guile's
   compiler.  For example, a variable may be unavailable just after its
   last use.

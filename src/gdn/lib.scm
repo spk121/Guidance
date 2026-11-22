@@ -38,6 +38,10 @@
             gdn-trap-at-binding
             gdn-procedure-binding
             gdn-loaded-code-at-line?
+            code-extent
+            code-line-ranges
+            ip-in-ranges?
+            gdn-binding-readable?
             gdn-parse-command-line
             gdn-get-backtrace
             gdn-get-environment))
@@ -526,7 +530,27 @@ such as the closures made by one `lambda', are not told apart."
 ;; - representation (string)
 ;; - value (string)
 ;; - extra (string)
+(define (call-argument-count args)
+  "The number of arguments in ARGS, the arguments of a call
+representation.  When a rest argument is not available, Guile gives
+them as an improper list, ending in _ rather than ()."
+  (let loop ((args args) (n 0))
+    (if (pair? args) (loop (cdr args) (1+ n)) n)))
+
 (define (frame->backtrace-entry frame top-frame?)
+  "A backtrace entry for FRAME.  This must not fail: it is called while
+the program is paused in a VM hook, and an exception that unwinds
+through a hook can corrupt the program.  So if anything goes wrong,
+the entry just says less."
+  (catch #t
+    (lambda () (frame->backtrace-entry* frame top-frame?))
+    (lambda args
+      (vector (format #f "(~a)" (or (false-if-exception
+                                     (frame-procedure-name frame))
+                                    "λ"))
+              "" 0 0 0 (vector)))))
+
+(define (frame->backtrace-entry* frame top-frame?)
   ;; A frame may be inspected at any instruction, where some of its
   ;; information may not be available, so each part falls back to a
   ;; default rather than failing.  TOP-FRAME? tells Guile that FRAME
@@ -538,7 +562,7 @@ such as the closures made by one `lambda', are not told apart."
          (col (if source (source:column source) 0))
          (call (false-if-exception
                 (frame-call-representation frame #:top-frame? top-frame?)))
-         (nargs (if (pair? call) (length (cdr call)) 0))
+         (nargs (if (pair? call) (call-argument-count (cdr call)) 0))
          (bindings (or (false-if-exception
                         (frame-bindings frame top-frame?))
                        '())))
@@ -555,6 +579,7 @@ such as the closures made by one `lambda', are not told apart."
       (filter-map (lambda (binding)
                     ;; Unnamed bindings are compiler temporaries.
                     (and (binding-name binding)
+                         (gdn-binding-readable? frame binding)
                          (false-if-exception (unpack-binding nargs binding))))
                   bindings)))))
 
@@ -586,18 +611,38 @@ entries, as described above."
 
 (define (format-call call)
   "Formats a call representation (PROCEDURE-NAME ARG ...), with each
-argument on its own line."
+argument on its own line.  The arguments may be an improper list,
+ending in _ for a rest argument that is not available."
   (with-output-to-string
     (lambda ()
       (display "(")
       (display (or (car call) 'λ))
-      (for-each
-       (lambda (arg)
-         (newline)
-         (display "  ")
-         (display arg))
-       (cdr call))
+      (let loop ((args (cdr call)))
+        (cond
+         ((pair? args)
+          (newline)
+          (display "  ")
+          (display (car args))
+          (loop (cdr args)))
+         ((null? args) #t)
+         (else
+          (newline)
+          (display "  . ")
+          (display args))))
       (display ")"))))
+
+;; The number of local slots in a frame.  Guile does not export this,
+;; but its own frame-call-representation uses it for the same check as
+;; gdn-binding-readable?, and there is no other way to make it.
+(define frame-num-locals (@@ (system vm frame) frame-num-locals))
+
+(define (gdn-binding-readable? frame binding)
+  "True if BINDING's slot is within FRAME, so that its value can be
+read.  A frame can have bindings beyond its locals, as Guile notes in
+frame-call-representation, especially at an instruction in the middle
+of a procedure; reading one of those reads past the frame, and can
+crash Guile when the value is printed."
+  (< (binding-slot binding) (frame-num-locals frame)))
 
 (define (unpack-binding n_args binding)
   (let ((name (binding-name binding))

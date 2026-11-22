@@ -209,10 +209,7 @@ removed.
 
 ### Phase 5: Alpha release
 
-Status on 2026-11-22: eight of the nine blockers first listed are
-fixed, each with tests, and one new blocker was found and is open:
-Step Into can corrupt the program.  Everything under "Should fix"
-is open.
+Status: all the blockers are fixed, each with tests.
 
 Assessment date: 2026-11-22, on Ubuntu 24.04 with GTK 4.14.5 and
 Guile 3.0.9.  The build has no warnings and `meson test` passes (5 of
@@ -445,43 +442,48 @@ The open one is last in this list.
       list of recent programs; the window title does not name the
       program.
 
-- [ ] **Step Into can corrupt the program, or crash Guidance.**
-      Found on the last day of this work, and not fixed.  Step Into
-      (F11), pressed repeatedly through a line that throws and catches
-      an exception, or that calls `load`, makes the program go wrong:
-      a `catch` returns the wrong thing, an error appears that the
-      program does not have ("vector-ref: Wrong type argument ...
-      #<unspecified>", "Apply to non-list: (#<unspecified> .
-      #<unspecified>)"), or, once in about ten runs, Guidance dies
-      with a segmentation fault.  Step Over (F10) through the same
-      lines is correct every time.
+- [x] **Step Into can corrupt the program, or crash Guidance.**
+      Step Into (F11), pressed repeatedly through a line that throws
+      and catches an exception, or that calls `load`, made the program
+      go wrong: a `catch` returned `#<unspecified>`, errors appeared
+      that the program does not have, or Guidance crashed.  The
+      instruction-step buttons crashed Guidance every time on the same
+      code.  There were four causes, all fixed:
+      - **Debugging lookups in the instruction hook.**  Calling
+        `frame-source` or `frame-procedure-name` from an instruction
+        hook while Guile raises or catches an exception corrupts the
+        VM; this was reproduced in plain Guile, without Guidance.  The
+        apply, return and abort hooks are safe.  Steps now look up the
+        stepped frame's code and current line while the program is
+        paused, and their instruction hook only compares addresses
+        (`add-step-trap!` in `(gdn repl)`).  Entering a procedure of
+        the program (Step Into, a tail call), returning to the
+        program, and an exception caught by the program are found with
+        the other hooks.  Step Out's fallback, "pause at the next line
+        of the program", uses only those hooks too.
+      - **Callers shown as the executing frame.**  Pausing in a caller
+        whose callee's frame is still on the stack (after a return,
+        for Step Out, and for `_break_`) told Guile it was the
+        innermost frame.  Guile then listed the values the pending
+        call would define, whose slots hold garbage, and printing one
+        could crash.  These pauses now say it is not the top frame.
+      - **Bindings beyond the frame.**  At some instructions a frame
+        has bindings past its last slot; reading one reads past the
+        frame.  Guidance now skips them, as Guile's own
+        `frame-call-representation` does (`gdn-binding-readable?`).
+      - **Objects half built.**  Between the instruction that
+        allocates a pair and those that fill it in, showing the frame
+        printed an invalid object.  So the toolbar's instruction steps
+        now step by expression: to the next source position, line and
+        column, where the objects of earlier expressions are complete.
 
-      To reproduce: break in a procedure, then press F11 until past
-
-          (display (catch #t (lambda () (throw 'k 1)) (lambda args args)))
-
-      which should print `(k 1)`, or past `(load "other.scm")`.
-
-      This is older than this phase: the commit it started from
-      loses the `catch` result in 7 runs of 8, though it was not seen
-      to crash.  What the two step kinds have in common is
-      `trap-matching-instructions`, whose predicate Guile calls
-      before every instruction of the thread.  Step Over's predicate
-      returns after one comparison for frames inside the one being
-      stepped; Step Into's goes on to look up the source of every
-      frame, in Guile's own exception and `load` code too.  The same
-      thing was seen outside Guidance: a script that kept such a trap
-      on while Guile compiled a file got `#<unspecified>` where
-      values should be.  The likely cause is that Guile's VM is not
-      in a state, between some instructions, in which it is safe to
-      run that much Scheme; it has not been confirmed.
-
-      Ways to fix it, in order of preference: step into with the
-      apply hook, pausing when a procedure of the program is entered,
-      and keep the instruction hook for frames of the program only;
-      or make the predicate do no more than compare addresses until
-      the frame changes.  Until then, Step Into should be treated as
-      unsafe, and the README should say so.
+      Also, building a backtrace entry can no longer raise an error,
+      and `pause` reports a failure to update the pages rather than
+      let it unwind through the VM hook; a rest argument that is not
+      available no longer breaks the backtrace.  Tests: two in
+      `tests/repl-test.scm`, each walking through
+      `tests/programs/step-into.scm` three times; on the old code they
+      crash the test run.
 
 #### Should fix
 
@@ -596,7 +598,9 @@ Things noticed along the way that the items above do not cover.
   optimization keywords (`#:partial-eval?` and the rest) are listed
   by `guild compile -O help` but not in the manual.  The tests call
   `set-module-declarative?!`.  Guidance already used
-  `vm-add-apply-hook!` and `module-submodules`.
+  `vm-add-apply-hook!` and `module-submodules`, and now also the
+  return and abort hooks, and `frame-num-locals`, which `(system vm
+  frame)` does not export.
 - **Programs run in a module that is not declarative.**  `main` sets
   `user-modules-declarative?` to false, with a comment that doubts
   it.  It is why procedures are not inlined across definitions and
@@ -605,10 +609,8 @@ Things noticed along the way that the items above do not cover.
 - **Stop does not stop everything.**  It ends the main thread's run.
   Threads the program started keep running, and keep printing, into
   the next run.
-- **`_break_` in a library frame.**  `break-handler` pauses in the
-  caller of `_break_` and tells Guile that it is the innermost
-  frame, which it is not.  This may show a wrong value for an
-  argument there.  Not seen, but not checked either (from the code).
+- **`_break_` in a library frame.**  Fixed with Step Into: the
+  caller of `_break_` is no longer shown as the innermost frame.
 - **Pause in library code.**  Pause looks at most 100 frames out
   for a frame of the program, and otherwise says "The program could
   not be paused here."  Not tried against deep library recursion.

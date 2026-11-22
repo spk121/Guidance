@@ -141,7 +141,7 @@
                         <child>
                           <object class="GtkImage">
                             <property name="icon-name">debug-next-instruction</property>
-                            <property name="tooltip-text">step over instruction</property>
+                            <property name="tooltip-text">step over expression</property>
                           </object>
                         </child>
                       </object>
@@ -163,7 +163,7 @@
                         <child>
                           <object class="GtkImage">
                             <property name="icon-name">debug-step-instruction</property>
-                            <property name="tooltip-text">step into instruction</property>
+                            <property name="tooltip-text">step into expression</property>
                           </object>
                         </child>
                       </object>

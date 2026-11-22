@@ -870,6 +870,46 @@ INPUT."
                         "(2 4)" "Returned from visit-all" "end"))
   (check "never pauses outside the program" (stays-in-program?)))
 
+(define (last-mode)
+  (let loop ((events (reverse (events))))
+    (cond
+     ((null? events) #f)
+     ((eq? (car (car events)) 'mode) (cadr (car events)))
+     (else (loop (cdr events))))))
+
+(define (step-until-done action)
+  "Script elements that send ACTION while the program is paused, Stop
+in error mode, and quit once the REPL is back at its prompt."
+  (map (lambda (i)
+         (lambda ()
+           (case (last-mode)
+             ((repl) '(quit 0))
+             ((error) '(stop #f))
+             (else (list action #f)))))
+       (iota 400)))
+
+(define (step-through-catch-and-load action)
+  ;; The bug this guards against did not happen every time.
+  (do ((i 0 (1+ i))) ((= i 3))
+    (run-repl (cons '(run #f) (step-until-done action))
+              (program "step-into.scm"))
+    (check (format #f "run ~a: the caught exception's value is right" i)
+           (output-contains? "(k 1)"))
+    (check (format #f "run ~a: the loaded file ran" i)
+           (output-order? "(other 42)" "done"))
+    (check (format #f "run ~a: no error appears" i)
+           (not (memq 'error (modes))))))
+
+(define-test "step: Step Into through catch and load keeps the program right"
+  (step-through-catch-and-load 'step-into)
+  (check "pauses in the procedures that catch calls"
+         (>= (count-occurrences "Step to step-into.scm:5") 2)))
+
+(define-test "step: expression steps through catch and load"
+  ;; These used to stop at each instruction, which could show an
+  ;; object half built, and crash.
+  (step-through-catch-and-load 'step-into-instruction))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (format #t "~%~a failure~:p~%" *failures*)
