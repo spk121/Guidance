@@ -888,7 +888,7 @@ these" at the end of this phase.
 
 #### Blockers
 
-- [ ] **The program and the prompt run in Guidance's own module.**
+- [x] **The program and the prompt run in Guidance's own module.**
       `(current-module)` at `repl>` is `(gdn repl)`, not
       `(guile-user)`, on every start.  So a program's definitions land
       among Guidance's, and replace them when the names match.  A
@@ -914,6 +914,12 @@ these" at the end of this phase.
       module in `gdn-top-repl` itself.  Add a test that the prompt's
       module is `(guile-user)`, and one that runs a program whose
       names clash with Guidance's.
+
+      Fixed: the compiled modules are loaded inside `save-module-
+      excursion`, and `spawn_top_repl` sets the REPL thread's module to
+      `(guile-user)` from C, where it stays set.  The two GUI tests, the
+      prompt's module and a program with clashing names, are now
+      ordinary tests.
 
 - [ ] **Stepping changes what the program computes, when a
       continuation is called.**  The fix for Step Into dealt with

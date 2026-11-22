@@ -468,34 +468,29 @@ type_line "(+ 1 1)"
 wait_for "→ 2"
 stop_app
 
+# The operator's expressions, and the program, are in (guile-user),
+# not in a module of Guidance's.
+start
+type_line "(module-name (current-module))"
+wait_for "→ (guile-user)"
+stop_app
+
+# So a program may use any names, also ones that Guidance uses inside.
+start "$PROGRAMS/clash.scm"
+key F5
+wait_for "clash program done"
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "clash program done" 2
+wait_for "[prompt repl>]" 3
+refute "Guile has exited"
+type_line "(+ 40 2)"
+wait_for "→ 42"
+stop_app
+
 ################################################################
 # Known failures: faults found by the review recorded in PLAN.md as
 # Phase 6, and not yet fixed.  See known_failure.
-
-# The operator's expressions, and the program, belong in (guile-user).
-prompt_module () {
-    start
-    type_line "(module-name (current-module))"
-    wait_for "→ (guile-user)"
-    stop_app
-}
-known_failure "Phase 6, The program and the prompt run in Guidance's own module" \
-              prompt_module
-
-# A program may use any names, also ones that Guidance uses inside.
-clashing_names () {
-    start "$PROGRAMS/clash.scm"
-    key F5
-    wait_for "clash program done"
-    wait_for "[prompt repl>]" 2
-    key F5
-    wait_for "clash program done" 2
-    wait_for "[prompt repl>]" 3
-    refute "Guile has exited"
-    stop_app
-}
-known_failure "Phase 6, The program and the prompt run in Guidance's own module" \
-              clashing_names
 
 # The values that reenter.scm displays: lines that are a number, or
 # an unspecified value where one should be.
