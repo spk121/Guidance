@@ -196,6 +196,11 @@ logs `foo.scm:2: (double 21)` when called with 21.
 Known limitations
 -----------------
 
+- A program runs about as fast under Guidance as under Guile, until a
+  breakpoint at a line or a procedure is set.  While one is, Guile
+  calls Guidance on every procedure call, and the program runs some
+  thirty times slower; deep recursion slows down more.  `_break_`,
+  Pause, and stepping cost nothing until used.
 - Guidance debugs only the program's main thread: the one that runs
   the program.  An error in another thread that the program starts is
   reported in a few lines, and ends that thread; `_break_` there is

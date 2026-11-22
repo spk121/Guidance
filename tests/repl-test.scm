@@ -407,6 +407,23 @@ in the REPL thread, as the GUI does while a program runs."
     (check "call-with-new-thread is Guile's again after the run"
            (eq? original (@ (ice-9 threads) call-with-new-thread)))))
 
+(define (fib-direct n)
+  (if (< n 2) n (+ (fib-direct (- n 1)) (fib-direct (- n 2)))))
+
+(define-test "run: programs run at about Guile's speed"
+  (let ((start (get-internal-real-time)))
+    (fib-direct 30)
+    (let ((direct-ms (max 1 (quotient (* 1000 (- (get-internal-real-time) start))
+                                      internal-time-units-per-second))))
+      (run-repl (list '(run #f) '(quit 0)) (program "fib.scm"))
+      (let* ((i (string-contains *output* "fib-ms: "))
+             (debugged-ms (and i (call-with-input-string
+                                  (substring *output* (+ i 8)) read))))
+        (format #t "    fib 30: ~a ms directly, ~a ms under the debugger~%"
+                direct-ms debugged-ms)
+        (check "within five times the speed of running it directly"
+               (and debugged-ms (< debugged-ms (* 5 (max direct-ms 20)))))))))
+
 (define-test "run: no program given"
   (run-repl (list '(run #f) '(quit 0)))
   (check "says so" (output-contains? "No program was given")))

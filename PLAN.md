@@ -511,11 +511,21 @@ The open one is last in this list.
       Under Guidance it was still running after 150 s.  Stop and Pause
       do work.  Set a stack limit with
       `call-with-stack-overflow-handler` and enter Error mode.
-- [ ] **Programs run about 25 times slower.**  `(fib 30)` takes 27 ms
-      in plain Guile and 680 ms under Guidance, because the VM trace
-      level is 1 for the whole run.  Worth a look at whether hooks
-      can be off when no trap, breakpoint, or step is active; if not,
-      say so in the README.
+- [x] **Programs run about 25 times slower.**  `(fib 30)` took 31 ms
+      in plain Guile and 750 ms under Guidance.  The cause was not the
+      trace level, which costs little by itself, but the trap that
+      Guidance set on `_break_` for every run: it uses the VM's apply
+      hook, so Guile called a Scheme procedure on every call the
+      program made.  Those calls allocate, and each collection scans
+      the whole stack, so deep recursion became quadratic.  Fixed:
+      `_break_` now pauses by itself, as Pause does, with tracing off
+      while paused.  `(fib 30)` takes 20 ms under Guidance.
+
+      Breakpoints at lines and procedures still use the apply hook:
+      that is how they attach to code loaded later and survive
+      reloading.  While one is set, `(fib 30)` takes 925 ms.  The
+      README says so.  Test: one in `tests/repl-test.scm`, with
+      `tests/programs/fib.scm`.
 - [ ] **Subprocess output misses the Terminal.**  Only Guile's ports
       are redirected, not file descriptors 0 to 2, so the output of
       `(system "echo hi")` goes to the terminal Guidance was started

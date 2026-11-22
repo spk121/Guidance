@@ -599,11 +599,8 @@ exception."
       (parameterize ((*in-run* #t))
         (with-default-trap-handler trap-handler
           (lambda ()
-            (let ((disable-break #f))
-              (dynamic-wind
-                (lambda ()
-                  (set! disable-break
-                    (trap-at-procedure-call _break_ break-handler)))
+            (dynamic-wind
+                (lambda () #t)
                 (lambda ()
                   (catch #t
                     (lambda ()
@@ -616,8 +613,7 @@ exception."
                     exception-handler-unwind
                     exception-handler-pre-unwind))
                 (lambda ()
-                  (cancel-pending-steps!)
-                  (disable-break))))))))
+                  (cancel-pending-steps!)))))))
     (lambda (k . args)
       (format #t "~&Stopped.~%")
       (values))))
@@ -1027,18 +1023,6 @@ see pause."
   (pause frame (format #f "Step to ~a" (frame-location frame)) "step>"
          #:top-frame? top-frame?))
 
-(define (break-handler frame)
-  "Guidance traps calls to _break_ while a program runs.  FRAME is the
-frame of _break_, so pause in its caller."
-  (let ((caller (frame-previous frame)))
-    (if caller
-        ;; _break_'s own frame is still on the stack, so the caller is
-        ;; not the frame that is executing.
-        (pause caller (format #f "Break at ~a" (frame-location caller))
-               "break>" #:top-frame? #f)
-        (pause frame (format #f "Break at ~a" (frame-location frame))
-               "break>"))))
-
 (define (pause-here)
   "Pauses the program where it is, in response to the Pause button.
 This runs asynchronously, so the innermost frames are Guidance's; pause
@@ -1095,18 +1079,40 @@ with where it was called from, and returns the last of them."
       *unspecified*
       (car (last-pair values))))
 
+(define (break-in-caller)
+  "Pauses the program in the caller of _break_.  This runs in the
+program, not in a VM hook, so tracing is turned off while paused, and
+restored afterwards, as for Pause.  _break_'s own frame is still on the
+stack, so the caller is not the frame that is executing."
+  (let* ((break-frame (let loop ((frame (stack-ref (make-stack #t) 0)))
+                        (cond
+                         ((not frame) #f)
+                         ((eq? (frame-procedure-name frame) '_break_) frame)
+                         (else (loop (frame-previous frame))))))
+         (caller (and break-frame (frame-previous break-frame)))
+         (saved-level (vm-trace-level)))
+    (when caller
+      (set-vm-trace-level! 0)
+      (pause caller (format #f "Break at ~a" (frame-location caller))
+             "break>" #:top-frame? #f)
+      (set-vm-trace-level! saved-level))))
+
 (define (_break_)
   "Pauses the program in trap mode at the caller of _break_, when the
 program is run by Guidance.  Otherwise, does nothing.
 
-Guidance pauses in a trap on _break_, set for the program's thread, so
-this procedure's body runs only after that, or in another thread.  In
-another thread, it says that it cannot pause there."
-  (when (and *program-thread*
-             (not (eq? (current-thread) *program-thread*)))
+It pauses by itself, rather than through a trap on its calls: such a
+trap uses the VM's apply hook, which Guile then calls on every call the
+program makes, and which made programs many times slower."
+  (cond
+   ((not *program-thread*) #t)
+   ((not (eq? (current-thread) *program-thread*))
     (format (current-error-port) "~&_break_ was called in a thread other \
 than the program's main thread, and ignored: Guidance can pause only \
 that one.~%"))
+   ;; In an expression entered while the program is paused.
+   ((*paused*) #t)
+   (else (break-in-caller)))
   *unspecified*)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
