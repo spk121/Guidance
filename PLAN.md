@@ -234,36 +234,33 @@ The open one is last in this list.
       stepping past the end of the program.  The next Run, or the next
       expression at `repl>`, failed with "In procedure make-stack:
       Prompt tag not found while narrowing stack" and did not run.
-      Fixed: `(gdn repl)` keeps the one-shot traps that have not
-      fired in `*pending-steps*`, and `run-under-debugger` disables
-      them on every way out (`cancel-pending-steps!`).  Three tests
-      in `tests/repl-test.scm` cover the error, Stop, and
-      end-of-program cases.
-- [x] **An expression that does not finish, evaluated while paused,
-      hangs Guidance for good.**  At `break>` or `error>`, enter
+      Fixed: `(gdn repl)` keeps the one-shot traps that have not fired
+      in `*pending-steps*`, and `run-under-debugger` disables them on
+      every way out (`cancel-pending-steps!`).  Three tests in
+      `tests/repl-test.scm` cover the error, Stop, and end-of-program
+      cases. - [x] **An expression that does not finish, evaluated while
+      paused, hangs Guidance for good.**  At `break>` or `error>`, enter
       `(let loop () (loop))`.  Stop and Pause did nothing, nor did any
-      later input; the window had to be closed.  In those modes Stop
-      was queued for the REPL thread, which was busy.  Fixed: Stop
-      now always interrupts the REPL thread, and in those modes wakes
-      it too, in case it is waiting for the operator.  An expression
-      entered while paused runs inside its own prompt, and Stop
-      aborts to that: "The expression was stopped." is printed, and
-      the program stays paused where it was.  A second Stop stops
-      the program.  Tests: two in `tests/repl-test.scm`, one in
-      `tests/gui-smoke.sh`.
-- [x] **Stop and Pause do nothing while the program waits for
+      later input; the window had to be closed.  In those modes Stop was
+      queued for the REPL thread, which was busy.  Fixed: Stop now
+      always interrupts the REPL thread, and in those modes wakes it
+      too, in case it is waiting for the operator.  An expression
+      entered while paused runs inside its own prompt, and Stop aborts
+      to that: "The expression was stopped." is printed, and the program
+      stays paused where it was.  A second Stop stops the program.
+      Tests: two in `tests/repl-test.scm`, one in `tests/gui-smoke.sh`.
+      - [x] **Stop and Pause do nothing while the program waits for
       input.**  With a program blocked in `read-line`, neither took
-      effect until a line was entered: a thread blocked in a read
-      does not run asyncs.  Fixed with Guile's suspendable ports:
-      `(gdn repl)` calls `install-suspendable-ports!`, makes the
-      program's standard input non-blocking, and sets a
-      `current-read-waiter` that waits for it a tenth of a second at
-      a time, in Scheme, where asyncs run.  Other ports keep the
-      waiter they had.  `read-line`, `read`, `read-char`, `get-line`
-      and the other port procedures that suspendable ports cover can
-      all be interrupted.  Output speed is unchanged.  Tests: two in
-      `tests/repl-test.scm`, whose stub for standard input is now a
-      pipe, and one in `tests/gui-smoke.sh`.
+      effect until a line was entered: a thread blocked in a read does
+      not run asyncs.  Fixed with Guile's suspendable ports: `(gdn
+      repl)` calls `install-suspendable-ports!`, makes the program's
+      standard input non-blocking, and sets a `current-read-waiter` that
+      waits for it a tenth of a second at a time, in Scheme, where
+      asyncs run.  Other ports keep the waiter they had.  `read-line`,
+      `read`, `read-char`, `get-line` and the other port procedures that
+      suspendable ports cover can all be interrupted.  Output speed is
+      unchanged.  Tests: two in `tests/repl-test.scm`, whose stub for
+      standard input is now a pipe, and one in `tests/gui-smoke.sh`.
 
       Still open:
       - An expression entered while paused cannot be given input: the
@@ -547,32 +544,30 @@ The open one is last in this list.
       blocking for subprocesses.  Guidance's own messages keep their
       destination: the C library's `stdout` and `stderr` use copies of
       the original descriptors.  Sanitizer reports, written to
-      descriptor 2, now appear in the Terminal; the GUI test looks
-      for them in its transcript too.  Test: one in
-      `tests/gui-smoke.sh`, with `tests/programs/subprocess.scm`.
-- [x] **No end-of-file for standard input.**  Ctrl+D in the entry did
-      nothing, so a program that read until EOF could only be stopped.
-      Fixed: while a program runs, Ctrl+D sends the text in the entry,
-      if any, as a line, then end-of-file, using the pseudoterminal's
-      EOF character in canonical mode.  The input pseudoterminal's
-      echo is now off: the Terminal shows typed text itself, and the
-      echo piled up unread.  The shortcuts overlay and README list
-      Ctrl+D.  Test: one in `tests/gui-smoke.sh`, with
-      `tests/programs/eof.scm`.
-- [x] **The entry takes one line, and has no history.**  An unfinished
+      descriptor 2, now appear in the Terminal; the GUI test looks for
+      them in its transcript too.  Test: one in `tests/gui-smoke.sh`,
+      with `tests/programs/subprocess.scm`. - [x] **No end-of-file for
+      standard input.**  Ctrl+D in the entry did nothing, so a program
+      that read until EOF could only be stopped. Fixed: while a program
+      runs, Ctrl+D sends the text in the entry, if any, as a line, then
+      end-of-file, using the pseudoterminal's EOF character in canonical
+      mode.  The input pseudoterminal's echo is now off: the Terminal
+      shows typed text itself, and the echo piled up unread.  The
+      shortcuts overlay and README list Ctrl+D.  Test: one in
+      `tests/gui-smoke.sh`, with `tests/programs/eof.scm`. - [x] **The
+      entry takes one line, and has no history.**  An unfinished
       expression was a read error, so nothing longer than a line could
       be entered; the history was filled but never read, its duplicate
       check compared only a prefix, and the button beside the entry was
-      empty.  Fixed:
-      - While what has been entered ends part-way through an
-        expression, the REPL shows the prompt `...` and appends the next
-        line (`get-user-input` in `(gdn repl)`), in every mode.  Any
-        other action abandons the unfinished expression, and says so.
-      - Up and Down go through the entries, as in a shell, and Down past
-        the newest gives back what was being typed.  Empty entries and
-        repeats of the newest are not kept; at most 500 are.
-      - The button beside the entry lists the 15 most recent entries;
-        choosing one puts it back in the entry.
+      empty.  Fixed: - While what has been entered ends part-way through
+      an expression, the REPL shows the prompt `...` and appends the
+      next line (`get-user-input` in `(gdn repl)`), in every mode.  Any
+      other action abandons the unfinished expression, and says so. - Up
+      and Down go through the entries, as in a shell, and Down past the
+      newest gives back what was being typed.  Empty entries and repeats
+      of the newest are not kept; at most 500 are. - The button beside
+      the entry lists the 15 most recent entries; choosing one puts it
+      back in the entry.
 
       Tests: one in `tests/repl-test.scm`, one in `tests/gui-smoke.sh`.
 - [x] **Backtrace page layout.**  At the default window size the Value
@@ -918,11 +913,11 @@ Each item has a test: see "Tests for these" at the end of this phase.
       module is `(guile-user)`, and one that runs a program whose
       names clash with Guidance's.
 
-      Fixed: the compiled modules are loaded inside `save-module-
-      excursion`, and `spawn_top_repl` sets the REPL thread's module to
-      `(guile-user)` from C, where it stays set.  The two GUI tests, the
-      prompt's module and a program with clashing names, are now
-      ordinary tests.
+      Fixed: the compiled modules are loaded inside
+      `save-module-excursion`, and `spawn_top_repl` sets the REPL
+      thread's module to `(guile-user)` from C, where it stays set.  The
+      two GUI tests, the prompt's module and a program with clashing
+      names, are now ordinary tests.
 
 - [x] **Stepping changes what the program computes, when a
       continuation is called.**  The fix for Step Into dealt with
@@ -1020,15 +1015,15 @@ Each item has a test: see "Tests for these" at the end of this phase.
       Fixed: Guidance has its own ports to the Terminal, which it writes
       all its messages to (`say` and `say-error` in `(gdn repl)`) and
       never hands out.  The program gets others: a duplicate of the
-      output port, and a second error port from the new `gdn-open-error-
-      port`.  They are made the current ports afresh for each run, so
-      what a program does to the current ports ends with the run, and
-      they are replaced if the program closed them.  An expression
-      entered at a pause prints to the Terminal too.  The two REPL tests
-      are now ordinary tests, with a third for expressions at a pause,
-      and the GUI test has a program that closes its output port.  Still
-      open: the program's standard input is shared, so a program that
-      closes that is not protected.
+      output port, and a second error port from the new
+      `gdn-open-error-port`.  They are made the current ports afresh for
+      each run, so what a program does to the current ports ends with
+      the run, and they are replaced if the program closed them.  An
+      expression entered at a pause prints to the Terminal too.  The two
+      REPL tests are now ordinary tests, with a third for expressions at
+      a pause, and the GUI test has a program that closes its output
+      port.  Still open: the program's standard input is shared, so a
+      program that closes that is not protected.
 
 #### P1: fix before the alpha if at all possible
 
@@ -1086,8 +1081,8 @@ Each item has a test: see "Tests for these" at the end of this phase.
       port is the program's Terminal port, they are given a file port
       for file descriptor 2, which is the Terminal's too.  If the
       program has sent its errors elsewhere, that is left alone.  The
-      GUI test, now an ordinary test, covers `system*` and a pipe.
-      Still open: `(fileno (current-error-port))` still fails, and a
+      GUI test, now an ordinary test, covers `system*` and a pipe. Still
+      open: `(fileno (current-error-port))` still fails, and a
       subprocess started some other way than these two primitives, with
       the current error port as its error stream, is not covered.
 
@@ -1123,8 +1118,16 @@ Each item has a test: see "Tests for these" at the end of this phase.
       four.  The REPL test is an ordinary test now.  Still open: threads
       started by an expression at the prompt are left alone, on purpose;
       a thread blocked where it cannot be interrupted ends only when
-      that returns; and threads made other than with `call-with-new-
-      thread` are not known to Guidance.
+      that returns; and threads made other than with
+      `call-with-new-thread` are not known to Guidance.
+
+      Guile starts threads of its own through `call-with-new-thread`
+      as well: the one that delivers signals, the first time `system*`
+      is used, and those of its futures.  They are told apart by the
+      procedure they run, which is not the program's
+      (`gdn-program-procedure?`), and are neither listed on the
+      Threads page nor ended.  The GUI test checks that a signal is
+      still delivered after a run that used `system*`.
 
 #### P2: noticed, can wait
 
