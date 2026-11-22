@@ -532,11 +532,20 @@ next run or expression, outside the program."
                 (false-if-exception (disable)))
               pending)))
 
+(define (step-frame? frame internal?)
+  "True if stepping may pause in FRAME: it has source code, and is not
+in Guile's own libraries, unless INTERNAL?, which is true when the
+step began in them.  Stepping never pauses in Guidance's own code,
+which is what runs the program."
+  (and (frame-source frame)
+       (not (guidance-frame? frame))
+       (or internal? (not (guile-internal-frame? frame)))))
+
 (define (add-line-step-trap! frame into?)
   "Pauses the program at the next line reached in FRAME, or in a frame
 that FRAME returns to.  With INTO?, also pauses in procedures that FRAME
 calls.  Code in Guile's own libraries is skipped, unless FRAME is in
-it."
+it.  If the program ends first, it just ends."
   (let ((fp (frame-address frame))
         (line (frame-line frame))
         (internal? (guile-internal-frame? frame)))
@@ -545,43 +554,71 @@ it."
        (trap-matching-instructions
         (lambda (f)
           (and (or into? (<= (frame-address f) fp))
-               (frame-source f)
-               (or internal? (not (guile-internal-frame? f)))
+               (step-frame? f internal?)
                (or (not (= (frame-address f) fp))
                    (not (eqv? (frame-line f) line)))))
         handler))
      step-handler)))
 
-(define (add-instruction-step-trap! frame into?)
+(define (add-next-line-trap! internal?)
+  "Pauses the program at the next line it reaches, in any frame in
+which stepping may pause; see step-frame?."
+  (add-ephemeral-trap!
+   (lambda (handler)
+     (trap-matching-instructions
+      (lambda (f) (step-frame? f internal?))
+      handler))
+   step-handler))
+
+(define (add-instruction-step-trap! frame into? outermost)
   "Pauses the program at the next instruction in FRAME, or in a frame
-it returns to.  With INTO?, also in procedures that FRAME calls."
-  (let ((fp (frame-address frame)))
+it returns to.  With INTO?, also in procedures that FRAME calls.
+
+Unlike line steps, these go through Guile's libraries too.  So that
+they stay in the program, they do not go further out than OUTERMOST,
+the outermost frame of the program: when that returns to the code that
+runs the program, the program just runs on."
+  (let ((fp (frame-address frame))
+        (limit (frame-address outermost)))
     (add-ephemeral-trap!
      (lambda (handler)
        (trap-matching-instructions
-        (lambda (f) (or into? (<= (frame-address f) fp)))
+        (lambda (f)
+          (and (or into? (<= (frame-address f) fp))
+               (>= (frame-address f) limit)
+               (not (guidance-frame? f))))
         handler))
      step-handler)))
 
 (define (add-step-out-trap! frame)
-  "Pauses the program in FRAME's caller, when FRAME returns."
-  (let ((name (or (frame-procedure-name frame) "the procedure")))
+  "Pauses the program in FRAME's caller, when FRAME returns.
+
+The caller may not be the program's: it is in Guile's libraries if
+FRAME was called by, say, `map', or by `load' as the last thing in its
+file.  Then the return is reported, and the program pauses at the next
+line of its own that it reaches, if it reaches one."
+  (let ((name (or (frame-procedure-name frame) "the procedure"))
+        (internal? (guile-internal-frame? frame)))
     (add-ephemeral-trap!
      (lambda (handler)
        (trap-frame-finish frame handler (lambda (f) #t)))
      (lambda (returning-frame)
-       (let ((caller (or (frame-previous returning-frame) returning-frame))
-             (values (or (false-if-exception
-                          (frame-return-values returning-frame))
-                         '())))
-         (pause caller
-                (format #f "Returned from ~a~a, to ~a"
-                        name
-                        (if (null? values)
-                            ""
-                            (format #f " with ~{~s~^, ~}" values))
-                        (frame-location caller))
-                "step>"))))))
+       (let* ((caller (frame-previous returning-frame))
+              (values (or (false-if-exception
+                           (frame-return-values returning-frame))
+                          '()))
+              (message (format #f "Returned from ~a~a"
+                               name
+                               (if (null? values)
+                                   ""
+                                   (format #f " with ~{~s~^, ~}" values)))))
+         (if (and caller (step-frame? caller internal?))
+             (pause caller
+                    (format #f "~a, to ~a" message (frame-location caller))
+                    "step>")
+             (begin
+               (format #t "~&~a~%" message)
+               (add-next-line-trap! internal?))))))))
 
 (define* (pause frame message prompt #:key (top-frame? #t))
   "Pauses the program at FRAME and lets the operator inspect it, then
@@ -593,6 +630,12 @@ that is executing, as it is when a trap fires."
                    (*pause-frames* frames)
                    (*pause-top-frame?* top-frame?))
       (pause-interact frame frames message prompt))))
+
+(define (outermost-frame frame frames)
+  "The outermost frame of the program paused at FRAME, given FRAMES,
+its stack as shown in the backtrace: innermost first, without the
+frames of the code that runs the program."
+  (if (null? frames) frame (last frames)))
 
 (define (pause-interact frame frames message prompt)
   (begin
@@ -609,8 +652,10 @@ that is executing, as it is when a trap fires."
           ((run continue) #t)
           ((step) (add-line-step-trap! frame #f))
           ((step-into) (add-line-step-trap! frame #t))
-          ((step-instruction) (add-instruction-step-trap! frame #f))
-          ((step-into-instruction) (add-instruction-step-trap! frame #t))
+          ((step-instruction)
+           (add-instruction-step-trap! frame #f (outermost-frame frame frames)))
+          ((step-into-instruction)
+           (add-instruction-step-trap! frame #t (outermost-frame frame frames)))
           ((step-out) (add-step-out-trap! frame))
           ((stop) (abort-to-prompt %stop-tag))
           ((eval)

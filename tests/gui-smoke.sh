@@ -98,6 +98,14 @@ wait_for () {
     echo "ok: $1"
 }
 
+# refute TEXT: fails if TEXT has appeared.
+refute () {
+    if grep -qF -- "$1" "$TRANSCRIPT"; then
+        fail "unexpected '$1'"
+    fi
+    echo "ok: no $1"
+}
+
 key () {
     xdotool key "$@"
 }
@@ -143,6 +151,32 @@ key F5
 wait_for "Breakpoint at break.scm:6, at break.scm:6"
 key shift+F5
 wait_for "Stopped."
+stop_app
+
+# Stepping out of the program, and past its last line, lets it finish
+# rather than pausing in the code that runs it.
+start "$PROGRAMS/break.scm"
+key F5
+wait_for "[prompt break>]"
+key shift+F11
+wait_for "Returned from numbers"
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "[prompt break>]" 2
+key F10
+wait_for "Step to break.scm:7"
+key F10
+wait_for "Step to break.scm:8"
+key F10
+wait_for "Step to break.scm:9"
+key F10
+wait_for "Step to break.scm:10"
+key F10
+wait_for "[prompt repl>]" 3
+type_line "(+ 40 2)"
+wait_for "→ 42"
+refute "boot-9.scm"
+refute "anonymous procedure"
 stop_app
 
 # Pause a running program, evaluate an expression, then stop.

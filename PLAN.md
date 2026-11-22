@@ -279,15 +279,31 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       again.  Traps on procedures in modules that are not reloaded
       keep working.  Record these traps by module and name and
       re-attach them at each run, as line breakpoints already do.
-- [ ] **Stepping leaves the program.**  Step Out of a top-level form
-      pauses in `boot-9.scm:4388`, inside `load`, and further steps
-      stay in Guile's internals.  Step at the last line of the program
-      gives "Step to an anonymous procedure", twice: these are
-      Guidance's own frames, which have no file name because its
-      modules are compiled from strings, so
-      `guile-internal-frame?` does not recognize them.  Stepping
-      should only pause in frames inside the stack prompt, and a step
-      that leaves the program should just let it finish.
+- [x] **Stepping leaves the program.**  Step Out of a top-level form
+      paused in `boot-9.scm:4388`, inside `load`, and further steps
+      stayed in Guile's internals.  Step at the last line of the
+      program gave "Step to an anonymous procedure", twice: Guidance's
+      own frames, which had no file name because its modules are
+      compiled from strings.  Instruction steps went on out of the
+      program until they failed with the `make-stack` error of the
+      first item.  Fixed:
+      - Guidance's modules are compiled with the file names
+        `gdn/lib.scm` and `gdn/repl.scm`, so `guidance-frame?`
+        recognizes them, and no step pauses in them.
+      - Step Out only pauses in the caller if it is the program's.
+        If the caller is in Guile's libraries, as for a procedure
+        called by `map`, or called last in its file and so by `load`,
+        the return is reported and the program pauses at the next
+        line of its own that it reaches.
+      - Instruction steps go no further out than the outermost frame
+        of the program.
+      - A step that leaves the program lets it finish.
+
+      Tests: five in `tests/repl-test.scm`, with
+      `tests/programs/map.scm`, and one in `tests/gui-smoke.sh`.
+
+      Still open: after instruction steps leave a file given with
+      `-l`, they may not pause in the next file.  Line steps do.
 - [ ] **The menu button does nothing.**  It is a plain `GtkButton`.
       `menus.ui` is not used, and names actions that do not exist
       (`win.repl-load`, `win.repl-history-next`, `app.quit`).  There

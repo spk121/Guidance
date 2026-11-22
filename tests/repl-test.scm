@@ -86,6 +86,10 @@ been started with PROGRAM-ARGS.  Returns the REPL's status, and sets
   "The sequence of modes reported to the GUI."
   (filter-map (lambda (e) (and (eq? (car e) 'mode) (cadr e))) *events*))
 
+(define (count-pauses)
+  "How many times the program paused in trap mode."
+  (count (lambda (mode) (eq? mode 'trap)) (modes)))
+
 (define (top-frame)
   "The innermost entry of the most recent backtrace, or #f."
   (let ((bt (last-backtrace)))
@@ -546,20 +550,101 @@ INPUT."
   (check "the expression after Stop is evaluated" (output-contains? "→ 42"))
   (check "no internal error" (not (output-contains? "make-stack"))))
 
-(define-test "step: stepping past the end does not disturb the next run"
+;; Stepping pauses only in the program.  When a step would take it into
+;; the code that runs the program, the program runs on instead.
+
+(define (stays-in-program?)
+  (not (or (output-contains? "boot-9.scm")
+           (output-contains? "gdn/")
+           (output-contains? "anonymous procedure")
+           (output-contains? "make-stack"))))
+
+(define-test "step: step-out of the last call in a file ends the program"
+  ;; (numbers) is in tail position, so its caller is `load'.
   (run-repl
    (list '(run #f)
-         '(step-out #f)                 ; out of numbers
-         '(step-out #f)                 ; out of the program
-         ;; If that paused again, continue to the end.
-         '(run #f)
+         '(step-out #f)
          '(eval "(+ 40 2)")
          '(quit 0))
    (program "break.scm"))
-  (check "step-out returns from numbers"
-         (output-contains? "Returned from numbers"))
-  (check "the expression after the run is evaluated" (output-contains? "→ 42"))
-  (check "no internal error" (not (output-contains? "make-stack"))))
+  (check "the return is reported, the program ends, the REPL goes on"
+         (output-order? "Break at break.scm:6" "four"
+                        "Returned from numbers" "→ 42"))
+  (check "no pause after the break" (equal? (count-pauses) 1))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: stepping past the last line ends the program"
+  (run-repl
+   (list '(run #f)
+         '(step #f)                     ; to line 7
+         '(step #f)                     ; to line 8
+         '(step #f)                     ; to line 9
+         '(step #f)                     ; to line 10
+         (checkpoint "at the last line of numbers (line 10)"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(step #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "break.scm"))
+  (check "the program ends, the REPL goes on" (output-order? "four" "→ 42"))
+  (check "pauses at the break and four steps" (equal? (count-pauses) 5))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: step-into past the last line ends the program"
+  (run-repl
+   (list '(run #f)
+         '(step-into #f) '(step-into #f) '(step-into #f) '(step-into #f)
+         (checkpoint "at the last line of numbers (line 10)"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(step-into #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "break.scm"))
+  (check "the program ends, the REPL goes on" (output-order? "four" "→ 42"))
+  (check "pauses at the break and four steps" (equal? (count-pauses) 5))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: instruction steps past the end end the program"
+  (run-repl
+   (append (list '(run #f))
+           ;; Far more than the program has left.  Those that remain
+           ;; when it ends are ignored by the REPL.
+           (make-list 300 '(step-instruction #f))
+           (list '(eval "(+ 40 2)")
+                 '(quit 0)))
+   (program "break.scm"))
+  (check "steps through the rest of numbers"
+         (output-order? "Break at break.scm:6" "Step to break.scm:7"
+                        "Step to break.scm:10"))
+  (check "the program ends, the REPL goes on" (output-order? "four" "→ 42"))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: step-out to a library caller pauses at the next program line"
+  ;; visit is called by map.
+  (run-repl
+   (list '(run #f)
+         (checkpoint "breaks in the first call of visit (line 8)"
+                     (lambda () (equal? (top-frame-line) 8))
+                     '(step-out #f))
+         (checkpoint "pauses on entering the second call of visit (line 5)"
+                     (lambda () (and (equal? (top-frame-line) 5)
+                                     (string-prefix? "(visit" (top-frame-call))))
+                     '(step-out #f))
+         (checkpoint "pauses back in visit-all, after map (line 12)"
+                     (lambda () (and (equal? (top-frame-line) 12)
+                                     (string-prefix? "(visit-all"
+                                                     (top-frame-call))))
+                     '(step-out #f))
+         (checkpoint "pauses at the top level, where it was called (line 16)"
+                     (lambda () (equal? (top-frame-line) 16))
+                     '(continue #f))
+         '(quit 0))
+   (program "map.scm"))
+  (check "both returns from visit are reported"
+         (output-order? "Returned from visit with 2"
+                        "Returned from visit with 4"
+                        "(2 4)" "Returned from visit-all" "end"))
+  (check "never pauses outside the program" (stays-in-program?)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

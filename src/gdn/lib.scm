@@ -30,6 +30,7 @@
   #:export (gdn-error-frames
             gdn-frame-frames
             guile-internal-frame?
+            guidance-frame?
             gdn-loaded-modules
             gdn-module-list
             gdn-module-procedures
@@ -115,12 +116,22 @@ program name.  Returns an alist with these keys:
 ;; STACKS
 
 ;; Guile's own source files are recorded with paths relative to the
-;; load path, e.g. "ice-9/boot-9.scm".  Guidance's own modules are
-;; included too, for when they are loaded from files rather than from
-;; Guidance's resources, as in the tests.
+;; load path, e.g. "ice-9/boot-9.scm".  So are Guidance's own modules:
+;; Guidance gives them these names when it compiles them from its
+;; resources, and they have them when loaded from files, as in the
+;; tests.
+(define %guidance-source-prefix "gdn/")
+
 (define %guile-source-prefixes
-  '("ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
-    "web/" "sxml/" "texinfo/" "gdn/"))
+  (list "ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
+        "web/" "sxml/" "texinfo/" %guidance-source-prefix))
+
+(define (guidance-frame? frame)
+  "True if FRAME is running Guidance's own code."
+  (let* ((source (frame-source frame))
+         (file (and source (source:file source))))
+    (and (string? file)
+         (string-prefix? %guidance-source-prefix file))))
 
 (define (guile-internal-frame? frame)
   "True if FRAME is running code from Guile's own libraries, or from
