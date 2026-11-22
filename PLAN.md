@@ -1131,10 +1131,13 @@ Each item has a test: see "Tests for these" at the end of this phase.
 
 #### P2: noticed, can wait
 
-- Step Into on a line that uses `load` first pauses at
-  "boot-9.scm:4419": the macro's expansion is part of the program's
-  procedure but carries the library's file and line.  Steps should
-  pass over positions in Guile's own files.
+- Fixed: a step no longer pauses at a source position in one of
+  Guile's own files, unless it began in one (`position-starts`).  The
+  REPL test that steps through a `load` checks it.  It was: Step Into
+  on a line that uses `load` first pauses at "boot-9.scm:4419": the
+  macro's expansion is part of the program's procedure but carries the
+  library's file and line. Steps should pass over positions in Guile's
+  own files.
 - "No code is loaded at spin.scm:3 yet" is printed for a breakpoint
   set, while paused, on a line of a procedure that is loaded, and
   that then fires at once.

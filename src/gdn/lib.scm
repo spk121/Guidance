@@ -32,6 +32,7 @@
   #:export (gdn-error-frames
             gdn-frame-frames
             guile-internal-frame?
+            guile-internal-file?
             gdn-program-procedure?
             guidance-frame?
             gdn-loaded-modules
@@ -192,6 +193,13 @@ program name.  Returns an alist with these keys:
          (file (and source (source:file source))))
     (and (string? file)
          (string-prefix? %guidance-source-prefix file))))
+
+(define (guile-internal-file? file)
+  "True if FILE, a source file name as compiled code records it, is one
+of Guile's own libraries, or one of Guidance's."
+  (and (string? file)
+       (any (lambda (prefix) (string-prefix? prefix file))
+            %guile-source-prefixes)))
 
 (define (gdn-program-procedure? proc)
   "True if PROC is a procedure of the program being debugged: compiled

@@ -54,7 +54,7 @@
   #:use-module ((system foreign) #:select (sizeof))
   #:use-module (system vm vm)
   #:use-module ((system vm debug)
-                #:select (find-program-sources source-post-pc))
+                #:select (find-program-sources source-file source-post-pc))
   #:use-module (system vm trap-state)
   #:use-module ((system vm trap-state)
                 #:select ((add-trap-at-procedure-call!
@@ -1191,12 +1191,21 @@ whose code starts at START."
         (code-line-ranges start (source:file source) (source:line source))
         '())))
 
-(define (position-starts start)
+(define (position-starts start internal?)
   "A table of the addresses at which a source position begins, in the
-procedure whose code starts at START."
+procedure whose code starts at START.
+
+Unless INTERNAL?, positions in Guile's own files are left out.  A
+procedure of the program has some: where it uses a macro of Guile's,
+such as `load', the code that the macro expands to is part of the
+procedure, but carries the file and line of the macro's definition.  A
+step that paused there would show a line of boot-9.scm in the middle
+of the program."
   (let ((table (make-hash-table)))
     (for-each (lambda (source)
-                (hashv-set! table (source-post-pc source) #t))
+                (when (or internal?
+                          (not (guile-internal-file? (source-file source))))
+                  (hashv-set! table (source-post-pc source) #t)))
               (if start (find-program-sources start) '()))
     table))
 
@@ -1282,7 +1291,7 @@ and so is the apply hook unless INTO?."
     (define (look-up f)
       (call-with-values (lambda () (frame-code-extent f))
         (lambda (start end)
-          (vector start end (position-starts start)))))
+          (vector start end (position-starts start internal?)))))
     (define (aim! address info)
       (set! fp address)
       (set! start (vector-ref info 0))

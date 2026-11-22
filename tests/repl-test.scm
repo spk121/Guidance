@@ -1231,7 +1231,11 @@ in error mode, and quit once the REPL is back at its prompt."
     (check (format #f "run ~a: the loaded file ran" i)
            (output-order? "(other 42)" "done"))
     (check (format #f "run ~a: no error appears" i)
-           (not (memq 'error (modes))))))
+           (not (memq 'error (modes))))
+    ;; `load' is a macro of Guile's: its expansion, inside `go', has
+    ;; positions in boot-9.scm, where a step must not pause.
+    (check (format #f "run ~a: every pause is in the program" i)
+           (stays-in-program?))))
 
 (define-test "step: Step Into through catch and load keeps the program right"
   (step-through-catch-and-load 'step-into)
