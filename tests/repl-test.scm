@@ -20,6 +20,10 @@
              (srfi srfi-1)
              (ice-9 format))
 
+;; Guidance runs programs in a module that is not declarative, which
+;; changes how they are compiled.  Do the same here.
+(set-module-declarative?! (current-module) #f)
+
 (define *test-dir* (dirname (current-filename)))
 (define (program name)
   (string-append *test-dir* "/programs/" name))
@@ -112,6 +116,13 @@ been started with PROGRAM-ARGS.  Returns the REPL's status, and sets
          (lambda (f)
            (any (lambda (b) (and (string=? (vector-ref b 0) name)
                                  (vector-ref b 3)))
+                (vector->list (vector-ref f 5))))))
+
+(define (top-frame-binding-names)
+  "The names of the bindings in the innermost frame."
+  (and=> (top-frame)
+         (lambda (f)
+           (map (lambda (b) (vector-ref b 0))
                 (vector->list (vector-ref f 5))))))
 
 (define (checkpoint description pred input)
@@ -635,6 +646,53 @@ INPUT."
   (check "the program is stopped" (output-order? "Break at" "Stopped."))
   (check "the expression after Stop is evaluated" (output-contains? "→ 42"))
   (check "no internal error" (not (output-contains? "make-stack"))))
+
+;; Programs are compiled so that they can be debugged: variables keep
+;; their names, and stepping follows the lines as written.
+
+(define-test "names: variables keep their names, and steps follow the lines"
+  (run-repl
+   (list '(run #f)
+         (checkpoint "breaks in work (line 8)"
+                     (lambda () (equal? (top-frame-line) 8))
+                     '(step #f))
+         (checkpoint "steps to the let (line 9)"
+                     (lambda () (equal? (top-frame-line) 9))
+                     '(step-into #f))
+         (checkpoint "steps into helper, which is not inlined (line 3)"
+                     (lambda () (and (equal? (top-frame-line) 3)
+                                     (string-prefix? "(helper" (top-frame-call))))
+                     '(step-out #f))
+         (checkpoint "steps out, back to the let (line 9)"
+                     (lambda () (equal? (top-frame-line) 9))
+                     '(step #f))
+         ;; a is bound by the first instruction of line 10, which has
+         ;; not run yet.
+         (checkpoint "steps to line 10"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(step #f))
+         (checkpoint "steps to line 11, where a is 7"
+                     (lambda () (and (equal? (top-frame-line) 11)
+                                     (equal? (top-frame-binding "a") "7")))
+                     '(step #f))
+         (checkpoint "steps to line 12, where a is the only variable"
+                     (lambda () (and (equal? (top-frame-line) 12)
+                                     (equal? (top-frame-binding "a") "7")
+                                     (equal? (top-frame-binding-names) '("a"))))
+                     '(eval "(list 'a-is a)"))
+         '(continue #f)
+         ;; A procedure defined at the prompt keeps its names too.
+         '(eval "(define (at-prompt n) (let ((m (* n 3))) (_break_) (+ m 1)))")
+         '(eval "(at-prompt 4)")
+         (checkpoint "m is 12 in the procedure from the prompt"
+                     (lambda () (equal? (top-frame-binding "m") "12"))
+                     '(eval "(list 'm-is m)"))
+         '(continue #f)
+         '(quit 0))
+   (program "names.scm"))
+  (check "a can be used in an expression" (output-contains? "→ (a-is 7)"))
+  (check "m can be used in an expression" (output-contains? "→ (m-is 12)"))
+  (check "the program finishes" (output-order? "14" "done" "→ 13")))
 
 ;; The operator must always be able to stop: an expression of their own
 ;; that does not finish, and a program that waits for input.

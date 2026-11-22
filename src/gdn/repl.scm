@@ -105,6 +105,47 @@
   (assq-ref *options* key))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; COMPILING FOR DEBUGGING
+
+;; Guile's optimizer makes a program hard to follow in a debugger.  A
+;; `let' variable can turn up in a backtrace as `tmp', next to
+;; temporaries of the compiler's own, and then cannot be used by name
+;; in the operator's expressions; and procedures are inlined, so that
+;; stepping jumps about in their lines.
+;;
+;; So Guidance compiles without the optimizations that do this: the
+;; programs it loads, the modules they use, and the operator's
+;; expressions.  The rest stay on.  The list was found by experiment,
+;; with Guile 3.0.9, compiling into a module that is not declarative,
+;; as the programs Guidance runs are:
+;;
+;; - partial evaluation inlines, and removes variables;
+;; - simplification and dead-code elimination leave a variable that
+;;   holds the result of a call named `tmp';
+;; - common subexpression elimination adds variables named `box' and
+;;   `arg'.
+;;
+;; Lower optimization levels keep the names too, but their line
+;; information is worse: every statement of a body also counts as
+;; being on the line where the body begins, so stepping keeps
+;; returning there.
+;;
+;; main.c gives Guidance its own cache of compiled files, so that
+;; files compiled by Guile itself are not used instead.
+(define %debug-compile-options
+  '(#:partial-eval? #f
+    #:simplify? #f
+    #:cse? #f
+    #:eliminate-dead-code? #f))
+
+(define (compile-for-debugging!)
+  "Makes Guile compile the files that it loads from here on with
+%debug-compile-options."
+  (unless (memq #:partial-eval? %auto-compilation-options)
+    (set! %auto-compilation-options
+      (append %debug-compile-options %auto-compilation-options))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HELPERS
 
 (define (print-error-on-exception thunk)
@@ -163,8 +204,9 @@ Definitions are compiled as they are, so that they are made at the top
 level; anything else is compiled as a thunk, so that all of its values
 are returned."
   (if (definition? form)
-      (compile form #:env (current-module))
-      ((compile `(lambda () ,form) #:env (current-module)))))
+      (compile form #:env (current-module) #:opts %debug-compile-options)
+      ((compile `(lambda () ,form) #:env (current-module)
+                #:opts %debug-compile-options))))
 
 (define (eval-forms str)
   "Compiles and runs the expressions in STR, one at a time, in the
@@ -890,6 +932,7 @@ command arrives.  Returns the exit status."
   ;; Make the trap procedures, like add-trap-at-procedure-call!,
   ;; available to the operator.
   (module-use! (current-module) (resolve-interface '(system vm trap-state)))
+  (compile-for-debugging!)
   (apply-command-line! (cdr (command-line)))
   (repl-welcome)
   (let ((status (call-with-interruptible-input repl-loop)))

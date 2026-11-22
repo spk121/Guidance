@@ -322,23 +322,49 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       line arrives complete in 12 seconds.  Test: one case in
       `tests/gui-smoke.sh`, with `tests/programs/flood.scm`.
 
+      A prompt is now shown after the output that the REPL printed
+      before it: the prompt comes by a stream of its own, and could
+      overtake the last of a large output.  The terminal's reads no
+      longer block.
+
       Still open: the terminal always shows the end when something
       is printed, even if the operator has scrolled back to read.
       The prompt stream can still run two prompts together, as
       "repl>repl>", seen once.
-- [ ] **Local variables lose their names.**  Programs are compiled at
-      Guile's default optimization level, so a `let` variable `a` in
-      a ten-line procedure is listed on the Backtrace page as `tmp`,
-      next to compiler temporaries named `box` and `arg`, and
-      entering `a` at the prompt gives "Unbound variable: a".
-      (`tests/programs/locals.scm` happens to keep its names.)
-      Verified in plain Guile: compiled with `#:optimization-level 1`
-      the same procedure reports `a` at every line.  Compile programs
-      run under the debugger at a low optimization level.  Files
-      already in Guile's compiled-file cache were compiled at the
-      default level, so this needs Guidance's own cache or a forced
-      recompile.  At level 1, check line stepping again: the line
-      table then revisits the `let` line between statements.
+- [x] **Local variables lose their names.**  Programs were compiled
+      at Guile's default optimization level, so a `let` variable `a`
+      in a ten-line procedure was listed on the Backtrace page as
+      `tmp`, next to compiler temporaries named `box` and `arg`, and
+      entering `a` at the prompt gave "Unbound variable: a".  Fixed:
+      - Guidance compiles with four optimizations off
+        (`%debug-compile-options` in `(gdn repl)`): partial
+        evaluation, simplification, common subexpression elimination,
+        and dead-code elimination.  This applies to the programs it
+        loads and the modules they use, through
+        `%auto-compilation-options`, and to the operator's
+        expressions.  The list was found by experiment on Guile
+        3.0.9, and may need revisiting for other versions.
+      - Optimization level 1, the first idea, keeps the names too, but
+        its line table returns to the first line of a body after each
+        statement, which spoils stepping.  With the four off, steps
+        follow the lines, and procedures are no longer inlined into
+        their callers.
+      - Guile reuses the compiled files in its cache, which were
+        compiled its own way.  So Guidance has its own cache,
+        `$XDG_CACHE_HOME/guidance`.  `main.c` points `XDG_CACHE_HOME`
+        there while Guile starts and then restores it, so the program
+        and GTK see the value it had.
+
+      `(fib 30)` takes 750 ms, against 710 ms before.  Test: one in
+      `tests/repl-test.scm`, with `tests/programs/names.scm`.  The
+      test script's module is now not declarative, as the module
+      that Guidance runs programs in is, because that changes how
+      they are compiled.
+
+      Still open: a variable bound to the result of a call is not
+      listed until one step after the line that binds it.  Guile
+      counts the instruction that stores it as part of the next
+      line.
 - [x] **Procedure breakpoints stop working when the program is run
       again.**  A trap made from the Modules page or with
       `add-trap-at-procedure-call!` belonged to the procedure object.
