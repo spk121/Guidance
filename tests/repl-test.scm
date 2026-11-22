@@ -1384,8 +1384,7 @@ still leaves the value on a line of its own."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Stop ends the whole program.
 
-(define-known-failure "stop: Stop ends the threads the program started"
-  "Phase 6, Stop and a second Run leave the program's threads running"
+(define-test "stop: Stop ends the threads the program started"
   (run-repl
    (list (lambda ()
            (after-delay 0.4 request-stop!)
@@ -1395,7 +1394,11 @@ still leaves the value on a line of its own."
 (list 'counted (- counter before)))")
          '(quit 0))
    (program "thread-after-stop.scm"))
-  (check "the program is stopped" (output-order? "= spinning" "Stopped."))
+  (check "the program is stopped, and its thread ended"
+         (output-order? "= spinning" "Stopped."
+                        "Ended 1 thread that the program had started."))
+  (check "ending the thread is not reported as an error in it"
+         (not (output-contains? "An error in a thread")))
   (check "its thread no longer counts" (output-contains? "→ (counted 0)")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

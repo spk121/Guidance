@@ -546,6 +546,13 @@ wait_for "subprocess finished"
 wait_for "from-the-error-stream"
 wait_for "error-of-a-pipe"
 wait_for "(read piped)"
+wait_for "[prompt repl>]" 2
+# Guile starts a thread of its own for system*, which is not the
+# program's, and must not be ended with it.
+refute "that the program had started"
+# Signals are still delivered afterwards, which that thread does.
+type_line "(begin (sigaction SIGUSR1 (lambda (s) (display \"signalled\") (newline))) (kill (getpid) SIGUSR1) (sleep 1))"
+wait_for "signalled"
 stop_app
 
 # The program named on the command line is on the Source page from the

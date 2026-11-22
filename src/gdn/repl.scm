@@ -49,7 +49,7 @@
   #:use-module (system vm frame)
   #:use-module (system vm program)
   #:use-module (system vm traps)
-  #:use-module ((ice-9 threads) #:select (current-thread make-mutex thread-exited?
+  #:use-module ((ice-9 threads) #:select (cancel-thread current-thread make-mutex thread-exited?
                                                with-mutex))
   #:use-module ((system foreign) #:select (sizeof))
   #:use-module (system vm vm)
@@ -791,6 +791,30 @@ again from 1."
     (when (null? *program-threads*)
       (set! *program-thread-count* 0))))
 
+(define (end-program-threads!)
+  "Ends the threads that the program started and that are still
+running, as the program's run ends.  Under Guile itself they would end
+with the process when the program does; under Guidance the process
+goes on, and they would keep running, and printing, into the next run.
+Says how many there were."
+  (let ((live (filter (lambda (thread) (not (thread-exited? thread)))
+                      (map (lambda (entry) (vector-ref entry 0))
+                           (with-mutex *program-threads-mutex*
+                             *program-threads*)))))
+    (unless (null? live)
+      (for-each cancel-thread live)
+      ;; Give them a moment to go, so that what they were printing
+      ;; comes before the prompt.  One that is blocked where it cannot
+      ;; be interrupted ends when that returns.
+      (let wait ((tries 50))
+        (when (and (positive? tries)
+                   (any (lambda (thread) (not (thread-exited? thread)))
+                        live))
+          (usleep 10000)
+          (wait (1- tries))))
+      (say "~&Ended ~a thread~:p that the program had started.~%"
+           (length live)))))
+
 (define (thread-rows)
   "The rows of the Threads page, as a vector of vectors #(NAME
 PROCEDURE STATE): the program's main thread, which is the REPL's, then
@@ -827,7 +851,12 @@ Threads page."
                     (unless (eq? key 'quit)
                       (report-thread-error key args))
                     #f)))))))
-    (add-program-thread! thread thunk)
+    ;; Guile starts threads of its own this way too: the one that
+    ;; delivers signals, the first time `system*' is used, and those
+    ;; of its futures.  They are not the program's to list, and must
+    ;; not be ended with it.
+    (when (gdn-program-procedure? thunk)
+      (add-program-thread! thread thunk))
     thread))
 
 (define (call-with-thread-reports thunk)
@@ -942,7 +971,10 @@ files given with -l, then calling the function given with -e."
              ((if (symbol? entry)
                   (module-ref (current-module) entry)
                   (eval entry (current-module)))
-              (command-line))))))))))
+              (command-line)))))
+        ;; However the run ended: by itself, with Stop, or with an
+        ;; error and then Stop.
+        (end-program-threads!))))))
 
 (define (apply-command-line! args)
   "Parses Guidance's command-line ARGS and applies the options that

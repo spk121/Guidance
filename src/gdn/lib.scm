@@ -32,6 +32,7 @@
   #:export (gdn-error-frames
             gdn-frame-frames
             guile-internal-frame?
+            gdn-program-procedure?
             guidance-frame?
             gdn-loaded-modules
             gdn-module-list
@@ -191,6 +192,17 @@ program name.  Returns an alist with these keys:
          (file (and source (source:file source))))
     (and (string? file)
          (string-prefix? %guidance-source-prefix file))))
+
+(define (gdn-program-procedure? proc)
+  "True if PROC is a procedure of the program being debugged: compiled
+from a source file that is not one of Guile's own libraries, nor
+Guidance's.  A primitive written in C is not."
+  (let ((sources (if (program? proc) (program-sources proc) '())))
+    (and (pair? sources)
+         (let ((file (cadr (car sources))))     ; (ip file line . column)
+           (and (string? file)
+                (not (any (lambda (prefix) (string-prefix? prefix file))
+                          %guile-source-prefixes)))))))
 
 (define (guile-internal-frame? frame)
   "True if FRAME is running code from Guile's own libraries, or from

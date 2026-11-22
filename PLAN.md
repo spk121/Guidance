@@ -1104,12 +1104,24 @@ these" at the end of this phase.
       breakpoint with F9 before the first run and checks that Run stops
       at it; a REPL test checks what is shown.
 
-- [ ] **Stop and a second Run leave the program's threads running.**
+- [x] **Stop and a second Run leave the program's threads running.**
       Noted in Phase 5 under "Other concerns".  With two worker
       threads, Stop left both printing into the Terminal, and running
       again made four.  At the least, say so when Stop is pressed and
       on the Threads page; better, end them, for example with
       `cancel-thread`, when a run ends.
+
+      Fixed: when a run of the program ends, by itself, with Stop, or
+      with an error and then Stop, the threads it started that are still
+      running are ended with `cancel-thread`, as they would end with the
+      process under Guile, and Guidance says how many: "Ended 2 threads
+      that the program had started."  In the GUI, two workers printed
+      nothing more after Stop, and a second run had two threads, not
+      four.  The REPL test is an ordinary test now.  Still open: threads
+      started by an expression at the prompt are left alone, on purpose;
+      a thread blocked where it cannot be interrupted ends only when
+      that returns; and threads made other than with `call-with-new-
+      thread` are not known to Guidance.
 
 #### P2: noticed, can wait
 
