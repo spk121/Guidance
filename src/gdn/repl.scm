@@ -78,6 +78,10 @@
 ;; operator's expressions are evaluated.  The GUI selects it.
 (define *selected-frame* 0)
 
+;; The disable thunks of the one-shot traps, made by stepping, that
+;; have not fired yet.  They belong to the run that made them.
+(define *pending-steps* '())
+
 ;; The module list most recently sent to the GUI.
 (define *last-module-list* #f)
 
@@ -389,6 +393,7 @@ exception."
                     exception-handler-unwind
                     exception-handler-pre-unwind))
                 (lambda ()
+                  (cancel-pending-steps!)
                   (disable-break))))))))
     (lambda (k . args)
       (format #t "~&Stopped.~%")
@@ -502,12 +507,30 @@ program until they press Stop."
 (define (add-ephemeral-trap! make-trap handler)
   "Creates a trap that fires once.  MAKE-TRAP takes a handler and
 returns the trap's disable thunk, as the low-level trap constructors
-do.  HANDLER receives the same arguments as the trap's handler."
+do.  HANDLER receives the same arguments as the trap's handler.
+
+The trap lasts no longer than the run that it is made in: see
+cancel-pending-steps!."
   (let ((disable #f))
     (set! disable
       (make-trap (lambda args
+                   (set! *pending-steps* (delq disable *pending-steps*))
                    (disable)
-                   (apply handler args))))))
+                   (apply handler args))))
+    (set! *pending-steps* (cons disable *pending-steps*))))
+
+(define (cancel-pending-steps!)
+  "Disables the one-shot traps that have not fired.  A run can end
+while a step is still pending: with an error, with Stop, or because
+the program finished first.  Left enabled, the step would fire in the
+next run or expression, outside the program."
+  (let ((pending *pending-steps*))
+    (set! *pending-steps* '())
+    (for-each (lambda (disable)
+                ;; One trap that cannot be disabled should not keep
+                ;; the others enabled, or stop the run from ending.
+                (false-if-exception (disable)))
+              pending)))
 
 (define (add-line-step-trap! frame into?)
   "Pauses the program at the next line reached in FRAME, or in a frame

@@ -222,16 +222,17 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
 
 #### Blockers: fix before an alpha
 
-- [ ] **A pending step survives the end of its run and breaks the
+- [x] **A pending step survives the end of its run and breaks the
       next one.**  Step (or Step Out), then let the run end before the
       step completes: by an error on the stepped line, by Stop, or by
       stepping past the end of the program.  The next Run, or the next
-      expression at `repl>`, fails with "In procedure make-stack:
-      Prompt tag not found while narrowing stack" and does not run.
-      It works again after that one failure.  The one-shot traps made
-      by `add-ephemeral-trap!` are only disabled when they fire.
-      `run-under-debugger` should disable any that are left, on every
-      way out.
+      expression at `repl>`, failed with "In procedure make-stack:
+      Prompt tag not found while narrowing stack" and did not run.
+      Fixed: `(gdn repl)` keeps the one-shot traps that have not
+      fired in `*pending-steps*`, and `run-under-debugger` disables
+      them on every way out (`cancel-pending-steps!`).  Three tests
+      in `tests/repl-test.scm` cover the error, Stop, and
+      end-of-program cases.
 - [ ] **An expression that does not finish, evaluated while paused,
       hangs Guidance for good.**  At `break>` or `error>`, enter
       `(let loop () (loop))`.  Stop and Pause do nothing, nor does any

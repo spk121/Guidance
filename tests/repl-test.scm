@@ -505,6 +505,62 @@ INPUT."
   (check "entries from the REPL have no location"
          (member "(from-repl 7)" (peeks))))
 
+;; A step that is still pending when its run ends must not fire in a
+;; later run, where it would pause outside the program.
+
+(define-test "step: a step ended by an error does not disturb the next run"
+  (run-repl
+   (list '(run #f)
+         '(step #f)                     ; to line 8
+         '(step #f)                     ; to line 9
+         '(step #f)                     ; to line 10
+         '(step #f)                     ; into the error
+         (checkpoint "the error is shown, in bad (line 4)"
+                     (lambda () (equal? (top-frame-line) 4))
+                     '(stop #f))
+         '(eval "(+ 40 2)")
+         '(run #f)
+         (checkpoint "the next run pauses at its break (line 7)"
+                     (lambda () (equal? (top-frame-line) 7))
+                     '(stop #f))
+         '(quit 0))
+   (program "step-error.scm"))
+  (check "the expression after the error is evaluated"
+         (output-contains? "→ 42"))
+  (check "the program runs twice"
+         (output-order? "Break at step-error.scm:7" "Stopped."
+                        "Break at step-error.scm:7" "Stopped."))
+  (check "no internal error" (not (output-contains? "make-stack"))))
+
+(define-test "step: a step ended by Stop does not disturb the next run"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           ;; The step runs the loop, which never returns; stop it.
+           (after-delay 0.3 request-stop!)
+           '(step-out #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   "-c" "(define (spin) (_break_) (let loop () (loop))) (spin)")
+  (check "the program is stopped" (output-order? "Break at" "Stopped."))
+  (check "the expression after Stop is evaluated" (output-contains? "→ 42"))
+  (check "no internal error" (not (output-contains? "make-stack"))))
+
+(define-test "step: stepping past the end does not disturb the next run"
+  (run-repl
+   (list '(run #f)
+         '(step-out #f)                 ; out of numbers
+         '(step-out #f)                 ; out of the program
+         ;; If that paused again, continue to the end.
+         '(run #f)
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "break.scm"))
+  (check "step-out returns from numbers"
+         (output-contains? "Returned from numbers"))
+  (check "the expression after the run is evaluated" (output-contains? "→ 42"))
+  (check "no internal error" (not (output-contains? "make-stack"))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (format #t "~%~a failure~:p~%" *failures*)
