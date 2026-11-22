@@ -1175,7 +1175,14 @@ Each item has a test: see "Tests for these" at the end of this phase.
   lost if Guidance died first.
 - Fixed with the Source page item: Open Program showed the file with
   line 1 marked as the current line, though nothing was paused there.
-- The breakpoint mark in the Source page's margin is a thin bar,
+- Fixed: the note was mistaken about the mark: it was a red disc, six
+  pixels across; the thin bar was the text cursor.  The disc is now
+  ten pixels across, as large as its space allows.  Looking closely
+  showed a real fault as well: the ring for a disabled breakpoint had
+  a line running from it to the previous line's number, because the
+  circle was added to the path left by drawing that number.  That is
+  fixed.  Checked by screenshot; there is no test of the drawing.  It
+  was: The breakpoint mark in the Source page's margin is a thin bar,
   easy to miss.
 
 #### Tests for these
