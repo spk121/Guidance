@@ -17,6 +17,7 @@
 (define-module (gdn gui)
   #:use-module (gdn lib)
   #:use-module (ice-9 threads)
+  #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-43)
   #:export (gdn-get-user-input
             gdn-take-requests!
@@ -162,8 +163,14 @@
             breakpoints)
   (log! 'source-breakpoints breakpoints))
 
-(define (gdn-update-threads! view)
-  #t)
+(define (gdn-update-threads! view rows)
+  (unless (and (vector? rows)
+               (every (lambda (row)
+                        (and (vector? row) (= 3 (vector-length row))
+                             (every string? (vector->list row))))
+                      (vector->list rows)))
+    (error "Malformed thread rows" rows))
+  (log! 'threads rows))
 
 (define (gdn-update-modules! view modules)
   (vector-for-each

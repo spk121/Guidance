@@ -141,7 +141,9 @@ Pages
   cursor's line.
 - **Traps**: the breakpoints and other traps.  Each can be switched off
   and on, or deleted.
-- **Threads**: Guile's threads.
+- **Threads**: the program's main thread, and the threads it started,
+  each with the procedure it was started with, and whether it is still
+  running.
 - **Modules**: the loaded modules.  Expanding one lists its procedures,
   each of which can be shown on the Source page or given a breakpoint.
 - **Environment**: information about the process, such as environment

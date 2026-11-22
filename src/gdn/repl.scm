@@ -48,7 +48,8 @@
   #:use-module (system vm frame)
   #:use-module (system vm program)
   #:use-module (system vm traps)
-  #:use-module ((ice-9 threads) #:select (current-thread))
+  #:use-module ((ice-9 threads) #:select (current-thread make-mutex thread-exited?
+                                               with-mutex))
   #:use-module ((system foreign) #:select (sizeof))
   #:use-module (system vm vm)
   #:use-module ((system vm debug)
@@ -311,7 +312,7 @@ to the Source page."
   "Updates the information pages of the GUI."
   (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
   (refresh-traps!)
-  (gdn-update-threads! *gdn-thread-view*)
+  (gdn-update-threads! *gdn-thread-view* (thread-rows))
   (refresh-modules!))
 
 (define (enable-trap-hooks!)
@@ -615,20 +616,78 @@ aborting to the stop prompt."
     (format port "Guidance can pause and inspect only the program's \
 main thread.~%")))
 
+;; The threads that the program has started, newest first, as a list
+;; of vectors #(THREAD NUMBER PROCEDURE-NAME), for the Threads page.
+;; They are numbered from 1 in the order they were started.  Program
+;; threads add to it, so it is guarded by a mutex.
+(define *program-threads* '())
+(define *program-thread-count* 0)
+(define *program-threads-mutex* (make-mutex))
+
+(define (procedure-display-name proc)
+  "The name of PROC, as the Backtrace page shows it: λ if it has none."
+  (let ((name (and (procedure? proc) (procedure-name proc))))
+    (if (and name (not (eq? name '_)))
+        (symbol->string name)
+        "λ")))
+
+(define (add-program-thread! thread thunk)
+  (with-mutex *program-threads-mutex*
+    (set! *program-thread-count* (1+ *program-thread-count*))
+    (set! *program-threads*
+      (cons (vector thread *program-thread-count*
+                    (procedure-display-name thunk))
+            *program-threads*))))
+
+(define (forget-finished-threads!)
+  "Removes the threads that have finished from the Threads page, as a
+new run of the program starts.  When none is left, numbering starts
+again from 1."
+  (with-mutex *program-threads-mutex*
+    (set! *program-threads*
+      (filter (lambda (entry) (not (thread-exited? (vector-ref entry 0))))
+              *program-threads*))
+    (when (null? *program-threads*)
+      (set! *program-thread-count* 0))))
+
+(define (thread-rows)
+  "The rows of the Threads page, as a vector of vectors #(NAME
+PROCEDURE STATE): the program's main thread, which is the REPL's, then
+the threads the program started.  Guidance's own threads, and Guile's,
+are left out."
+  (list->vector
+   (cons (vector "Main thread"
+                 (or (program-name) "REPL")
+                 (cond ((*paused*) "paused")
+                       ((*in-run*) "running")
+                       (else "waiting at the REPL")))
+         (map (lambda (entry)
+                (vector (format #f "Thread ~a" (vector-ref entry 1))
+                        (vector-ref entry 2)
+                        (if (thread-exited? (vector-ref entry 0))
+                            "finished"
+                            "running")))
+              (reverse
+               (with-mutex *program-threads-mutex* *program-threads*))))))
+
 (define* (debugger-call-with-new-thread thunk #:optional handler)
   "call-with-new-thread, as used while Guidance runs a program.  If the
 thread raises an error that it does not handle, the error is reported
-in a few lines, and the thread ends."
-  (if handler
-      (%call-with-new-thread thunk handler)
-      (%call-with-new-thread
-       (lambda ()
-         (catch #t
-           thunk
-           (lambda (key . args)
-             (unless (eq? key 'quit)
-               (report-thread-error key args))
-             #f))))))
+in a few lines, and the thread ends.  The thread is listed on the
+Threads page."
+  (let ((thread
+         (if handler
+             (%call-with-new-thread thunk handler)
+             (%call-with-new-thread
+              (lambda ()
+                (catch #t
+                  thunk
+                  (lambda (key . args)
+                    (unless (eq? key 'quit)
+                      (report-thread-error key args))
+                    #f)))))))
+    (add-program-thread! thread thunk)
+    thread))
 
 (define (call-with-thread-reports thunk)
   "Calls THUNK with call-with-new-thread replaced by
@@ -726,6 +785,7 @@ files given with -l, then calling the function given with -e."
       (format #t "Cannot find the program ~s.~%" script))
      (else
       (let ((path (and script (canonicalize-path script))))
+        (forget-finished-threads!)
         (format #t "Running ~a~%" (or path (program-name)))
         (run-under-debugger
          (lambda ()

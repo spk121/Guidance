@@ -5,7 +5,6 @@ guidance_sources = [
   'guidance-binding-info.c',
   'guidance-environment-view.c',
   'guidance-environment-info.c',
-  'guidance-emoji.c',
   'guidance-frame-info.c',
   'guidance-lisp.c',
   'guidance-module-info.c',

@@ -596,6 +596,42 @@ INPUT."
                      (lambda () (equal? (marks) `((,file 2 #f))))
                      '(quit 0)))))
 
+(define (current-thread-rows)
+  "The rows most recently sent to the Threads page, as lists."
+  (let loop ((events (reverse (events))))
+    (cond
+     ((null? events) #f)
+     ((eq? (car (car events)) 'threads)
+      (map vector->list (vector->list (cadr (car events)))))
+     (else (loop (cdr events))))))
+
+(define-test "threads: the Threads page lists the program's threads"
+  (run-repl
+   (list '(run #f)
+         (checkpoint "the main thread, then the program's, by procedure"
+                     (lambda ()
+                       (equal? (current-thread-rows)
+                               '(("Main thread" "thread-list.scm" "paused")
+                                 ("Thread 1" "finisher" "finished")
+                                 ("Thread 2" "reader" "running"))))
+                     '(continue #f))
+         (checkpoint "after the program, both threads have finished"
+                     (lambda ()
+                       (equal? (current-thread-rows)
+                               '(("Main thread" "thread-list.scm"
+                                  "waiting at the REPL")
+                                 ("Thread 1" "finisher" "finished")
+                                 ("Thread 2" "reader" "finished"))))
+                     '(run #f))
+         (checkpoint "a new run forgets them, and numbers from 1 again"
+                     (lambda ()
+                       (equal? (map car (current-thread-rows))
+                               '("Main thread" "Thread 1" "Thread 2")))
+                     '(continue #f))
+         '(quit 0))
+   (program "thread-list.scm"))
+  (check "the program finishes" (output-contains? "threads done")))
+
 (define-test "modules: list modules and their procedures"
   (run-repl
    (list (load-expression "procs.scm")

@@ -618,9 +618,25 @@ The open one is last in this list.
         now decoded once and kept (`code-line-table` in `(gdn lib)`),
         so after the first breakpoint it takes a fraction of a second;
         line steps use the same tables.
-- [ ] **Threads page.**  Rows read `#<thread 139940890986176
+- [x] **Threads page.**  Rows read `#<thread 139940890986176
       (7f46c934c6c0)>` with an emoji as ID.  Nothing says which is the
-      program's thread, and Guidance's own threads are listed.
+      program's thread, and Guidance's own threads are listed.  Fixed:
+      - The REPL now makes the rows (`thread-rows` in `(gdn repl)`)
+        rather than the C side listing `all-threads`.  The first is
+        "Main thread", the program's, with the program's name and
+        whether it is running, paused, or waiting at the REPL.
+      - The replacement `call-with-new-thread` that Guidance installs
+        during runs records each thread the program starts.  They are
+        listed as "Thread 1", "Thread 2", ..., in the order they were
+        started, with the name of the procedure each was started with
+        (λ for an anonymous one), and "running" or "finished".  A new
+        run forgets the finished ones, and numbers from 1 again when
+        none is left.
+      - Guidance's own threads and Guile's internal ones (the GTK
+        thread, the finalizer, signal delivery) are no longer listed.
+      - The emoji column, and `guidance-emoji.c` with it, are gone.
+      - The REPL test checks the rows for a program with a finished
+        thread and a running one.
 - [ ] **Compiler chatter and ordering in the Terminal.**  The first
       run of each file prints ";;; note: auto-compilation is enabled
       ...", ";;; compiling ..." and ";;; compiled ..." with long cache
