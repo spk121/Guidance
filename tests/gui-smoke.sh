@@ -538,20 +538,19 @@ for step_key in F10 F11; do
     stop_app
 done
 
+# Error output of subprocesses started without a shell, and on pipes,
+# is shown.
+start "$PROGRAMS/subprocess-error.scm"
+key F5
+wait_for "subprocess finished"
+wait_for "from-the-error-stream"
+wait_for "error-of-a-pipe"
+wait_for "(read piped)"
+stop_app
+
 ################################################################
 # Known failures: faults found by the review recorded in PLAN.md as
 # Phase 6, and not yet fixed.  See known_failure.
-
-# Error output of a subprocess started without a shell is shown.
-subprocess_error_output () {
-    start "$PROGRAMS/subprocess-error.scm"
-    key F5
-    wait_for "subprocess finished"
-    wait_for "from-the-error-stream"
-    stop_app
-}
-known_failure "Phase 6, Error output from system* and pipes is thrown away" \
-              subprocess_error_output
 
 # The program named on the command line is on the Source page from the
 # start, so that a breakpoint can be set before the first run.

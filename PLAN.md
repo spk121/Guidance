@@ -1065,7 +1065,7 @@ these" at the end of this phase.
       Step Over the `map` of 300,000 elements still had not finished
       after 150 s.
 
-- [ ] **Error output from `system*` and pipes is thrown away.**  Since
+- [x] **Error output from `system*` and pipes is thrown away.**  Since
       "show output and errors in order", `(current-error-port)` is a
       port of Guidance's own type, not a file port.  Guile's `system*`
       and `open-pipe` give a subprocess `/dev/null` for an error
@@ -1076,6 +1076,18 @@ these" at the end of this phase.
       fails, which some programs use to test for a terminal.  The
       error port needs to be a file port again, or to have a
       descriptor.
+
+      Fixed: the error port stays as it is, which keeps output and
+      errors in order.  Instead `system*`, and `piped-process`, with
+      which Guile's pipes are made, are wrapped: when the current error
+      port is the program's Terminal port, they are given a file port
+      for file descriptor 2, which is the Terminal's too.  If the
+      program has sent its errors elsewhere, that is left alone.  The
+      GUI test, now an ordinary test, covers `system*` and a pipe.
+      Still open: `(fileno (current-error-port))` still fails, and a
+      subprocess started some other way than these two primitives, with
+      the current error port as its error stream, is not covered.
+
 - [ ] **The Source page is empty until the program first pauses.**  A
       program named on the command line, the main way to start, is
       not shown, so no line breakpoint can be set before the first

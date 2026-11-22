@@ -215,7 +215,60 @@ Terminal is a string port, the program shares Guidance's."
             port)
           *terminal-out*)))
   (unless (port-usable? *program-err*)
-    (set! *program-err* (or (gdn-open-error-port) *terminal-err*))))
+    (set! *program-err* (or (gdn-open-error-port) *terminal-err*)))
+  ;; Only where the program has an error port of Guidance's own kind.
+  (when (and (not *subprocess-err*)
+             (not (eq? *program-err* *terminal-err*))
+             (not (file-port? *program-err*)))
+    (set! *subprocess-err* (fdopen (dup 2) "w0"))
+    (install-subprocess-wrappers!)))
+
+;; Subprocesses.
+;;
+;; Guile's `system*' and its pipes give a subprocess the current error
+;; port as its error stream if that is a file port, and otherwise
+;; /dev/null.  The program's error port is not a file port: it is one
+;; of Guidance's, which marks what it writes as errors, so that the
+;; Terminal can show output and errors in the order they were written.
+;; A subprocess's errors would therefore vanish.
+;;
+;; So the two primitives that start subprocesses are wrapped.  When the
+;; current error port is the program's Terminal port, they see instead
+;; a file port for file descriptor 2, which is the Terminal's too.  If
+;; the program has sent its errors elsewhere, that is left alone.
+
+;; A file port for the Terminal's error stream, or #f where there is
+;; none, as in the tests.
+(define *subprocess-err* #f)
+
+(define (with-subprocess-error-port proc)
+  "Returns a procedure that calls PROC as described above."
+  (lambda args
+    (if (and *subprocess-err*
+             (eq? (current-error-port) *program-err*)
+             (not (file-port? *program-err*)))
+        (parameterize ((current-error-port *subprocess-err*))
+          (apply proc args))
+        (apply proc args))))
+
+(define *subprocess-wrappers-installed?* #f)
+
+(define (install-subprocess-wrappers!)
+  "Wraps `system*', and `piped-process', which Guile's pipes are made
+with.  Code refers to both through their modules' variables, so it sees
+the wrappers."
+  (unless *subprocess-wrappers-installed?*
+    (set! *subprocess-wrappers-installed?* #t)
+    (for-each
+     (lambda (where)
+       (let ((variable (module-variable (resolve-module (car where))
+                                        (cdr where))))
+         (when (and variable (variable-bound? variable))
+           (variable-set! variable
+                          (with-subprocess-error-port
+                           (variable-ref variable))))))
+     '(((guile) . system*)
+       ((ice-9 popen) . piped-process)))))
 
 (define (call-with-program-ports thunk)
   "Calls THUNK with the program's ports as the current ports.  What
