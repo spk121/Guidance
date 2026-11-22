@@ -27,6 +27,8 @@
 #include "guidance-trap-info.h"
 #include "guidance-trap-view.h"
 #include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <gio/gio.h>
 #include <glib.h>
 #include <libguile.h>
@@ -104,6 +106,7 @@ static void *after_gc_handler (void *hook_data, void *fn_data, void *data);
 static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
 
 static int  unix_pty_fd_new (void);
+static void redirect_standard_fds (GdnLisp *self);
 static SCM  port_from_unix_input_fd (int fd);
 static SCM  port_from_unix_output_fd (int fd);
 static void eval_resource (const char *path, const char *file_name);
@@ -196,6 +199,8 @@ gdn_lisp_init (GdnLisp *self)
    * `repl>` from the REPL. */
   self->input_prompt_fd = unix_pty_fd_new ();
   self->prompt_port = port_from_unix_input_fd (self->input_prompt_fd);
+
+  redirect_standard_fds (self);
 
   self->user_input_queue = g_async_queue_new ();
   self->request_queue = g_async_queue_new ();
@@ -556,6 +561,59 @@ spawn_handler (G_GNUC_UNUSED void *data, SCM key, SCM args)
                      scm_from_utf8_string ("Guile has exited.~%Key: ~S Args: ~S~%"),
                      scm_list_2 (key, args));
   return SCM_UNSPECIFIED;
+}
+
+/* Opens the slave side of the pseudoterminal whose master is
+ * MASTER_FD, with FLAGS, and makes it file descriptor TARGET_FD. */
+static void
+redirect_fd_to_pty (int master_fd, int flags, int target_fd)
+{
+  const char *name = ptsname (master_fd);
+  int         fd;
+
+  if (name == NULL)
+    g_error ("Could not find the pseudoterminal for FD #%d", master_fd);
+  fd = open (name, flags | O_NOCTTY);
+  if (fd < 0)
+    g_error ("Could not open pseudoterminal %s", name);
+  if (dup2 (fd, target_fd) < 0)
+    g_error ("Could not redirect FD #%d", target_fd);
+  close (fd);
+}
+
+/* Guile's ports for the program are the Terminal's pseudoterminals, but
+ * a subprocess, such as one started by `system', inherits file
+ * descriptors 0 to 2 instead.  So those are made the pseudoterminals
+ * too.  Guidance's own messages, from GLib and the C library, keep
+ * going where they went: `stdout' and `stderr' are given copies of
+ * the original descriptors.
+ *
+ * Each descriptor is a new opening of its pseudoterminal, not a copy
+ * of the one Guile's port uses, so that it does not share that one's
+ * settings: the program's standard input is non-blocking, which would
+ * make a subprocess's reads fail. */
+static void
+redirect_standard_fds (GdnLisp *self)
+{
+  int original_out = dup (STDOUT_FILENO);
+  int original_err = dup (STDERR_FILENO);
+  FILE *out, *err;
+
+  fflush (stdout);
+  fflush (stderr);
+  out = original_out >= 0 ? fdopen (original_out, "w") : NULL;
+  err = original_err >= 0 ? fdopen (original_err, "w") : NULL;
+  if (out != NULL)
+    stdout = out;
+  if (err != NULL)
+    {
+      setvbuf (err, NULL, _IONBF, 0);
+      stderr = err;
+    }
+
+  redirect_fd_to_pty (self->output_fd, O_RDONLY, STDIN_FILENO);
+  redirect_fd_to_pty (self->input_fd, O_WRONLY, STDOUT_FILENO);
+  redirect_fd_to_pty (self->input_error_fd, O_WRONLY, STDERR_FILENO);
 }
 
 /*

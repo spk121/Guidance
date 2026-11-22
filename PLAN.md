@@ -536,10 +536,18 @@ The open one is last in this list.
       reloading.  While one is set, `(fib 30)` takes 925 ms.  The
       README says so.  Test: one in `tests/repl-test.scm`, with
       `tests/programs/fib.scm`.
-- [ ] **Subprocess output misses the Terminal.**  Only Guile's ports
-      are redirected, not file descriptors 0 to 2, so the output of
-      `(system "echo hi")` goes to the terminal Guidance was started
-      from, or nowhere.
+- [x] **Subprocess output misses the Terminal.**  Only Guile's ports
+      were redirected, not file descriptors 0 to 2, so the output of
+      `(system "echo hi")` went to the terminal Guidance was started
+      from.  (`system*` and pipes already followed Guile's ports.)
+      Fixed: file descriptors 0 to 2 are now the Terminal's
+      pseudoterminals, each opened anew so that standard input stays
+      blocking for subprocesses.  Guidance's own messages keep their
+      destination: the C library's `stdout` and `stderr` use copies of
+      the original descriptors.  Sanitizer reports, written to
+      descriptor 2, now appear in the Terminal; the GUI test looks
+      for them in its transcript too.  Test: one in
+      `tests/gui-smoke.sh`, with `tests/programs/subprocess.scm`.
 - [ ] **No end-of-file for standard input.**  Ctrl+D in the entry does
       nothing, so a program that reads until EOF can only be stopped.
 - [ ] **The entry takes one line, and has no history.**  An unfinished

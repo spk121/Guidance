@@ -64,7 +64,10 @@ start () {
 # stop_app: checks that Guidance is healthy, then closes it.
 stop_app () {
     kill -0 "$APP" 2>/dev/null || fail "Guidance exited"
-    if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
+    # Sanitizer reports go to file descriptor 2, which is the
+    # Terminal's, so look in the transcript too.
+    if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG" ||
+       grep -E "runtime error|AddressSanitizer" "$TRANSCRIPT"; then
         fail "problems were logged"
     fi
     kill "$APP" 2>/dev/null
@@ -305,6 +308,17 @@ wait_for "Stack overflow: the program used more than"
 wait_for "[prompt error>]"
 key shift+F5
 wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+stop_app
+
+# A subprocess's output and input are the Terminal's.
+start "$PROGRAMS/subprocess.scm"
+key F5
+wait_for "output from a subprocess"
+wait_for "errors from a subprocess"
+wait_for "Type a line for a subprocess:"
+type_line "hello"
+wait_for "the subprocess read: hello"
 wait_for "[prompt repl>]" 2
 stop_app
 
