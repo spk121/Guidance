@@ -331,6 +331,35 @@ includes the address CODE, or #f and #f."
                    (program-debug-info-size info)))
         (values #f #f))))
 
+;; Decoding a procedure's line table from its debug information is
+;; slow, and finding the code at a line looks at every loaded
+;; procedure.  A procedure's code never changes once loaded, so each
+;; table is decoded once and kept, keyed by the code's start address.
+;; Only the REPL thread, which runs the traps, uses it.
+(define *line-tables* (make-hash-table))
+
+(define (code-line-table start end)
+  "Returns the line table of the procedure whose code runs from START
+to END: a list of entries (FILE LINE PC . NEXT-PC), one for each
+source position."
+  (or (hashv-ref *line-tables* start)
+      (let ((table
+             (let loop ((sources (find-program-sources start)) (acc '()))
+               (if (null? sources)
+                   (reverse! acc)
+                   (let* ((source (car sources))
+                          (next (if (pair? (cdr sources))
+                                    (source-post-pc (cadr sources))
+                                    end)))
+                     (loop (cdr sources)
+                           (cons (cons* (source-file source)
+                                        (source-line source)
+                                        (source-post-pc source)
+                                        next)
+                                 acc)))))))
+        (hashv-set! *line-tables* start table)
+        table)))
+
 (define (code-line-ranges code file line)
   "Returns the instruction ranges, as a list of absolute (START . END)
 pairs, of the code at LINE of FILE in the procedure whose code begins
@@ -339,24 +368,13 @@ at LINE.  (Lines with no code are not moved to the next line with
 code: procedures nest, so the next line may belong to another.)"
   (call-with-values (lambda () (code-extent code))
     (lambda (start end)
-      (let* ((sources (if start (find-program-sources start) '()))
-             ;; Each entry is (LINE START . END), for the sources in FILE.
-             (entries
-              (let loop ((sources sources) (acc '()))
-                (if (null? sources)
-                    acc
-                    (let* ((source (car sources))
-                           (next (if (pair? (cdr sources))
-                                     (source-post-pc (cadr sources))
-                                     end)))
-                      (loop (cdr sources)
-                            (if (same-source-file? (source-file source) file)
-                                (cons (cons* (source-line source)
-                                             (source-post-pc source)
-                                             next)
-                                      acc)
-                                acc)))))))
-        (map cdr (filter (lambda (e) (= (car e) line)) entries))))))
+      (if start
+          (filter-map (lambda (entry)
+                        (and (eqv? (cadr entry) line)
+                             (same-source-file? (car entry) file)
+                             (cddr entry)))
+                      (code-line-table start end))
+          '()))))
 
 (define (procedures-at-line file line)
   "Returns a list of (CODE . RANGES) for the compiled procedures in the

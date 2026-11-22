@@ -28,6 +28,7 @@
             gdn-update-backtrace!
             gdn-update-environments!
             gdn-update-traps!
+            gdn-set-source-breakpoints!
             gdn-update-threads!
             gdn-update-modules!
             gdn-set-module-procedures!
@@ -149,6 +150,17 @@
 
 (define (gdn-update-traps! view traps)
   (log! 'traps (length traps)))
+
+(define (gdn-set-source-breakpoints! view breakpoints)
+  (for-each (lambda (bp)
+              (unless (and (vector? bp) (= 4 (vector-length bp))
+                           (integer? (vector-ref bp 0))
+                           (string? (vector-ref bp 1))
+                           (integer? (vector-ref bp 2))
+                           (boolean? (vector-ref bp 3)))
+                (error "Malformed source breakpoint" bp)))
+            breakpoints)
+  (log! 'source-breakpoints breakpoints))
 
 (define (gdn-update-threads! view)
   #t)

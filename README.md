@@ -134,8 +134,11 @@ Pages
   which expressions are evaluated.  Clicking a frame's location shows
   it on the Source page.
 - **Source**: the source of the paused program, which follows it as it
-  pauses.  "Set Breakpoint Here" in the context menu, or F9, sets a
-  breakpoint at the cursor's line.
+  pauses.  The margin shows the line numbers, and a red dot on lines
+  with a breakpoint (a ring if it is switched off).  Clicking a line in
+  the margin sets a breakpoint there, or deletes the one there; F9, or
+  "Toggle Breakpoint" in the context menu, does the same for the
+  cursor's line.
 - **Traps**: the breakpoints and other traps.  Each can be switched off
   and on, or deleted.
 - **Threads**: Guile's threads.

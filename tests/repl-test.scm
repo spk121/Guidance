@@ -557,6 +557,45 @@ INPUT."
                                            *events*)))
   (check "a deleted trap does not fire" (output-contains? "→ 16")))
 
+(define (current-source-breakpoints)
+  "The breakpoints at lines most recently sent to the Source page."
+  (let loop ((events (reverse (events))))
+    (cond
+     ((null? events) #f)
+     ((eq? (car (car events)) 'source-breakpoints) (cadr (car events)))
+     (else (loop (cdr events))))))
+
+(define-test "traps: the Source page is told of line breakpoints"
+  (define file (program "procs.scm"))
+  (define (marks)
+    (map (lambda (bp) (list (vector-ref bp 1) (vector-ref bp 2)
+                            (vector-ref bp 3)))
+         (or (current-source-breakpoints) '())))
+  (define (index-of line)
+    (vector-ref (find (lambda (bp) (= line (vector-ref bp 2)))
+                      (current-source-breakpoints))
+                0))
+  (run-repl
+   (list (load-expression "procs.scm")
+         (request '(wake #f) 'add-source-trap file 2)
+         (request '(wake #f) 'add-proc-trap-by-name "(guile-user)" "square")
+         (request '(wake #f) 'add-source-trap file 5)
+         (checkpoint "both lines are marked, and not the procedure"
+                     (lambda () (equal? (marks) `((,file 2 #t) (,file 5 #t))))
+                     '(wake #f))
+         (lambda ()
+           (push-request! (list 'disable-trap (index-of 2)))
+           '(wake #f))
+         (checkpoint "a disabled breakpoint is marked as such"
+                     (lambda () (equal? (marks) `((,file 2 #f) (,file 5 #t))))
+                     '(wake #f))
+         (lambda ()
+           (push-request! (list 'delete-trap (index-of 5)))
+           '(wake #f))
+         (checkpoint "a deleted breakpoint is unmarked"
+                     (lambda () (equal? (marks) `((,file 2 #f))))
+                     '(quit 0)))))
+
 (define-test "modules: list modules and their procedures"
   (run-repl
    (list (load-expression "procs.scm")

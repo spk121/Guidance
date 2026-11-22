@@ -170,9 +170,10 @@ Phase 2 notes:
 - Backtraces show at most 500 frames.
 - Requests are handled with asyncs blocked, so that a burst of them
   (as from the Modules page) cannot nest and starve the program.
-- Not yet: highlighting breakpoint lines in the Source page.  Nested
-  procedures can have line breakpoints, but the Modules page lists
-  only procedures bound at a module's top level.
+- Breakpoint lines are marked in the Source page's margin (see the
+  alpha bugs below).  Nested procedures can have line breakpoints, but
+  the Modules page lists only procedures bound at a module's top
+  level.
 
 ### Phase 3: README features
 
@@ -595,8 +596,28 @@ The open one is last in this list.
         and the outermost frame, which is the top level of the program
         being loaded, as "(top level)".  The REPL test checks the
         latter.
-- [ ] **Source page.**  No line numbers, and no mark on lines that
-      have breakpoints (already noted under Phase 2).
+- [x] **Source page.**  No line numbers, and no mark on lines that
+      have breakpoints (already noted under Phase 2).  Fixed:
+      - The text view has a left margin (a `GtkDrawingArea` given to
+        `gtk_text_view_set_gutter`) with the line numbers, dimmed, in
+        the text's font, and a red disc on lines with a breakpoint, or
+        a red ring when it is disabled.  It is redrawn as the text
+        scrolls or is laid out.
+      - The REPL keeps the trap index, file and line of each
+        breakpoint at a line, and sends them with every update of the
+        Traps page (`gdn-set-source-breakpoints!`), so the marks follow
+        breakpoints set, disabled, or deleted from any page.  The
+        REPL test checks what is sent.
+      - Clicking a line in the margin sets a breakpoint there, or
+        deletes the one there.  F9 and the context menu, now "Toggle
+        Breakpoint", do the same for the cursor's line; the GUI test
+        checks that F9 deletes.
+      - Setting a breakpoint while paused took several seconds, which
+        the marks made obvious: finding the code at a line decoded the
+        line table of every loaded procedure, twice.  Each table is
+        now decoded once and kept (`code-line-table` in `(gdn lib)`),
+        so after the first breakpoint it takes a fraction of a second;
+        line steps use the same tables.
 - [ ] **Threads page.**  Rows read `#<thread 139940890986176
       (7f46c934c6c0)>` with an emoji as ID.  Nothing says which is the
       program's thread, and Guidance's own threads are listed.

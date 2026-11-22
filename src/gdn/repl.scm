@@ -289,10 +289,28 @@ scope.  Errors are reported, but do not change the mode."
       (set! *last-module-list* modules)
       (gdn-update-modules! *gdn-module-view* modules))))
 
+(define *line-breakpoints* (make-hash-table))
+
+(define (line-breakpoints)
+  "Returns the breakpoints at lines that still exist, as a list of
+vectors #(INDEX FILE LINE ENABLED?)."
+  (filter-map (lambda (idx)
+                (let ((where (hashv-ref *line-breakpoints* idx)))
+                  (and where
+                       (vector idx (car where) (cdr where)
+                               (trap-enabled? idx)))))
+              (list-traps)))
+
+(define (refresh-traps!)
+  "Sends the trap list to the Traps page, and the breakpoints at lines
+to the Source page."
+  (gdn-update-traps! *gdn-trap-view* (list-traps))
+  (gdn-set-source-breakpoints! *gdn-source-view* (line-breakpoints)))
+
 (define (refresh-views!)
   "Updates the information pages of the GUI."
   (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
-  (gdn-update-traps! *gdn-trap-view* (list-traps))
+  (refresh-traps!)
   (gdn-update-threads! *gdn-thread-view*)
   (refresh-modules!))
 
@@ -359,6 +377,7 @@ again.  Otherwise it is Guile's trap, for PROC itself."
                                  (if (*paused*) (*pause-frames*) '()))))
     (set! idx (add-trap! trap (format #f "Breakpoint at ~a:~a"
                                       (basename file) line)))
+    (hashv-set! *line-breakpoints* idx (cons file line))
     (unless (gdn-loaded-code-at-line? file line)
       (format #t "~&No code is loaded at ~a:~a yet.  The breakpoint will \
 take effect if some is.~%" (basename file) line))
@@ -432,7 +451,7 @@ element says what it is."
       ;; program resumes, so leave it alone.
       (when (and (*in-run*) (not (*paused*)))
         (enable-trap-hooks!))
-      (gdn-update-traps! *gdn-trap-view* (list-traps)))))
+      (refresh-traps!))))
 
 (define (get-action)
   "Waits for the operator's next action, handling any requests that

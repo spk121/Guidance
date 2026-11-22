@@ -163,6 +163,25 @@ key shift+F5
 wait_for "Stopped."
 stop_app
 
+# F9 on a line with a breakpoint deletes it.  The Source page learns
+# of the breakpoint from the REPL, which marks it in the margin.
+start "$PROGRAMS/break.scm"
+key F5
+wait_for "[prompt break>]"
+sleep 0.5
+key F9
+wait_for "Trap 0: Breakpoint at break.scm:6"
+sleep 0.5
+key F9
+key F5
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "Break at break.scm:6" 2
+refute "Breakpoint at break.scm:6, at"
+key shift+F5
+wait_for "Stopped."
+stop_app
+
 # Stepping out of the program, and past its last line, lets it finish
 # rather than pausing in the code that runs it.
 start "$PROGRAMS/break.scm"
