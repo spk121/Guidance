@@ -37,15 +37,16 @@ struct _GdnTerminalView
   GtkEntry *     input_entry;
   guint          input_source;
   guint          prompt_source;
-  guint          error_source;
   int            output_fd;
-  int            input_fd; /* The program's output */
-  int            error_fd; /* The program's error output */
+  int            input_fd; /* The program's output and error output */
   /* Bytes read from each stream that end part-way through a UTF-8
    * character, kept until the rest arrives. */
   GByteArray *   input_pending;
   GByteArray *   prompt_pending;
-  GByteArray *   error_pending;
+  /* An escape sequence in the output, until it is complete, and
+   * whether the output is error text. */
+  GString *      escape_partial;
+  gboolean       in_error;
   /* A prompt read so far, until the newline that ends it. */
   GString *      prompt_partial;
   GtkTextMark *  end_mark; /* Stays at the end of the text */
@@ -84,17 +85,13 @@ static gboolean
 poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data);
 static gboolean
 poll_terminal_prompt (gint fd, GIOCondition condition, gpointer user_data);
-static gboolean
-poll_terminal_error (gint fd, GIOCondition condition, gpointer user_data);
 
 static char *read_text (int fd, GByteArray *pending);
 static void  append_text (GdnTerminalView *self,
                           const char *     text,
                           const char *     tag_name);
-static void  drain_stream (GdnTerminalView *self,
-                           int              fd,
-                           GByteArray *     pending,
-                           const char *     tag_name);
+static void  append_program_text (GdnTerminalView *self, const char *text);
+static void  drain_stream (GdnTerminalView *self, int fd, GByteArray *pending);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -145,7 +142,8 @@ gdn_terminal_view_init (GdnTerminalView *self)
   self->input_pending = g_byte_array_new ();
   self->prompt_pending = g_byte_array_new ();
   self->prompt_partial = g_string_new (NULL);
-  self->error_pending = g_byte_array_new ();
+  self->escape_partial = g_string_new (NULL);
+  self->in_error = FALSE;
   {
     GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->text_view);
     GtkTextIter    end;
@@ -192,7 +190,6 @@ void
 gdn_terminal_view_connect_ports (GdnTerminalView *self,
                                  int              input_fd,
                                  int              prompt_fd,
-                                 int              error_fd,
                                  int              output_fd)
 {
   /* The program's output is read when the GTK thread has nothing else
@@ -205,12 +202,8 @@ gdn_terminal_view_connect_ports (GdnTerminalView *self,
   self->prompt_source =
       g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, prompt_fd, G_IO_IN,
                           poll_terminal_prompt, self, NULL);
-  self->error_source =
-      g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, error_fd, G_IO_IN,
-                          poll_terminal_error, self, NULL);
   self->output_fd = output_fd;
   self->input_fd = input_fd;
-  self->error_fd = error_fd;
 
   /* A stream that is ready when the GTK thread looks may have been
    * read by drain_stream by the time its handler runs.  The read must
@@ -218,7 +211,6 @@ gdn_terminal_view_connect_ports (GdnTerminalView *self,
    * GTK thread. */
   g_unix_set_fd_nonblocking (input_fd, TRUE, NULL);
   g_unix_set_fd_nonblocking (prompt_fd, TRUE, NULL);
-  g_unix_set_fd_nonblocking (error_fd, TRUE, NULL);
 }
 
 void
@@ -228,8 +220,6 @@ gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *self)
   self->input_source = 0;
   g_source_remove (self->prompt_source);
   self->prompt_source = 0;
-  g_source_remove (self->error_source);
-  self->error_source = 0;
   self->output_fd = STDOUT_FILENO;
 }
 
@@ -467,22 +457,7 @@ poll_terminal_text (gint                       fd,
 
   if (text == NULL)
     return G_SOURCE_REMOVE;
-  append_text (self, text, NULL);
-  g_free (text);
-  return G_SOURCE_CONTINUE;
-}
-
-gboolean
-poll_terminal_error (gint                       fd,
-                     G_GNUC_UNUSED GIOCondition condition,
-                     gpointer                   user_data)
-{
-  GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
-  char *           text = read_text (fd, self->error_pending);
-
-  if (text == NULL)
-    return G_SOURCE_REMOVE;
-  append_text (self, text, "error");
+  append_program_text (self, text);
   g_free (text);
   return G_SOURCE_CONTINUE;
 }
@@ -500,8 +475,7 @@ poll_terminal_prompt (gint                       fd,
 
   /* The REPL prints its prompt after the output that goes before it,
    * but by another stream.  Show that output first. */
-  drain_stream (self, self->input_fd, self->input_pending, NULL);
-  drain_stream (self, self->error_fd, self->error_pending, "error");
+  drain_stream (self, self->input_fd, self->input_pending);
 
   /* Read from the port */
   buf = read_text (fd, self->prompt_pending);
@@ -663,10 +637,7 @@ read_text (int fd, GByteArray *pending)
  * It stops after a few megabytes, in case another thread of the
  * program is printing without end. */
 static void
-drain_stream (GdnTerminalView *self,
-              int              fd,
-              GByteArray *     pending,
-              const char *     tag_name)
+drain_stream (GdnTerminalView *self, int fd, GByteArray *pending)
 {
   for (int i = 0; i < 64; i++)
     {
@@ -678,9 +649,104 @@ drain_stream (GdnTerminalView *self,
       text = read_text (fd, pending);
       if (text == NULL)
         break;
-      append_text (self, text, tag_name);
+      append_program_text (self, text);
       g_free (text);
     }
+}
+
+/* Applies the escape sequence SEQ, which is complete: an ECMA-48
+ * control sequence, ESC [ PARAMETERS FINAL.  Guidance's error port
+ * puts error text between ESC [ 31 m (red) and ESC [ 39 m (the default
+ * color), so red is taken to mean error text, and the default color or
+ * a reset to mean the end of it.  Other sequences are dropped. */
+static void
+apply_escape (GdnTerminalView *self, const char *seq, size_t len)
+{
+  if (len < 3 || seq[1] != '[' || seq[len - 1] != 'm')
+    return;
+
+  char * params = g_strndup (seq + 2, len - 3);
+  char **codes = g_strsplit (params, ";", -1);
+  for (char **code = codes; *code != NULL; code++)
+    {
+      int n = (**code == '\0') ? 0 : atoi (*code);
+      if (n == 31)
+        self->in_error = TRUE;
+      else if (n == 0 || n == 39)
+        self->in_error = FALSE;
+    }
+  g_strfreev (codes);
+  g_free (params);
+}
+
+/* The length of the escape sequence at the start of TEXT, which begins
+ * with ESC, or 0 if TEXT ends before the sequence does.  A sequence
+ * is ESC [, parameter and intermediate bytes, and a final byte; any
+ * other escape is taken to be ESC and one character. */
+static size_t
+escape_length (const char *text)
+{
+  if (text[1] == '\0')
+    return 0;
+  if (text[1] != '[')
+    return 2;
+  for (size_t i = 2; text[i] != '\0'; i++)
+    if ((unsigned char) text[i] >= 0x40 && (unsigned char) text[i] <= 0x7e)
+      return i + 1;
+    else if ((unsigned char) text[i] < 0x20 || (unsigned char) text[i] > 0x7e)
+      /* Not a control sequence after all: drop just the ESC [. */
+      return 2;
+  return 0;
+}
+
+/* The longest escape sequence kept while waiting for its end. */
+#define MAX_ESCAPE_LEN 64
+
+/* Shows TEXT, which came from the program's output, with error text
+ * as such, and without escape sequences. */
+static void
+append_program_text (GdnTerminalView *self, const char *text)
+{
+  char *      joined = NULL;
+  const char *p;
+
+  /* An escape sequence that the last read cut short. */
+  if (self->escape_partial->len > 0)
+    {
+      joined = g_strconcat (self->escape_partial->str, text, NULL);
+      g_string_truncate (self->escape_partial, 0);
+      text = joined;
+    }
+
+  p = text;
+  while (*p != '\0')
+    {
+      const char *esc = strchr (p, '\033');
+      if (esc == NULL)
+        {
+          append_text (self, p, self->in_error ? "error" : NULL);
+          break;
+        }
+      if (esc > p)
+        {
+          char *piece = g_strndup (p, esc - p);
+          append_text (self, piece, self->in_error ? "error" : NULL);
+          g_free (piece);
+        }
+
+      size_t len = escape_length (esc);
+      if (len == 0)
+        {
+          /* Keep the start of the sequence for the next read, unless it
+           * is too long to be one. */
+          if (strlen (esc) < MAX_ESCAPE_LEN)
+            g_string_assign (self->escape_partial, esc);
+          break;
+        }
+      apply_escape (self, esc, len);
+      p = esc + len;
+    }
+  g_free (joined);
 }
 
 static gboolean

@@ -182,6 +182,18 @@ key shift+F5
 wait_for "Stopped."
 stop_app
 
+# Output and error output appear in the order they were written, and
+# escape sequences are not shown.
+start "$PROGRAMS/interleave.scm"
+key F5
+wait_for "plain bold plain"
+tr '\r\n' '..' < "$TRANSCRIPT" | sed 's/\.\.*/./g' |
+    grep -q "out 1.err 1.out 2.err 2.out 3.err 3.out 4.err 4.out 5.err 5" ||
+    fail "output and error output are out of order"
+echo "ok: in order"
+refute ";;; compiling"
+stop_app
+
 # Stepping out of the program, and past its last line, lets it finish
 # rather than pausing in the code that runs it.
 start "$PROGRAMS/break.scm"

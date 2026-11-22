@@ -26,7 +26,9 @@
 #include "guidance-thread-view.h"
 #include "guidance-trap-info.h"
 #include "guidance-trap-view.h"
+#include <errno.h>
 #include <fcntl.h>
+#include <string.h>
 #include <termios.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -55,8 +57,8 @@ struct _GdnLisp
   int input_fd;
   SCM output_port;     /* A substitute `current-output-port` */
   SCM output_port_var; /* A Guile variable that holds output_port */
-  int input_error_fd;  /* Receives data from Guile's error ports */
-  SCM error_port;      /* A substitute `current-error-port` */
+  SCM error_port;      /* A substitute `current-error-port`, which
+                        * writes marked text to INPUT_FD's terminal */
   SCM error_port_var;  /* A Guile variable that hold the error port */
   int input_prompt_fd; /* Receives data from the Guile prompt port */
   SCM prompt_port;     /* A new port for use with REPL prompts */
@@ -109,6 +111,7 @@ static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
 static int  unix_pty_fd_new (void);
 static void redirect_standard_fds (GdnLisp *self);
 static SCM  port_from_unix_input_fd (int fd);
+static SCM  marked_port_from_unix_input_fd (int fd);
 static SCM  port_from_unix_output_fd (int fd);
 static void eval_resource (const char *path, const char *file_name);
 static void mark_async_poll (GdnLisp *self);
@@ -188,9 +191,11 @@ gdn_lisp_init (GdnLisp *self)
   self->output_port = port_from_unix_input_fd (self->input_fd);
   scm_set_current_output_port (self->output_port);
 
+  /* Errors go to the same pseudoterminal as the output, so that the
+   * Terminal shows the two in the order they were written.  What
+   * Guile's error port writes is marked, to be shown as errors. */
   self->original_error_port = scm_current_error_port ();
-  self->input_error_fd = unix_pty_fd_new ();
-  self->error_port = port_from_unix_input_fd (self->input_error_fd);
+  self->error_port = marked_port_from_unix_input_fd (self->input_fd);
   scm_set_current_error_port (self->error_port);
 
   /* Note that we are combining Guile's error and warning ports. */
@@ -278,13 +283,6 @@ gdn_lisp_get_input_fd (GdnLisp *self)
 {
   g_assert (GDN_IS_LISP (self));
   return self->input_fd;
-}
-
-int
-gdn_lisp_get_input_error_fd (GdnLisp *self)
-{
-  g_assert (GDN_IS_LISP (self));
-  return self->input_error_fd;
 }
 
 int
@@ -614,7 +612,8 @@ redirect_standard_fds (GdnLisp *self)
 
   redirect_fd_to_pty (self->output_fd, O_RDONLY, STDIN_FILENO);
   redirect_fd_to_pty (self->input_fd, O_WRONLY, STDOUT_FILENO);
-  redirect_fd_to_pty (self->input_error_fd, O_WRONLY, STDERR_FILENO);
+  /* The same terminal as the output, as in a terminal emulator. */
+  redirect_fd_to_pty (self->input_fd, O_WRONLY, STDERR_FILENO);
 }
 
 /*
@@ -658,6 +657,76 @@ port_from_unix_input_fd (int master_fd)
     g_error ("Could not open pseudoterminal %s", name);
   return set_port_utf8 (
       scm_fdopen (scm_from_int (slave_fd), scm_from_utf8_string ("w0")));
+}
+
+/* What Guile's error port writes is put between these: the ECMA-48
+ * codes for red text and for the default color, which the Terminal
+ * takes to mean error text. */
+#define ERROR_START "\033[31m"
+#define ERROR_END "\033[39m"
+
+static scm_t_port_type *marked_port_type;
+
+/* Writes all of DATA to FD, unless it can't be written. */
+static void
+write_all (int fd, const char *data, size_t len)
+{
+  while (len > 0)
+    {
+      ssize_t n = write (fd, data, len);
+      if (n < 0 && errno == EINTR)
+        continue;
+      if (n <= 0)
+        return;
+      data += n;
+      len -= n;
+    }
+}
+
+static size_t
+marked_port_write (SCM port, SCM src, size_t start, size_t count)
+{
+  int    fd = (int) SCM_STREAM (port);
+  size_t len = strlen (ERROR_START) + count + strlen (ERROR_END);
+  char * buf = g_malloc (len);
+
+  /* One write, so that it is not split by output from another
+   * thread. */
+  memcpy (buf, ERROR_START, strlen (ERROR_START));
+  memcpy (buf + strlen (ERROR_START),
+          (const char *) SCM_BYTEVECTOR_CONTENTS (src) + start, count);
+  memcpy (buf + strlen (ERROR_START) + count, ERROR_END, strlen (ERROR_END));
+  write_all (fd, buf, len);
+  g_free (buf);
+  return count;
+}
+
+/*
+ * This procedure creates a write-only, unbuffered Guile port that
+ * writes to the terminal of MASTER_FD, marking all it writes as error
+ * text.
+ */
+static SCM
+marked_port_from_unix_input_fd (int master_fd)
+{
+  char *name;
+  int   slave_fd;
+  SCM   port;
+
+  if (marked_port_type == NULL)
+    marked_port_type =
+        scm_make_port_type ("gdn-error-port", NULL, marked_port_write);
+
+  name = ptsname (master_fd);
+  if (name == NULL)
+    g_error ("Could not acquire slave pseudoterminal device for FD #%d",
+             master_fd);
+  slave_fd = open (name, O_WRONLY | O_NOCTTY);
+  if (slave_fd < 0)
+    g_error ("Could not open pseudoterminal %s", name);
+  port = scm_c_make_port (marked_port_type, SCM_WRTNG, (scm_t_bits) slave_fd);
+  scm_setvbuf (port, scm_from_utf8_symbol ("none"), SCM_UNDEFINED);
+  return set_port_utf8 (port);
 }
 
 /*

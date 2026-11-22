@@ -309,7 +309,6 @@ gdn_application_window_init (GdnApplicationWindow *self)
   gdn_terminal_view_connect_ports (self->terminal_view,
                                    gdn_lisp_get_input_fd (self->lisp),
                                    gdn_lisp_get_input_prompt_fd (self->lisp),
-                                   gdn_lisp_get_input_error_fd (self->lisp),
                                    gdn_lisp_get_output_fd (self->lisp));
   g_signal_connect (self->terminal_view, "entry", G_CALLBACK (handle_entry),
                     self);

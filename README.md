@@ -127,7 +127,10 @@ shows which mode it is in.
 Pages
 -----
 
-- **Terminal**: the REPL, and the program's input and output.
+- **Terminal**: the REPL, and the program's input and output.  Error
+  output is shown in another color; so is text that the program colors
+  red.  Other terminal escape sequences, such as colors and cursor
+  movement, are dropped.
 - **Peek**: entries logged by `_pk_`; see below.
 - **Backtrace**: the stack of the paused program, innermost first.
   Clicking a frame shows its variables, and makes it the frame in
@@ -187,7 +190,9 @@ optimizations turned off, so that variables keep their names and
 stepping follows the lines as written.  It keeps what it compiles in a
 cache of its own, `$XDG_CACHE_HOME/guidance` or `~/.cache/guidance`,
 apart from Guile's.  A variable bound to the result of a call becomes
-visible one step after the line that binds it.
+visible one step after the line that binds it.  Guile's notes about
+compiling (";;; compiling ...") are not shown, but the compiler's
+warnings are.
 
 The Peek log
 ------------
@@ -226,6 +231,3 @@ Known limitations
   assigning to them does not change the program.
 - Breakpoints at lines match exact lines.  A line with no code, such
   as a blank line, never pauses the program.
-- The terminal shows the program's output and error output as they
-  arrive, so their order can differ slightly from the order they were
-  written in.

@@ -632,6 +632,26 @@ INPUT."
    (program "thread-list.scm"))
   (check "the program finishes" (output-contains? "threads done")))
 
+(define-test "run: the compiler's notes are hidden, its warnings kept"
+  ;; A file of a new name, so that it is compiled afresh.
+  (define dir (string-append (or (getenv "TMPDIR") "/tmp")
+                             "/guidance-test-" (number->string (getpid))))
+  (define file (string-append dir "/fresh.scm"))
+  (unless (file-exists? dir) (mkdir dir))
+  (call-with-output-file file
+    (lambda (port)
+      (display "(define (f) (no-such-procedure))\n" port)
+      (display "(display \"fresh ran\")\n(newline)\n" port)))
+  (run-repl (list '(run #f) '(quit 0)) file)
+  (delete-file file)
+  (rmdir dir)
+  (check "the program runs" (output-contains? "fresh ran"))
+  (check "no notes" (not (or (output-contains? ";;; compiling")
+                             (output-contains? ";;; compiled")
+                             (output-contains? "auto-compilation"))))
+  (check "the warning is shown"
+         (output-contains? "possibly unbound variable `no-such-procedure'")))
+
 (define-test "modules: list modules and their procedures"
   (run-repl
    (list (load-expression "procs.scm")

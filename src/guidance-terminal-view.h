@@ -30,7 +30,6 @@ G_DECLARE_FINAL_TYPE (
 void gdn_terminal_view_connect_ports (GdnTerminalView *self,
                                       int              input_fd,
                                       int              prompt_fd,
-                                      int              error_fd,
                                       int              output_fd);
 void gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *view);
 void gdn_terminal_view_set_port_mode (GdnTerminalView *view, gboolean flag);

@@ -42,6 +42,7 @@
   #:use-module (gdn ports)
   #:use-module (gdn widgets)
   #:use-module (ice-9 format)
+  #:use-module ((rnrs io ports) #:select (make-custom-textual-output-port))
   #:use-module (ice-9 suspendable-ports)
   #:use-module (srfi srfi-1)
   #:use-module (system base compile)
@@ -1328,6 +1329,56 @@ command arrives.  Returns the exit status."
         (else
          (loop))))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; COMPILER NOTES
+
+;; The lines that Guile prints, by the warning port, when it compiles
+;; a file automatically.  They say nothing about the program, and
+;; their cache paths are long.  The compiler's warnings are kept.
+(define %compiler-note-prefixes
+  '(";;; compiling "
+    ";;; compiled "
+    ";;; note: auto-compilation is enabled"
+    ";;;       or pass the --no-auto-compile argument"
+    ";;; note: source file "
+    ";;;       newer than compiled "))
+
+(define (compiler-note? line)
+  (any (lambda (prefix) (string-prefix? prefix line))
+       %compiler-note-prefixes))
+
+(define (compiler-note-filter port)
+  "Returns a port that passes what is written to it on to PORT, except
+the compiler's notes.  A line is held back only while it may still turn
+out to be a note: until its newline, if it begins with \";;; \"."
+  (define pending "")
+  (define (maybe-note? text)
+    (if (< (string-length text) 4)
+        (string-prefix? text ";;; ")
+        (string-prefix? ";;; " text)))
+  (define (emit! text)
+    (unless (string-null? text)
+      (display text port)))
+  (make-custom-textual-output-port
+   "warnings"
+   (lambda (str start count)
+     (let loop ((text (string-append pending
+                                     (substring str start (+ start count)))))
+       (set! pending "")
+       (let ((newline (string-index text #\newline)))
+         (cond
+          (newline
+           (let ((line (substring text 0 (1+ newline))))
+             (unless (compiler-note? line)
+               (emit! line))
+             (loop (substring text (1+ newline)))))
+          ((maybe-note? text)
+           (set! pending text))
+          (else
+           (emit! text)))))
+     count)
+   #f #f #f))
+
 (define (gdn-top-repl)
   "Kick off the REPL for Guidance."
   ;; Note that there is no signal handler here, because we handle
@@ -1337,6 +1388,8 @@ command arrives.  Returns the exit status."
   ;; Make the trap procedures, like add-trap-at-procedure-call!,
   ;; available to the operator.
   (module-use! (current-module) (resolve-interface '(system vm trap-state)))
+  ;; Warnings go where errors do, without the compiler's notes.
+  (current-warning-port (compiler-note-filter (current-error-port)))
   (compile-for-debugging!)
   (apply-command-line! (cdr (command-line)))
   (repl-welcome)

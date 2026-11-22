@@ -62,7 +62,6 @@ void gdn_lisp_run (GdnLisp *self);
 
 SCM  gdn_lisp_get_default_thread (GdnLisp *lisp);
 int  gdn_lisp_get_input_fd (GdnLisp *self);
-int  gdn_lisp_get_input_error_fd (GdnLisp *self);
 int  gdn_lisp_get_input_prompt_fd (GdnLisp *self);
 int  gdn_lisp_get_output_fd (GdnLisp *self);
 SCM  gdn_lisp_to_scm (GdnLisp *self);

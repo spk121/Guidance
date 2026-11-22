@@ -129,8 +129,9 @@ Phase 1 notes:
   (`tests/stubs`), and `tests/gui-smoke.sh`, which drives the real app
   on Xvfb using a terminal transcript (`GUIDANCE_TRANSCRIPT`).  The
   smoke test is skipped if Xvfb or xdotool is missing.
-- Known cosmetic issue: output and error text arrive through separate
-  pseudoterminals, so their relative order in the terminal can vary.
+- Output and error text once arrived through separate
+  pseudoterminals, so their relative order in the terminal could vary.
+  They now share one (see the alpha bugs below).
 
 ### Phase 2: Finish the panels
 
@@ -637,14 +638,37 @@ The open one is last in this list.
       - The emoji column, and `guidance-emoji.c` with it, are gone.
       - The REPL test checks the rows for a program with a finished
         thread and a running one.
-- [ ] **Compiler chatter and ordering in the Terminal.**  The first
+- [x] **Compiler chatter and ordering in the Terminal.**  The first
       run of each file prints ";;; note: auto-compilation is enabled
       ...", ";;; compiling ..." and ";;; compiled ..." with long cache
       paths.  Because output and errors use separate pseudoterminals
       (noted under Phase 1), ";;; compiled" can arrive after "Break
       at", an error message after the `error>` prompt, and in one
       run a thread's backtrace landed in the middle of a line.  Hide
-      the compiler notes, and merge the two streams in order.
+      the compiler notes, and merge the two streams in order.  Fixed:
+      - The REPL's warning port is now a filter on the error port
+        (`compiler-note-filter` in `(gdn repl)`) that drops the lines
+        Guile prints when it compiles a file automatically: the
+        auto-compilation note, ";;; compiling", ";;; compiled", and
+        "source file ... newer than compiled".  It holds back a line
+        only while it may still be one of those, that is, until its
+        newline if it starts with ";;; ".  The compiler's warnings
+        are kept.  The REPL test compiles a new file with an unbound
+        variable, and checks.
+      - Output and error output, from Guile's ports and from file
+        descriptors 1 and 2, now go to one pseudoterminal, so the
+        Terminal shows them in the order they were written.
+      - To still show errors as such, Guile's error port is a port
+        type of its own (`gdn-error-port`, in `guidance-lisp.c`) that
+        writes each piece of text, in one write, between the ECMA-48
+        codes for red and for the default color.  The Terminal takes
+        red to mean error text, and drops the escape sequences, its
+        own and any the program prints, keeping one that a read cuts
+        short until the rest arrives.  So text that a program colors
+        red is shown as error text too.
+      - The GUI test runs a program that alternates output and error
+        output, and checks the order, and that an escape sequence of
+        the program's is not shown.
 - [ ] **Program output is not monospaced.**  Only echoed input and
       error text get the monospace tag.
 - [ ] **Startup warnings.**  On Guile 3.0.9 Guidance prints
