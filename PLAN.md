@@ -877,6 +877,15 @@ since.  Everything below was reproduced in the running application.
 Three problems are blockers.  The first is new since Phase 5, and
 alone is reason not to release 0.2.0 as it is.
 
+To be sure that none of this came from stale compiled files,
+`~/.cache/guidance` and `~/.cache/guile` were then both deleted,
+Guidance was built again from nothing, and every blocker and P1 item
+was tried again.  All of them were still there.  The timings below
+are from that second pass.
+
+Each item now has a test, marked as a known failure: see "Tests for
+these" at the end of this phase.
+
 #### Blockers
 
 - [ ] **The program and the prompt run in Guidance's own module.**
@@ -923,13 +932,24 @@ alone is reason not to release 0.2.0 as it is.
           (go)
 
       prints 1, 10, 20 in Guile, and in Guidance when continued from
-      the break.  Stepped with F10 it prints 1, `#<unspecified>`, 20,
-      three runs of three; with F11, 1, 10, `#<unspecified>`.  An
-      escape is affected too: with F11,
+      the break.  Stepped with F10 it printed 1, `#<unspecified>`, 20
+      in three runs of three, and 1, `#<unspecified>`,
+      `#<unspecified>` after the caches were cleared; with F11 it
+      printed 1, 10, `#<unspecified>` once and the right values once.
+      An escape is affected too: with F11,
       `(call/cc (lambda (k) (for-each (lambda (x) (when (> x 2) (k
-      x))) '(1 2 3 4)) 'none))` gives `#<unspecified>` instead of 3.
-      Nothing is reported; the program just carries on with the wrong
-      value.
+      x))) '(1 2 3 4)) 'none))`, passed straight to a procedure, gives
+      `#<unspecified>` instead of 3.  Nothing is reported; the program
+      just carries on with the wrong value.
+
+      Two things narrow it down.  It needs the continuation's value to
+      go straight to a call, as in `(display (call/cc ...))`: with the
+      value bound first, `(let ((v (call/cc ...))) (display v))`, the
+      same program was right every time.  And it depends on the state
+      of the process: in the GUI, where each try is a new process, F10
+      went wrong every time, while in the REPL test, which runs many
+      programs in one process, it went wrong once in six tries, on the
+      first.
 
       Likely cause, not confirmed: `add-step-trap!` pauses from the
       abort hook (`(handler f #f)`), which Guile runs while the values
@@ -979,16 +999,15 @@ alone is reason not to release 0.2.0 as it is.
       does still work.  Two separate causes:
       - *Step Into through library code that makes many calls.*  The
         apply hook looks up debugging information for every procedure
-        entered.  F11 on a line that pretty-prints 3,000 numbers into
-        a string had not finished after 120 s; F11 into a
-        `(load "helper.scm")` of three lines took 135 s.  The same
-        lines take a fraction of a second with F10.  Remember the
-        answer per code address, so that each procedure is looked up
-        once.
+        entered.  F11 through a `pretty-print` of 3,000 numbers took
+        12.8 s, against 0.28 s with F10; F11 into a
+        `(load "helper.scm")` of three lines took 62 s, and 135 s
+        when the file also had to be compiled.  Remember the answer
+        per code address, so that each procedure is looked up once.
       - *Step Over a line that recurses deeply.*  F10 over
         `(length (map (lambda (i) (number->string i)) (iota 30000)))`
-        took 48 s, and with 300,000 elements had not finished after
-        two minutes; F10 over `(fib 25)`, a quarter of a million
+        took 48 s, and 51 s after the caches were cleared, and with
+        300,000 elements had not finished after two minutes; F10 over `(fib 25)`, a quarter of a million
         calls but never deep, took 1.1 s.  Guile's `map` is not
         tail-recursive, so the cost seems to grow with the depth of
         the stack while an instruction hook is installed.  Consider
@@ -1043,6 +1062,50 @@ alone is reason not to release 0.2.0 as it is.
   line, though nothing is paused there.
 - The breakpoint mark in the Source page's margin is a thin bar,
   easy to miss.
+
+#### Tests for these
+
+Each blocker and P1 item has a test that fails today.  So that the
+suite still passes, and still says when something else breaks, they
+are marked as known failures: a failing check is reported as XFAIL
+and not counted.  When a fault is fixed, its test passes, which is
+reported as XPASS and does fail the run, so that the test is moved
+among the ordinary ones.  `define-known-failure` in
+`tests/repl-test.scm` and `known_failure` in `tests/gui-smoke.sh` do
+this; each names the item above that it belongs to.
+
+| Item | Test | Where |
+|------|------|-------|
+| Guidance's own module | `prompt_module`, `clashing_names` | GUI |
+| Continuations under steps | `step_over_continuation` | GUI |
+| | "compare: a continuation called again", "compare: leaving a loop by a continuation" | REPL, intermittent |
+| Messages to the program's ports | "ports: a pause while output goes to a string", "ports: a program that changes the output port" | REPL |
+| Slow steps | "speed: Step Into a line that calls Guile's libraries a lot", "speed: Step Over a line that recurses deeply" | REPL |
+| Error output of subprocesses | `subprocess_error_output` | GUI |
+| Source page at startup | `source_at_startup` | GUI |
+| Threads after Stop | "stop: Stop ends the threads the program started" | REPL |
+
+Notes:
+
+- The two REPL tests of continuations are marked intermittent
+  (`define-intermittent-failure`): in one process the fault shows
+  only now and then, so their passing is not news, and they have to
+  be made ordinary tests by hand once it is fixed.  The GUI test has
+  the fault every time.
+- The module fault cannot be tested in the REPL test, which loads
+  Guidance's modules from files and so never has it.
+- The two speed tests give a step two seconds, then stop the program,
+  so they cost four seconds while they fail.
+- Not tested: a program that closes its output port, which would take
+  the test's own port with it.
+- Two ordinary tests were added as well, and pass: "compare: stepping
+  does not change what a program prints", which runs
+  `tests/programs/step-compare.scm`, 22 lines from as many features
+  of the language, straight through and under each of the four kinds
+  of step; and "speed: Step Over a line that calls Guile's libraries
+  a lot".
+- The GUI test takes about 85 s now, up from 45 s: each known failure
+  waits up to ten seconds for what does not come.
 
 #### Checked and working in this review
 

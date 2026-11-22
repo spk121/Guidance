@@ -77,6 +77,8 @@ stop_app () {
 finish () {
     kill "$APP" 2>/dev/null
     wait "$APP" 2>/dev/null
+    # In a known failure, which runs in a subshell: see known_failure.
+    [ -n "${KNOWN_FAILURE:-}" ] && exit "$1"
     echo "--- transcript ---"; cat "$TRANSCRIPT"
     echo "--- log ---"; cat "$LOG"
     rm -rf "$WORK"
@@ -88,6 +90,24 @@ fail () {
     finish 1
 }
 
+# How long wait_for waits, in tenths of a second.
+WAIT_TICKS=300
+
+# known_failure PLAN-ITEM SCENARIO: runs the function SCENARIO, which
+# tests a fault that is known and not yet fixed, described by PLAN-ITEM
+# of PLAN.md.  That it fails is expected.  If it passes, the fault has
+# been fixed, and the scenario should join the tests proper; that
+# fails the run, so that it is noticed.  The scenario runs in a
+# subshell, and waits less long for what it expects.
+known_failure () {
+    if (KNOWN_FAILURE=1; WAIT_TICKS=100; "$2") > "$WORK/known" 2>&1; then
+        cat "$WORK/known"
+        fail "known failure '$2' ($1) now passes: make it a test proper"
+    fi
+    grep -E "^(===|FAIL)" "$WORK/known"
+    echo "xfail: $2 (PLAN.md: $1)"
+}
+
 # wait_for TEXT [COUNT]: waits until TEXT appears COUNT times.
 wait_for () {
     count=${2:-1}
@@ -95,7 +115,7 @@ wait_for () {
     while [ "$(grep -cF -- "$1" "$TRANSCRIPT")" -lt "$count" ]; do
         kill -0 "$APP" 2>/dev/null || fail "Guidance exited while waiting for '$1'"
         i=$((i + 1))
-        [ $i -gt 300 ] && fail "timed out waiting for '$1'"
+        [ $i -gt "$WAIT_TICKS" ] && fail "timed out waiting for '$1'"
         sleep 0.1
     done
     echo "ok: $1"
@@ -447,6 +467,89 @@ wait_for "[prompt repl>]" 2
 type_line "(+ 1 1)"
 wait_for "→ 2"
 stop_app
+
+################################################################
+# Known failures: faults found by the review recorded in PLAN.md as
+# Phase 6, and not yet fixed.  See known_failure.
+
+# The operator's expressions, and the program, belong in (guile-user).
+prompt_module () {
+    start
+    type_line "(module-name (current-module))"
+    wait_for "→ (guile-user)"
+    stop_app
+}
+known_failure "Phase 6, The program and the prompt run in Guidance's own module" \
+              prompt_module
+
+# A program may use any names, also ones that Guidance uses inside.
+clashing_names () {
+    start "$PROGRAMS/clash.scm"
+    key F5
+    wait_for "clash program done"
+    wait_for "[prompt repl>]" 2
+    key F5
+    wait_for "clash program done" 2
+    wait_for "[prompt repl>]" 3
+    refute "Guile has exited"
+    stop_app
+}
+known_failure "Phase 6, The program and the prompt run in Guidance's own module" \
+              clashing_names
+
+# The values that reenter.scm displays: lines that are a number, or
+# an unspecified value where one should be.
+displayed_values () {
+    tr -d '\r' < "$TRANSCRIPT" | grep -E '^([0-9]+|#<.*)$' | tr '\n' ' '
+}
+
+# step_to_end KEY TEXT: presses KEY at each pause until TEXT appears.
+step_to_end () {
+    i=0
+    until grep -qF -- "$2" "$TRANSCRIPT"; do
+        kill -0 "$APP" 2>/dev/null || fail "Guidance exited while stepping"
+        i=$((i + 1))
+        [ $i -gt 100 ] && fail "stepping did not reach '$2'"
+        key "$1"
+        sleep 0.2
+    done
+}
+
+# Stepping over a line that calls a continuation again does not change
+# the value it passes.
+step_over_continuation () {
+    start "$PROGRAMS/reenter.scm"
+    key F5
+    wait_for "[prompt break>]"
+    step_to_end F10 "done"
+    values=$(displayed_values)
+    [ "$values" = "1 10 20 " ] || fail "displayed $values, not 1 10 20"
+    stop_app
+}
+known_failure "Phase 6, Stepping changes what the program computes" \
+              step_over_continuation
+
+# Error output of a subprocess started without a shell is shown.
+subprocess_error_output () {
+    start "$PROGRAMS/subprocess-error.scm"
+    key F5
+    wait_for "subprocess finished"
+    wait_for "from-the-error-stream"
+    stop_app
+}
+known_failure "Phase 6, Error output from system* and pipes is thrown away" \
+              subprocess_error_output
+
+# The program named on the command line is on the Source page from the
+# start, so that a breakpoint can be set before the first run.
+source_at_startup () {
+    start "$PROGRAMS/break.scm"
+    key F9
+    wait_for "Breakpoint at break.scm:"
+    stop_app
+}
+known_failure "Phase 6, The Source page is empty until the program first pauses" \
+              source_at_startup
 
 # Quit, from the menu or with Ctrl+Q, ends Guidance cleanly, also while
 # a program is running.

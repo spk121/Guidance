@@ -35,9 +35,16 @@
 (define *current-test* "")
 
 (define (check description ok?)
-  (format #t "  ~a ~a~%" (if ok? "PASS" "FAIL") description)
-  (unless ok?
-    (set! *failures* (1+ *failures*))))
+  (cond
+   (*in-known-failure*
+    ;; See define-known-failure.
+    (format #t "  ~a ~a~%" (if ok? "pass" "XFAIL") description)
+    (unless ok?
+      (set! *failed-checks* (1+ *failed-checks*))))
+   (else
+    (format #t "  ~a ~a~%" (if ok? "PASS" "FAIL") description)
+    (unless ok?
+      (set! *failures* (1+ *failures*))))))
 
 (define-syntax-rule (define-test name body ...)
   (begin
@@ -47,6 +54,46 @@
       (lambda () body ...)
       (lambda (key . args)
         (check (format #f "no unexpected exception (~a ~s)" key args) #f)))))
+
+;; Known failures.
+;;
+;; A test of a fault that is known and not yet fixed, with the item of
+;; PLAN.md that describes it.  It is run like any other test, but its
+;; failing checks are reported as XFAIL and do not fail the run.  Once
+;; the fault is fixed every check passes, which is reported as XPASS
+;; and does fail the run: the test should then become a define-test.
+(define *in-known-failure* #f)
+(define *failed-checks* 0)
+(define *known-failures* 0)
+
+(define (run-known-failure name plan-item intermittent? thunk)
+  (set! *current-test* name)
+  (format #t "~a~%  (known failure~a; PLAN.md: ~a)~%" name
+          (if intermittent? ", intermittent" "") plan-item)
+  (set! *in-known-failure* #t)
+  (set! *failed-checks* 0)
+  (catch #t
+    thunk
+    (lambda (key . args)
+      (check (format #f "no unexpected exception (~a ~s)" key args) #f)))
+  (set! *in-known-failure* #f)
+  (cond
+   ((positive? *failed-checks*)
+    (set! *known-failures* (1+ *known-failures*)))
+   (intermittent?
+    (format #t "  every check passed this time~%"))
+   (else
+    (format #t "  XPASS every check passed: make this a define-test~%")
+    (set! *failures* (1+ *failures*)))))
+
+(define-syntax-rule (define-known-failure name plan-item body ...)
+  (run-known-failure name plan-item #f (lambda () body ...)))
+
+;; A known failure that does not show every time.  That it passes is
+;; then no news, and does not fail the run.  When the fault is fixed,
+;; this has to be made a define-test by hand.
+(define-syntax-rule (define-intermittent-failure name plan-item body ...)
+  (run-known-failure name plan-item #t (lambda () body ...)))
 
 (define *output* "")
 (define *events* '())
@@ -1175,6 +1222,197 @@ in error mode, and quit once the REPL is back at its prompt."
   (step-through-catch-and-load 'step-into-instruction))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Stepping must not change what the program computes.
 
-(format #t "~%~a failure~:p~%" *failures*)
+(define (program-lines)
+  "The lines that the program printed for comparison: those that begin
+with \"= \".  Guidance's own messages do not."
+  (filter (lambda (line) (string-prefix? "= " line))
+          (string-split *output* #\newline)))
+
+(define (lines-when-stepped file action)
+  "Runs the program FILE, which breaks at its start, sending ACTION at
+every pause until it ends.  Returns its program-lines."
+  (run-repl (cons '(run #f)
+                  ;; As step-until-done, for the many pauses of steps
+                  ;; by expression.
+                  (map (lambda (i)
+                         (lambda ()
+                           (case (last-mode)
+                             ((repl) '(quit 0))
+                             ((error) '(stop #f))
+                             (else (list action #f)))))
+                       (iota 5000)))
+            (program file))
+  (program-lines))
+
+(define (value-lines)
+  "The lines of the output that are a number, or an unspecified value
+where one should be: what reenter.scm and escape.scm print.  A message
+from Guidance can come between such a value and its newline, but that
+still leaves the value on a line of its own."
+  (filter (lambda (line)
+            (or (string->number line)
+                (string-prefix? "#<" line)))
+          (string-split *output* #\newline)))
+
+(define (values-when-stepped file action)
+  (lines-when-stepped file action)
+  (value-lines))
+
+(define (first-difference a b)
+  "Describes where the lists of lines A and B first differ."
+  (cond
+   ((and (null? a) (null? b)) "no difference")
+   ((null? a) (format #f "extra ~s" (car b)))
+   ((null? b) (format #f "missing ~s" (car a)))
+   ((equal? (car a) (car b)) (first-difference (cdr a) (cdr b)))
+   (else (format #f "~s, not ~s" (car b) (car a)))))
+
+(define-test "compare: stepping does not change what a program prints"
+  (let ((straight (lines-when-stepped "step-compare.scm" 'continue)))
+    (check "run straight through, it prints all 22 lines"
+           (and (= (length straight) 22)
+                (member "= end reached" straight)
+                (member "= prompt-resume 42" straight)
+                (member "= catch (boom 1 2)" straight)))
+    (for-each
+     (lambda (action)
+       (let ((stepped (lines-when-stepped "step-compare.scm" action)))
+         (check (format #f "the same lines with ~a at every pause (~a)"
+                        action (first-difference straight stepped))
+                (equal? stepped straight))))
+     '(step step-into step-instruction step-into-instruction))))
+
+;; In this test, with everything in one process, these two faults show
+;; only now and then.  The GUI test has them every time.
+(define-intermittent-failure "compare: a continuation called again, under steps"
+  "Phase 6, Stepping changes what the program computes"
+  (let ((expected '("1" "10" "20")))
+    (check "run straight through, it prints 1, 10, 20"
+           (equal? (values-when-stepped "reenter.scm" 'continue) expected))
+    (for-each
+     (lambda (action)
+       ;; The fault does not show every time.
+       (do ((i 0 (1+ i))) ((= i 3))
+         (let ((stepped (values-when-stepped "reenter.scm" action)))
+           (check (format #f "run ~a: the same with ~a (~a)" i action
+                          (first-difference expected stepped))
+                  (equal? stepped expected)))))
+     '(step step-into))))
+
+(define-intermittent-failure "compare: leaving a loop by a continuation, under steps"
+  "Phase 6, Stepping changes what the program computes"
+  (let ((expected '("3")))
+    (check "run straight through, it prints 3"
+           (equal? (values-when-stepped "escape.scm" 'continue) expected))
+    (for-each
+     (lambda (action)
+       (do ((i 0 (1+ i))) ((= i 3))
+         (let ((stepped (values-when-stepped "escape.scm" action)))
+           (check (format #f "run ~a: the same with ~a (~a)" i action
+                          (first-difference expected stepped))
+                  (equal? stepped expected)))))
+     '(step step-into))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Guidance's messages belong in the Terminal, whatever the program
+;; has done with its ports.
+
+(define-known-failure "ports: a pause while output goes to a string"
+  "Phase 6, Guidance writes its own messages to the program's ports"
+  (run-repl
+   (list '(run #f)
+         '(eval "(+ 40 2)")
+         '(continue #f)
+         '(quit 0))
+   (program "redirect.scm"))
+  (check "the string holds only what the program wrote"
+         (equal? (program-lines) '("= \"AB\"")))
+  (check "the break and the expression's value are shown, in order"
+         (output-order? "Break at redirect.scm:5" "→ 42" "= ")))
+
+(define-known-failure "ports: a program that changes the output port"
+  "Phase 6, Guidance writes its own messages to the program's ports"
+  (run-repl
+   (list '(run #f)
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "steal-port.scm"))
+  (check "the program's output before the change is shown"
+         (output-contains? "= before"))
+  (check "an expression entered afterwards shows its value"
+         (output-contains? "→ 42"))
+  (check "the REPL says that it has ended"
+         (output-contains? "The REPL has ended")))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Stop ends the whole program.
+
+(define-known-failure "stop: Stop ends the threads the program started"
+  "Phase 6, Stop and a second Run leave the program's threads running"
+  (run-repl
+   (list (lambda ()
+           (after-delay 0.4 request-stop!)
+           '(run #f))
+         ;; The thread counts every 20 ms, for three seconds.
+         '(eval "(let ((before counter)) (usleep 300000) \
+(list 'counted (- counter before)))")
+         '(quit 0))
+   (program "thread-after-stop.scm"))
+  (check "the program is stopped" (output-order? "= spinning" "Stopped."))
+  (check "its thread no longer counts" (output-contains? "→ (counted 0)")))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; A step takes about as long as running the line does.
+
+(define (time-one-step entry action limit)
+  "Runs ENTRY, a procedure of step-slow.scm that breaks at its start,
+steps to its slow line, and sends ACTION there.  If the step has not
+finished LIMIT seconds later, the program is stopped.  Returns the
+seconds the step took, or #f if it was stopped."
+  (let ((armed? #t)
+        (start #f)
+        (elapsed #f))
+    (run-repl
+     (list `(eval ,(format #f "(load ~s)" (program "step-slow.scm")))
+           `(eval ,(format #f "(~a)" entry))
+           '(step #f)                   ; from the break to the slow line
+           (lambda ()
+             (set! start (get-internal-real-time))
+             (after-delay limit (lambda () (when armed? (request-stop!))))
+             (list action #f))
+           (lambda ()
+             (set! armed? #f)
+             (when (eq? (last-mode) 'trap)
+               (set! elapsed (/ (- (get-internal-real-time) start)
+                                internal-time-units-per-second 1.0)))
+             (if (eq? (last-mode) 'trap) '(continue #f) '(quit 0)))
+           '(quit 0)))
+    elapsed))
+
+(define-test "speed: Step Over a line that calls Guile's libraries a lot"
+  (let ((seconds (time-one-step 'into-library 'step 5)))
+    (format #t "  took ~a s~%" seconds)
+    (check "finishes within 5 seconds" seconds)
+    (check "the line ran" (output-contains? "= printed"))))
+
+(define-known-failure "speed: Step Into a line that calls Guile's libraries a lot"
+  "Phase 6, Stepping can take minutes"
+  (let ((seconds (time-one-step 'into-library 'step-into 2)))
+    (format #t "  took ~a s~%" seconds)
+    (check "finishes within 2 seconds, as Step Over does" seconds)
+    (check "the line ran" (output-contains? "= printed"))))
+
+(define-known-failure "speed: Step Over a line that recurses deeply"
+  "Phase 6, Stepping can take minutes"
+  (let ((seconds (time-one-step 'deep 'step 2)))
+    (format #t "  took ~a s~%" seconds)
+    (check "finishes within 2 seconds" seconds)
+    (check "the line ran" (output-contains? "= mapped"))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(format #t "~%~a known failure~:p, not counted~%" *known-failures*)
+(format #t "~a failure~:p~%" *failures*)
 (exit (if (zero? *failures*) 0 1))
