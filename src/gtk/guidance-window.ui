@@ -264,7 +264,26 @@
                             <property name="name">backtrace</property>
                             <property name="title">Backtrace</property>
                             <property name="child">
-                              <object class="GtkBox" id="backtrace_box"/>
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">When the program pauses, its stack is shown here.  A call to (_break_) in the program pauses it at that line.</property>
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">True</property>
+                                    <property name="margin-start">6</property>
+                                    <property name="margin-end">6</property>
+                                    <property name="margin-top">6</property>
+                                    <property name="margin-bottom">6</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox" id="backtrace_box">
+                                    <property name="hexpand">True</property>
+                                    <property name="vexpand">True</property>
+                                  </object>
+                                </child>
+                              </object>
                             </property>
                           </object>
                         </child>                        
