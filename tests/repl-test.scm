@@ -685,6 +685,23 @@ INPUT."
   (check "Processors Used is not 0"
          (positive? (string->number (entry "Processors Used")))))
 
+(define-test "backtrace: arguments and local variables are told apart"
+  (define (kinds)
+    ;; Each binding is #(NAME ARGUMENT? REPRESENTATION VALUE EXTRA).
+    (map (lambda (b) (cons (vector-ref b 0) (vector-ref b 1)))
+         (vector->list (vector-ref (top-frame) 5))))
+  (run-repl
+   (list '(run #f)
+         (checkpoint "item is an argument; count and price are locals"
+                     (lambda ()
+                       (format #t "  kinds: ~s~%" (kinds))
+                       (equal? (kinds)
+                               '(("item" . #t) ("count" . #f)
+                                 ("price" . #f))))
+                     '(stop #f))
+         '(quit 0))
+   (program "inventory.scm")))
+
 (define-test "modules: list modules and their procedures"
   (run-repl
    (list (load-expression "procs.scm")

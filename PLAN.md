@@ -597,6 +597,16 @@ The open one is last in this list.
         and the outermost frame, which is the top level of the program
         being loaded, as "(top level)".  The REPL test checks the
         latter.
+      - Later, while taking the release screenshot: Kind called an
+        argument "local" when its procedure had a closure, as every
+        procedure does in Guidance's non-declarative `(guile-user)`.
+        A binding was taken to be an argument if its index was below
+        the number of arguments in the call, but the closure is
+        binding 0.  Now the count comes from the procedure's arity
+        (`argument-binding-count` in `(gdn lib)`): the closure, if
+        any, then the required, optional, rest and keyword
+        arguments.  The REPL test checks an argument and two locals
+        (`tests/programs/inventory.scm`).
 - [x] **Source page.**  No line numbers, and no mark on lines that
       have breakpoints (already noted under Phase 2).  Fixed:
       - The text view has a left margin (a `GtkDrawingArea` given to

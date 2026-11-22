@@ -608,6 +608,22 @@ them as an improper list, ending in _ rather than ()."
   (let loop ((args args) (n 0))
     (if (pair? args) (loop (cdr args) (1+ n)) n)))
 
+(define (argument-binding-count frame nargs)
+  "The number of FRAME's bindings that are its procedure's arguments.
+They come first, in the order of the procedure's arity: the closure, if
+it has one, then the required, optional, rest, and keyword arguments.
+NARGS, the number of arguments in the call, is the guess when the arity
+cannot be found."
+  (let ((arity (false-if-exception
+                (find-program-arity (frame-instruction-pointer frame)))))
+    (if arity
+        (+ (if (arity-has-closure? arity) 1 0)
+           (arity-nreq arity)
+           (arity-nopt arity)
+           (if (arity-has-rest? arity) 1 0)
+           (length (arity-keyword-args arity)))
+        nargs)))
+
 (define (frame->backtrace-entry frame top-frame?)
   "A backtrace entry for FRAME.  This must not fail: it is called while
 the program is paused in a VM hook, and an exception that unwinds
@@ -651,7 +667,9 @@ the entry just says less."
                     ;; Unnamed bindings are compiler temporaries.
                     (and (binding-name binding)
                          (gdn-binding-readable? frame binding)
-                         (false-if-exception (unpack-binding nargs binding))))
+                         (false-if-exception
+                          (unpack-binding (argument-binding-count frame nargs)
+                                          binding))))
                   bindings)))))
 
 (define* (gdn-get-backtrace frames #:optional top-frame?)
@@ -729,16 +747,16 @@ of a procedure; reading one of those reads past the frame, and can
 crash Guile when the value is printed."
   (< (binding-slot binding) (frame-num-locals frame)))
 
-(define (unpack-binding n_args binding)
+(define (unpack-binding argument-count binding)
+  "A binding of the backtrace, as described above.  The first
+ARGUMENT-COUNT bindings of a frame are its arguments."
   (let ((name (binding-name binding))
         (val (binding-ref binding)))
     (vector
      (if name
          (symbol->string name)
          "(anonymous)")
-     (if (< (binding-index binding) n_args)
-         #t
-         #f)
+     (< (binding-index binding) argument-count)
      (object->string (binding-representation binding))
      (object->string val)
      (object->extra-info val))))
