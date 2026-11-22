@@ -864,3 +864,198 @@ arguments; reloading a source file that changed between runs; the
 Peek page; circular lists and a 200,000-element list as arguments;
 the shortcuts overlay; closing the window while the program runs or is
 paused (exit status 0); `meson install`.
+
+### Phase 6: Second review for the alpha
+
+Review date: 2026-11-22, of `master` at 95655db (version 0.2.0), on
+Ubuntu 24.04 with GTK 4.14.5 and Guile 3.0.9.  A clean build has no
+warnings, and `meson test` passes 5 of 5, also in a build with ASan
+and UBSan.  Guidance was then driven under Xvfb as in Phase 5, with
+the earlier scenarios repeated and new ones for what has been added
+since.  Everything below was reproduced in the running application.
+
+Three problems are blockers.  The first is new since Phase 5, and
+alone is reason not to release 0.2.0 as it is.
+
+#### Blockers
+
+- [ ] **The program and the prompt run in Guidance's own module.**
+      `(current-module)` at `repl>` is `(gdn repl)`, not
+      `(guile-user)`, on every start.  So a program's definitions land
+      among Guidance's, and replace them when the names match.  A
+      program that defines procedures called `option`, `pause` and
+      `program-name` runs once; the next Run ends the REPL thread with
+      "Guile has exited.  Key: wrong-type-arg ...", and the window is
+      then dead apart from closing it.  `(gdn repl)` has about 120
+      such names, among them `pause`, `option`, `show-prompt`,
+      `frame-line`, `eval-form`, and `refresh-views!`.
+
+      It also empties the Modules page for the program: `(guile-user)`
+      expands to nothing, because the program's procedures are in
+      `(gdn repl)`, which the page hides.  Procedure breakpoints from
+      that page are therefore not available for the program.
+
+      Cause: since "cache Guidance's compiled modules", the modules
+      are loaded with `load-compiled`, which leaves the current module
+      set to the last module it defined, and the REPL thread inherits
+      that.  The `set-current-module` in `spawn_top_repl` has never
+      had an effect, because `scm_c_eval_string` restores the module
+      when it returns; before the change nothing had moved it.  Fix:
+      load the modules inside `save-module-excursion`, and set the
+      module in `gdn-top-repl` itself.  Add a test that the prompt's
+      module is `(guile-user)`, and one that runs a program whose
+      names clash with Guidance's.
+
+- [ ] **Stepping changes what the program computes, when a
+      continuation is called.**  The fix for Step Into dealt with
+      exceptions; full continuations still go wrong, and with Step
+      Over as well.
+
+          (define k #f)
+          (define n 0)
+          (define (go)
+            (_break_)
+            (display (call/cc (lambda (c) (set! k c) 1)))
+            (newline)
+            (set! n (1+ n))
+            (when (< n 3) (k (* n 10)))
+            (display "generator done"))
+          (go)
+
+      prints 1, 10, 20 in Guile, and in Guidance when continued from
+      the break.  Stepped with F10 it prints 1, `#<unspecified>`, 20,
+      three runs of three; with F11, 1, 10, `#<unspecified>`.  An
+      escape is affected too: with F11,
+      `(call/cc (lambda (k) (for-each (lambda (x) (when (> x 2) (k
+      x))) '(1 2 3 4)) 'none))` gives `#<unspecified>` instead of 3.
+      Nothing is reported; the program just carries on with the wrong
+      value.
+
+      Likely cause, not confirmed: `add-step-trap!` pauses from the
+      abort hook (`(handler f #f)`), which Guile runs while the values
+      being passed to the continuation are in transit; pausing runs a
+      great deal of Scheme there.  The return hook may deserve the
+      same suspicion.  A fix to try: in those hooks only note that
+      the step has landed in that frame, and let the instruction hook
+      pause at the next source position, where values are settled.
+
+      A comparison of this kind should become a test: a program that
+      exercises optional and keyword arguments, multiple values,
+      records, parameters, fluids, `catch`, `dynamic-wind`, prompts,
+      `call/cc`, `sort` and `fold` with the program's own procedures,
+      and string ports, run once straight through and once under each
+      kind of step, with the outputs compared.  One was written for
+      this review; apart from the cases above, and the next item,
+      Step Over and Step Into gave the same output as Guile for all of
+      it.
+
+- [ ] **Guidance writes its own messages to the program's ports.**
+      "Break at ...", "Step to ...", the values of the operator's
+      expressions, "Stopped." and the rest go to whatever
+      `(current-output-port)` is at the time, which the program
+      controls.
+      - Pause inside `with-output-to-string` or `with-output-to-file`,
+        at a breakpoint or by stepping in, and the messages become
+        part of the program's data.  A procedure that displays "A",
+        calls `_break_`, and displays "B", with `(+ 1 2)` entered at
+        the break, returned `"A\nBreak at wots.scm:3\n→ 3\nB"`, and
+        wrote the same into its file.  Nothing shows in the Terminal
+        meanwhile, so the pause looks like a hang.
+      - A program that calls `set-current-output-port` leaves the
+        Terminal silent for good: error mode's text, the results of
+        expressions, and "Stopped." all vanish, also after the run.
+      - A program that closes `(current-output-port)` ends the REPL
+        thread, with a backtrace from `simple-format`, and the window
+        is dead.
+
+      Guidance should write to `%gdn-output-port` and
+      `%gdn-error-port` explicitly, and give each run fresh bindings
+      of the current ports, restored when it ends.  The operator's
+      expressions while paused should print to the Terminal too.
+
+#### P1: fix before the alpha if at all possible
+
+- [ ] **Stepping can take minutes, and looks like a hang.**  Stop
+      does still work.  Two separate causes:
+      - *Step Into through library code that makes many calls.*  The
+        apply hook looks up debugging information for every procedure
+        entered.  F11 on a line that pretty-prints 3,000 numbers into
+        a string had not finished after 120 s; F11 into a
+        `(load "helper.scm")` of three lines took 135 s.  The same
+        lines take a fraction of a second with F10.  Remember the
+        answer per code address, so that each procedure is looked up
+        once.
+      - *Step Over a line that recurses deeply.*  F10 over
+        `(length (map (lambda (i) (number->string i)) (iota 30000)))`
+        took 48 s, and with 300,000 elements had not finished after
+        two minutes; F10 over `(fib 25)`, a quarter of a million
+        calls but never deep, took 1.1 s.  Guile's `map` is not
+        tail-recursive, so the cost seems to grow with the depth of
+        the stack while an instruction hook is installed.  Consider
+        removing the instruction hook while the stepped frame is not
+        the innermost, using the apply and return hooks to put it
+        back.
+- [ ] **Error output from `system*` and pipes is thrown away.**  Since
+      "show output and errors in order", `(current-error-port)` is a
+      port of Guidance's own type, not a file port.  Guile's `system*`
+      and `open-pipe` give a subprocess `/dev/null` for an error
+      stream that is not a file port, so
+      `(system* "sh" "-c" "echo oops >&2")` shows nothing, where plain
+      Guile shows "oops".  `(system "...")`, which inherits file
+      descriptor 2, is fine.  `(fileno (current-error-port))` now
+      fails, which some programs use to test for a terminal.  The
+      error port needs to be a file port again, or to have a
+      descriptor.
+- [ ] **The Source page is empty until the program first pauses.**  A
+      program named on the command line, the main way to start, is
+      not shown, so no line breakpoint can be set before the first
+      run without `_break_` or the Modules page (see the first
+      blocker).  Open Program does load its file, and from there a
+      breakpoint set before Run works.  Load the command-line program
+      at startup the same way.
+- [ ] **Stop and a second Run leave the program's threads running.**
+      Noted in Phase 5 under "Other concerns".  With two worker
+      threads, Stop left both printing into the Terminal, and running
+      again made four.  At the least, say so when Stop is pressed and
+      on the Threads page; better, end them, for example with
+      `cancel-thread`, when a run ends.
+
+#### P2: noticed, can wait
+
+- Step Into on a line that uses `load` first pauses at
+  "boot-9.scm:4419": the macro's expansion is part of the program's
+  procedure but carries the library's file and line.  Steps should
+  pass over positions in Guile's own files.
+- "No code is loaded at spin.scm:3 yet" is printed for a breakpoint
+  set, while paused, on a line of a procedure that is loaded, and
+  that then fires at once.
+- Up recalls lines, not entries: after an expression entered over
+  two lines, Up gives its second line alone, which is a read error.
+- A mistyped name at `repl>` enters Error mode, which then needs
+  Stop.  This follows from running expressions as programs, but is
+  heavy for a typo.
+- File descriptors 1 and 2 are now the Terminal's, so what the C
+  library, GLib's fallbacks, or a sanitizer writes straight to them
+  appears in the Terminal, not where Guidance was started.  A
+  sanitizer report in CI would be in the test's transcript, not its
+  log, and lost if Guidance died first.
+- Open Program shows the file with line 1 marked as the current
+  line, though nothing is paused there.
+- The breakpoint mark in the Source page's margin is a thin bar,
+  easy to miss.
+
+#### Checked and working in this review
+
+Startup in 0.4 s after the first start; `(fib 30)` in 15 ms with no
+breakpoint set; runaway recursion stopped at the stack limit in 2 s,
+with the stack shown; Step Into through `catch` and `throw`, four
+runs of four, and under the sanitizers; errors and `_break_` in other
+threads reported; the Threads page; `system` output and input for a
+subprocess; Ctrl+D; expressions over several lines; Stop for an
+endless expression while paused; Pause in library code, six of six;
+breakpoints from the Source page's margin and F9, set while paused
+and while running, and removed again; `-e (@ (module) name)`,
+`--use-srfi`, `-x`, and Guile's ignored options; a directory or a
+binary given as the program; a file with a byte that is not UTF-8;
+a program that handles SIGINT itself; the history menu; Open
+Program; `meson install`.
