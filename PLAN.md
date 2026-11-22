@@ -271,14 +271,26 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       default level, so this needs Guidance's own cache or a forced
       recompile.  At level 1, check line stepping again: the line
       table then revisits the `let` line between statements.
-- [ ] **Procedure breakpoints stop working when the program is run
+- [x] **Procedure breakpoints stop working when the program is run
       again.**  A trap made from the Modules page or with
-      `add-trap-at-procedure-call!` belongs to the procedure object.
+      `add-trap-at-procedure-call!` belonged to the procedure object.
       Running the program again redefines its procedures, and the
-      trap, still listed as active on the Traps page, never fires
-      again.  Traps on procedures in modules that are not reloaded
-      keep working.  Record these traps by module and name and
-      re-attach them at each run, as line breakpoints already do.
+      trap, still listed as active on the Traps page, never fired
+      again.  Fixed: these traps now belong to the binding, the
+      module's variable, and trap calls to whichever procedure it
+      holds at the time (`gdn-trap-at-binding` in `(gdn lib)`).  The
+      Modules page makes them directly.  `(gdn repl)` replaces
+      `add-trap-at-procedure-call!` for the operator: it makes one
+      when the procedure is a binding of its own name, in the current
+      module or any loaded one, and otherwise falls back to Guile's
+      trap.  They are named "Breakpoint at NAME" rather than
+      "Breakpoint at #<procedure NAME (x)>".  Tests: three in
+      `tests/repl-test.scm`, with `tests/programs/greet.scm`.
+
+      Still open: a procedure that is not bound under its own name,
+      such as an anonymous one or one reached only through an alias
+      from the REPL, gets Guile's trap, which does not survive being
+      defined again.
 - [x] **Stepping leaves the program.**  Step Out of a top-level form
       paused in `boot-9.scm:4388`, inside `load`, and further steps
       stayed in Guile's internals.  Step at the last line of the

@@ -86,6 +86,14 @@ been started with PROGRAM-ARGS.  Returns the REPL's status, and sets
   "The sequence of modes reported to the GUI."
   (filter-map (lambda (e) (and (eq? (car e) 'mode) (cadr e))) *events*))
 
+(define (count-occurrences str)
+  "How many times STR appears in the output."
+  (let loop ((start 0) (n 0))
+    (let ((i (string-contains *output* str start)))
+      (if i
+          (loop (+ i (string-length str)) (1+ n))
+          n))))
+
 (define (count-pauses)
   "How many times the program paused in trap mode."
   (count (lambda (mode) (eq? mode 'trap)) (modes)))
@@ -234,6 +242,84 @@ in the REPL thread, as the GUI does while a program runs."
          (output-contains? "Returned from square with 16"))
   (check "the expression finishes" (output-contains? "→ 25"))
   (check "trap mode is entered" (memq 'trap (modes))))
+
+;; Running a program again defines its procedures again.  A trap at one
+;; of them must go on working.
+
+(define (greet-trapped?)
+  (equal? (top-frame-call) "(greet\n  world)"))
+
+(define-test "traps: a trap from the Modules page survives running again"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (push-request! '(add-proc-trap-by-name "(guile-user)" "greet"))
+           '(wake #f))
+         '(run #f)
+         (checkpoint "the trap fires in the second run"
+                     greet-trapped?
+                     '(continue #f))
+         '(run #f)
+         (checkpoint "the trap fires in the third run"
+                     greet-trapped?
+                     '(continue #f))
+         (lambda ()
+           (push-request! `(disable-trap ,(car (list-traps))))
+           '(wake #f))
+         '(run #f)                      ; the trap is off: no pause
+         (lambda ()
+           (push-request! `(enable-trap ,(car (list-traps))))
+           '(wake #f))
+         '(run #f)
+         (checkpoint "the trap fires again once it is enabled"
+                     greet-trapped?
+                     '(continue #f))
+         (lambda ()
+           (push-request! `(delete-trap ,(car (list-traps))))
+           '(wake #f))
+         '(run #f)                      ; the trap is gone: no pause
+         '(quit 0))
+   (program "greet.scm"))
+  (check "the trap is named after the procedure"
+         (output-contains? "Breakpoint at greet"))
+  (check "pauses in three of the six runs" (equal? (count-pauses) 3))
+  (check "every run finishes"
+         (equal? (count-occurrences "Hello, world") 6)))
+
+(define-test "traps: a trap from the REPL survives running again"
+  (run-repl
+   (list '(run #f)
+         '(eval "(add-trap-at-procedure-call! greet)")
+         '(run #f)
+         (checkpoint "the trap fires in the second run"
+                     greet-trapped?
+                     '(continue #f))
+         '(run #f)
+         (checkpoint "the trap fires in the third run"
+                     greet-trapped?
+                     '(continue #f))
+         '(quit 0))
+   (program "greet.scm"))
+  (check "pauses in two of the three runs" (equal? (count-pauses) 2))
+  (check "every run finishes"
+         (equal? (count-occurrences "Hello, world") 3)))
+
+(define-test "traps: procedures without a binding of their own can be trapped"
+  (run-repl
+   (list '(eval "(define triple (let ((f (lambda (x) (* 3 x)))) f))")
+         '(eval "(add-trap-at-procedure-call! triple)")
+         '(eval "(triple 5)")
+         (checkpoint "the trap fires" (lambda () (pair? (list-traps)))
+                     '(continue #f))
+         ;; A procedure of another module, named as the README does.
+         '(eval "(add-trap-at-procedure-call! (@ (srfi srfi-1) last))")
+         '(eval "(last '(1 2 3))")
+         (checkpoint "the trap in the other module fires"
+                     (lambda () (string-prefix? "(last" (top-frame-call)))
+                     '(continue #f))
+         '(quit 0)))
+  (check "both expressions finish" (output-order? "→ 15" "→ 3"))
+  (check "pauses twice" (equal? (count-pauses) 2)))
 
 (define-test "traps: trap requested by the GUI while waiting"
   (run-repl

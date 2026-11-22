@@ -49,10 +49,15 @@
   #:use-module (system vm traps)
   #:use-module (system vm vm)
   #:use-module (system vm trap-state)
+  #:use-module ((system vm trap-state)
+                #:select ((add-trap-at-procedure-call!
+                           . guile:add-trap-at-procedure-call!)))
   #:export (gdn-top-repl
             gdn-async-poll
             _break_
             _pk_)
+  ;; Guidance's version is the one the operator gets; see below.
+  #:replace (add-trap-at-procedure-call!)
   #:declarative? #f)
 
 ;; Aborting to this prompt stops the running program and returns to
@@ -237,15 +242,45 @@ Keep it positive while a program runs."
 (define (report-new-trap idx)
   (format #t "~&Trap ~a: ~a~%" idx (trap-name idx)))
 
-(define (lookup-procedure module-name-string symbol-string)
-  "Returns the value of SYMBOL-STRING in the loaded module named by
-MODULE-NAME-STRING, or signals an error."
+(define (lookup-binding module-name-string symbol-string)
+  "Returns the variable for SYMBOL-STRING in the loaded module named by
+MODULE-NAME-STRING, and the symbol, as two values, or signals an
+error."
   (let* ((name (call-with-input-string module-name-string read))
          (module (and (list? name)
-                      (resolve-module name #f #f #:ensure #f))))
+                      (resolve-module name #f #f #:ensure #f)))
+         (symbol (string->symbol symbol-string))
+         (variable (and module (module-variable module symbol))))
     (unless module
       (error "No such module" module-name-string))
-    (module-ref module (string->symbol symbol-string))))
+    (unless variable
+      (error "No such procedure" symbol-string))
+    (values variable symbol)))
+
+(define (add-binding-trap! variable name)
+  "Adds a trap to the trap list for calls to the procedure that
+VARIABLE holds, whichever it is at the time.  NAME is its name."
+  (let* ((idx #f)
+         (trap (gdn-trap-at-binding
+                variable
+                (lambda (frame)
+                  (trap-handler frame idx (trap-name idx))))))
+    (set! idx (add-trap! trap (format #f "Breakpoint at ~a" name)))
+    idx))
+
+(define (add-trap-at-procedure-call! proc)
+  "Adds a trap to the trap list for calls to PROC, and returns its
+index.  This replaces Guile's procedure of the same name.
+
+If PROC is the value of a binding with its own name, as a procedure
+made with `define' is, the trap is for the binding.  So it goes on
+working when the program is run again, which defines the procedure
+again.  Otherwise it is Guile's trap, for PROC itself."
+  (call-with-values (lambda () (gdn-procedure-binding proc (current-module)))
+    (lambda (variable name)
+      (if variable
+          (add-binding-trap! variable name)
+          (guile:add-trap-at-procedure-call! proc)))))
 
 (define (add-source-trap! file line)
   "Adds a trap at LINE (1-based) of FILE to the trap list."
@@ -273,8 +308,9 @@ element says what it is."
        ;; (add-proc-trap-by-name MODULE-NAME SYMBOL), both strings
        ((add-proc-trap-by-name)
         (report-new-trap
-         (add-trap-at-procedure-call!
-          (lookup-procedure (cadr request) (caddr request)))))
+         (call-with-values
+             (lambda () (lookup-binding (cadr request) (caddr request)))
+           add-binding-trap!)))
        ;; (add-source-trap FILE LINE)
        ((add-source-trap)
         (report-new-trap (add-source-trap! (cadr request) (caddr request))))

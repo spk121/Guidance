@@ -147,13 +147,20 @@ There are a few ways to pause a program where you want to look at it.
    can be set before the program is loaded, and it remains when the
    program is run again.
 
-3. Set a breakpoint at a procedure, from the Modules page.
+3. Set a breakpoint at a procedure, from the Modules page.  It is for
+   the procedure of that name, so it too remains when the program is
+   run again and defines the procedure again.
 
 4. Use Guile's trap procedures in the REPL, which Guidance makes
    available.  For example, to pause at `number->locale-string` in
    `(ice-9 i18n)`:
 
        (add-trap-at-procedure-call! (@ (ice-9 i18n) number->locale-string))
+
+   Guidance's `add-trap-at-procedure-call!` makes the same kind of
+   breakpoint as the Modules page when the procedure is a module's
+   binding of that name, as one made with `define` is.  For any other
+   procedure it is Guile's own, a trap for that one procedure object.
 
 5. Press Pause (F6) while the program runs.
 
