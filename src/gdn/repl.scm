@@ -434,7 +434,7 @@ element says what it is."
         (enable-trap-hooks!))
       (gdn-update-traps! *gdn-trap-view* (list-traps)))))
 
-(define (get-user-input)
+(define (get-action)
   "Waits for the operator's next action, handling any requests that
 arrive in the meantime.  Returns a list (ACTION DATA)."
   (let loop ()
@@ -449,6 +449,42 @@ arrive in the meantime.  Returns a list (ACTION DATA)."
         (gdn-async-poll)
         (loop))
        (else input)))))
+
+(define (unfinished-expression? str)
+  "True if STR ends part-way through an expression, so that more lines
+are needed: reading it runs out of input inside a form or string."
+  (catch 'read-error
+    (lambda ()
+      (call-with-input-string str
+        (lambda (port)
+          (let loop ()
+            (unless (eof-object? (read port))
+              (loop)))))
+      #f)
+    (lambda (key subr message args rest)
+      (and (string? message)
+           (string-contains message "end of input")
+           #t))))
+
+(define (get-user-input)
+  "Waits for the operator's next action, handling any requests that
+arrive in the meantime.  Returns a list (ACTION DATA).  An expression
+entered over several lines arrives as one: while what has been entered
+is unfinished, a continuation prompt asks for more.  Any other action
+abandons the unfinished expression."
+  (let loop ((input (get-action)))
+    (if (and (eq? (car input) 'eval)
+             (unfinished-expression? (cadr input)))
+        (begin
+          (show-prompt "...")
+          (let ((next (get-action)))
+            (if (eq? (car next) 'eval)
+                (loop (list 'eval (string-append (cadr input) "\n"
+                                                 (cadr next))))
+                (begin
+                  (format #t "~&The unfinished expression was abandoned.~%")
+                  next))))
+        input)))
 
 (define (gdn-async-poll)
   "The GUI runs this asynchronously in the REPL thread, while a program

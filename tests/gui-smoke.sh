@@ -333,6 +333,22 @@ wait_for 'end of input after ("first" "last")'
 wait_for "[prompt repl>]" 2
 stop_app
 
+# An expression over several lines, and the history.
+start
+type_line "(define (twice x)"
+wait_for "[prompt ...]"
+type_line "  (* 2 x))"
+wait_for "[prompt repl>]" 2
+type_line "(twice 21)"
+wait_for "→ 42"
+key Up
+key Return
+wait_for "→ 42" 2
+key Up Up Down
+key Return
+wait_for "→ 42" 3
+stop_app
+
 # _pk_ logs on the Peek page.
 start "$PROGRAMS/peek.scm"
 key F5

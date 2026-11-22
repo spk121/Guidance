@@ -557,13 +557,22 @@ The open one is last in this list.
       echo piled up unread.  The shortcuts overlay and README list
       Ctrl+D.  Test: one in `tests/gui-smoke.sh`, with
       `tests/programs/eof.scm`.
-- [ ] **The entry takes one line, and has no history.**  An unfinished
-      expression is a read error ("unexpected end of input"), so
-      nothing longer than a line can be entered.  The Up key does
-      nothing: the history list in `guidance-terminal-view.c` is
-      filled but never read, and its duplicate check compares only a
-      prefix (from the code).  The `GtkMenuButton` beside the entry
-      is empty.
+- [x] **The entry takes one line, and has no history.**  An unfinished
+      expression was a read error, so nothing longer than a line could
+      be entered; the history was filled but never read, its duplicate
+      check compared only a prefix, and the button beside the entry was
+      empty.  Fixed:
+      - While what has been entered ends part-way through an
+        expression, the REPL shows the prompt `...` and appends the next
+        line (`get-user-input` in `(gdn repl)`), in every mode.  Any
+        other action abandons the unfinished expression, and says so.
+      - Up and Down go through the entries, as in a shell, and Down past
+        the newest gives back what was being typed.  Empty entries and
+        repeats of the newest are not kept; at most 500 are.
+      - The button beside the entry lists the 15 most recent entries;
+        choosing one puts it back in the entry.
+
+      Tests: one in `tests/repl-test.scm`, one in `tests/gui-smoke.sh`.
 - [ ] **Backtrace page layout.**  At the default window size the Value
       column, the one that matters, is off the right edge, and the
       Location column is cut to "fact.sc".  The Type column is blank

@@ -87,8 +87,11 @@ Guidance's REPL is in one of four modes.  The toolbar enables only the
 buttons that make sense in the current one, and the terminal's prompt
 shows which mode it is in.
 
-1. **REPL** (`repl>`).  Each line entered is evaluated, and its values
-   are printed.  Run (F5) runs the program from the command line.
+1. **REPL** (`repl>`).  Each expression entered is evaluated, and its
+   values are printed.  An expression can go over several lines: while
+   it is unfinished, the prompt is `...`.  Up and Down go through the
+   entries made so far, and the button beside the entry lists the
+   recent ones.  Run (F5) runs the program from the command line.
    Expressions are run in the same way as a program, so errors and
    traps in them are handled as below.
 

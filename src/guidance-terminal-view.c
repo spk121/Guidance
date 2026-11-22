@@ -25,8 +25,12 @@ struct _GdnTerminalView
 {
   GtkBox parent_instance;
 
-  GList *        history;
-  GList *        history_cur;
+  GList *        history;      /* of char *, most recent first */
+  GList *        history_cur;  /* The entry shown, or NULL for the draft */
+  char *         history_draft; /* What was typed before Up was pressed */
+  guint          history_length;
+  GtkMenuButton *history_button;
+  GMenu *        history_menu;
   GtkTextView *  text_view;
   GtkTextBuffer *text_buffer;
   GtkLabel *     prompt_label;
@@ -62,6 +66,11 @@ G_DEFINE_TYPE (GdnTerminalView, gdn_terminal_view, GTK_TYPE_BOX)
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 static void activate_terminal_entry (GtkEntry *entry, gpointer user_data);
+static gboolean history_step (GdnTerminalView *self, gboolean older);
+static void     recall_activated (GSimpleAction *action,
+                                  GVariant *     parameter,
+                                  gpointer       user_data);
+static void     add_to_history (GdnTerminalView *self, const char *text);
 static void     write_to_program (GdnTerminalView *self,
                                   const char *     text,
                                   size_t           len);
@@ -114,6 +123,7 @@ gdn_terminal_view_class_init (GdnTerminalViewClass *klass)
   BIND (text_buffer);
   BIND (prompt_label);
   BIND (input_entry);
+  BIND (history_button);
 #undef BIND
 
   signals[ENTRY] =
@@ -129,6 +139,8 @@ gdn_terminal_view_init (GdnTerminalView *self)
 
   self->history = NULL;
   self->history_cur = NULL;
+  self->history_draft = NULL;
+  self->history_length = 0;
   self->output_fd = STDOUT_FILENO;
   self->input_pending = g_byte_array_new ();
   self->prompt_pending = g_byte_array_new ();
@@ -157,6 +169,19 @@ gdn_terminal_view_init (GdnTerminalView *self)
   gtk_event_controller_set_propagation_phase (keys, GTK_PHASE_CAPTURE);
   g_signal_connect (keys, "key-pressed", G_CALLBACK (entry_key_pressed), self);
   gtk_widget_add_controller (GTK_WIDGET (self->input_entry), keys);
+
+  /* The menu beside the entry offers the recent entries. */
+  self->history_menu = g_menu_new ();
+  gtk_menu_button_set_menu_model (self->history_button,
+                                  G_MENU_MODEL (self->history_menu));
+  GSimpleActionGroup *actions = g_simple_action_group_new ();
+  GSimpleAction *recall = g_simple_action_new ("recall", G_VARIANT_TYPE_STRING);
+  g_signal_connect (recall, "activate", G_CALLBACK (recall_activated), self);
+  g_action_map_add_action (G_ACTION_MAP (actions), G_ACTION (recall));
+  g_object_unref (recall);
+  gtk_widget_insert_action_group (GTK_WIDGET (self), "terminal",
+                                  G_ACTION_GROUP (actions));
+  g_object_unref (actions);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -260,11 +285,7 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
       g_free (line);
     }
 
-  /* Append the entry to the history */
-  if (!self->history || strncmp (text, self->history->data, strlen (text)) != 0)
-    self->history =
-        g_list_prepend (self->history, strndup (text, strlen (text)));
-  self->history_cur = self->history;
+  add_to_history (self, text);
 
   /* Then clear the entry box. */
   gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
@@ -334,7 +355,106 @@ entry_key_pressed (G_GNUC_UNUSED GtkEventControllerKey *controller,
       send_end_of_file (self);
       return TRUE;
     }
+  if (keyval == GDK_KEY_Up || keyval == GDK_KEY_KP_Up)
+    return history_step (self, TRUE);
+  if (keyval == GDK_KEY_Down || keyval == GDK_KEY_KP_Down)
+    return history_step (self, FALSE);
   return FALSE;
+}
+
+/* The most entries the history keeps, and the most the menu shows. */
+#define MAX_HISTORY 500
+#define MAX_HISTORY_MENU 15
+
+static void
+set_entry_text (GdnTerminalView *self, const char *text)
+{
+  gtk_editable_set_text (GTK_EDITABLE (self->input_entry), text);
+  gtk_editable_set_position (GTK_EDITABLE (self->input_entry), -1);
+}
+
+/* Up (OLDER) and Down go through the history, as in a shell.  Down past
+ * the newest entry gives back what was being typed. */
+static gboolean
+history_step (GdnTerminalView *self, gboolean older)
+{
+  if (older)
+    {
+      GList *next = self->history_cur ? self->history_cur->next
+                                      : self->history;
+      if (next == NULL)
+        return self->history != NULL;
+      if (self->history_cur == NULL)
+        {
+          g_free (self->history_draft);
+          self->history_draft = g_strdup (
+              gtk_editable_get_text (GTK_EDITABLE (self->input_entry)));
+        }
+      self->history_cur = next;
+      set_entry_text (self, next->data);
+    }
+  else
+    {
+      if (self->history_cur == NULL)
+        return FALSE;
+      self->history_cur = self->history_cur->prev;
+      set_entry_text (self, self->history_cur ? self->history_cur->data
+                                              : (self->history_draft
+                                                     ? self->history_draft
+                                                     : ""));
+    }
+  return TRUE;
+}
+
+static void
+rebuild_history_menu (GdnTerminalView *self)
+{
+  GList *item = self->history;
+
+  g_menu_remove_all (self->history_menu);
+  for (int i = 0; item != NULL && i < MAX_HISTORY_MENU; item = item->next, i++)
+    {
+      GMenuItem *menu_item = g_menu_item_new (item->data, NULL);
+      g_menu_item_set_action_and_target (menu_item, "terminal.recall", "s",
+                                         (const char *) item->data);
+      g_menu_append_item (self->history_menu, menu_item);
+      g_object_unref (menu_item);
+    }
+  gtk_widget_set_sensitive (GTK_WIDGET (self->history_button),
+                            self->history != NULL);
+}
+
+/* Adds TEXT, just entered, to the history, unless it is empty or the
+ * same as the newest entry. */
+static void
+add_to_history (GdnTerminalView *self, const char *text)
+{
+  self->history_cur = NULL;
+  g_clear_pointer (&self->history_draft, g_free);
+  if (*text == '\0'
+      || (self->history != NULL && strcmp (text, self->history->data) == 0))
+    return;
+
+  self->history = g_list_prepend (self->history, g_strdup (text));
+  if (++self->history_length > MAX_HISTORY)
+    {
+      GList *oldest = g_list_last (self->history);
+      g_free (oldest->data);
+      self->history = g_list_delete_link (self->history, oldest);
+      self->history_length--;
+    }
+  rebuild_history_menu (self);
+}
+
+/* The history menu's items put an entry back in the entry. */
+static void
+recall_activated (G_GNUC_UNUSED GSimpleAction *action,
+                  GVariant *                   parameter,
+                  gpointer                     user_data)
+{
+  GdnTerminalView *self = user_data;
+  set_entry_text (self, g_variant_get_string (parameter, NULL));
+  gtk_widget_grab_focus (GTK_WIDGET (self->input_entry));
 }
 
 gboolean

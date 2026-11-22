@@ -163,6 +163,25 @@ in the REPL thread, as the GUI does while a program runs."
            (not (memq 'error (modes))))
     (check "shows the repl prompt" (string-contains (prompts) "repl>"))))
 
+(define-test "eval: an expression can be entered over several lines"
+  (run-repl
+   (list '(eval "(define (twice x)")
+         '(eval "  (* 2 x))")
+         '(eval "(twice 21)")
+         '(eval "(string-length \"one")
+         '(eval "two\")")
+         '(eval "(+ 1")
+         '(run #f)
+         '(quit 0)))
+  (check "an unfinished line asks for more"
+         (string-contains (prompts) "..."))
+  (check "a definition over two lines works" (output-contains? "→ 42"))
+  (check "a string can go on to the next line" (output-contains? "→ 7"))
+  (check "another action abandons the unfinished expression"
+         (output-order? "The unfinished expression was abandoned."
+                        "No program was given"))
+  (check "no read errors" (not (output-contains? "end of input"))))
+
 (define-test "eval: an error enters error mode until Stop"
   (run-repl
    (list '(eval "(car 5)")
