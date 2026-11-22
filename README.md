@@ -94,6 +94,7 @@ shows which mode it is in.
 
 2. **Run.**  The program is running.  Its output appears in the
    terminal, and what is typed in the entry is its standard input.
+   Ctrl+D sends what is in the entry, then ends the input.
    Pause (F6) pauses it in Trap mode; Stop (Shift+F5) abandons it and
    returns to the REPL.
 

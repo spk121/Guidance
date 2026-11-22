@@ -548,8 +548,15 @@ The open one is last in this list.
       descriptor 2, now appear in the Terminal; the GUI test looks
       for them in its transcript too.  Test: one in
       `tests/gui-smoke.sh`, with `tests/programs/subprocess.scm`.
-- [ ] **No end-of-file for standard input.**  Ctrl+D in the entry does
-      nothing, so a program that reads until EOF can only be stopped.
+- [x] **No end-of-file for standard input.**  Ctrl+D in the entry did
+      nothing, so a program that read until EOF could only be stopped.
+      Fixed: while a program runs, Ctrl+D sends the text in the entry,
+      if any, as a line, then end-of-file, using the pseudoterminal's
+      EOF character in canonical mode.  The input pseudoterminal's
+      echo is now off: the Terminal shows typed text itself, and the
+      echo piled up unread.  The shortcuts overlay and README list
+      Ctrl+D.  Test: one in `tests/gui-smoke.sh`, with
+      `tests/programs/eof.scm`.
 - [ ] **The entry takes one line, and has no history.**  An unfinished
       expression is a read error ("unexpected end of input"), so
       nothing longer than a line can be entered.  The Up key does

@@ -17,6 +17,7 @@
  */
 
 #include "guidance-terminal-view.h"
+#include <errno.h>
 #include "guidance-xgtk.h"
 #include <glib-unix.h>
 
@@ -61,6 +62,14 @@ G_DEFINE_TYPE (GdnTerminalView, gdn_terminal_view, GTK_TYPE_BOX)
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
 static void activate_terminal_entry (GtkEntry *entry, gpointer user_data);
+static void     write_to_program (GdnTerminalView *self,
+                                  const char *     text,
+                                  size_t           len);
+static gboolean entry_key_pressed (GtkEventControllerKey *controller,
+                                   guint                  keyval,
+                                   guint                  keycode,
+                                   GdkModifierType        state,
+                                   gpointer               user_data);
 
 static gboolean
 poll_terminal_text (gint fd, GIOCondition condition, gpointer user_data);
@@ -141,6 +150,13 @@ gdn_terminal_view_init (GdnTerminalView *self)
 
   g_signal_connect (self->input_entry, "activate",
                     G_CALLBACK (activate_terminal_entry), self);
+
+  /* Ctrl+D, for end-of-file.  The capture phase sees it before the
+   * entry's own key bindings. */
+  GtkEventController *keys = gtk_event_controller_key_new ();
+  gtk_event_controller_set_propagation_phase (keys, GTK_PHASE_CAPTURE);
+  g_signal_connect (keys, "key-pressed", G_CALLBACK (entry_key_pressed), self);
+  gtk_widget_add_controller (GTK_WIDGET (self->input_entry), keys);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -231,12 +247,8 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
     }
   else
     {
-      int bytes_written = write (self->output_fd, text, strlen (text));
-      if (bytes_written == -1)
-        g_critical ("Could not push text to the Guile interpreter");
-      if (write (self->output_fd, "\n", 1) == -1)
-        g_critical ("Could not push newline to the Guile interpreter");
-      fsync (self->output_fd);
+      write_to_program (self, text, strlen (text));
+      write_to_program (self, "\n", 1);
     }
 
   if (self->echo_mode)
@@ -256,6 +268,73 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
 
   /* Then clear the entry box. */
   gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
+}
+
+/* Writes all of TEXT to the program's standard input. */
+static void
+write_to_program (GdnTerminalView *self, const char *text, size_t len)
+{
+  while (len > 0)
+    {
+      ssize_t n = write (self->output_fd, text, len);
+      if (n < 0)
+        {
+          if (errno == EINTR)
+            continue;
+          g_critical ("Could not send input to the program: %s",
+                      g_strerror (errno));
+          return;
+        }
+      text += n;
+      len -= n;
+    }
+}
+
+/* Ctrl+D, while a program runs: the text in the entry, if any, as a
+ * line, then end-of-file.  The program's standard input is a
+ * pseudoterminal in canonical mode, where the EOF character at the
+ * start of a line makes a read return nothing: end-of-file.  (Without
+ * the newline, the EOF character would only end the line, as on a
+ * terminal, and another would be needed.) */
+static void
+send_end_of_file (GdnTerminalView *self)
+{
+  const char *text =
+      gtk_entry_buffer_get_text (gtk_entry_get_buffer (self->input_entry));
+  size_t len = strlen (text);
+
+  if (len > 0)
+    {
+      write_to_program (self, text, len);
+      write_to_program (self, "\n", 1);
+    }
+  write_to_program (self, "\004", 1);
+
+  if (self->echo_mode)
+    {
+      char *shown = g_strconcat (text, len > 0 ? "\n" : "", "^D\n", NULL);
+      append_text (self, shown, "input");
+      g_free (shown);
+    }
+  gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
+}
+
+static gboolean
+entry_key_pressed (G_GNUC_UNUSED GtkEventControllerKey *controller,
+                   guint                                keyval,
+                   G_GNUC_UNUSED guint                  keycode,
+                   GdkModifierType                      state,
+                   gpointer                             user_data)
+{
+  GdnTerminalView *self = user_data;
+
+  if (self->port_mode && (keyval == GDK_KEY_d || keyval == GDK_KEY_D)
+      && (state & GDK_CONTROL_MASK))
+    {
+      send_end_of_file (self);
+      return TRUE;
+    }
+  return FALSE;
 }
 
 gboolean

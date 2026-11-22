@@ -322,6 +322,17 @@ wait_for "the subprocess read: hello"
 wait_for "[prompt repl>]" 2
 stop_app
 
+# Ctrl+D ends a running program's input, after any text in the entry.
+start "$PROGRAMS/eof.scm"
+key F5
+wait_for "Type lines, then Ctrl+D:"
+type_line "first"
+xdotool type --delay 20 "last"
+key ctrl+d
+wait_for 'end of input after ("first" "last")'
+wait_for "[prompt repl>]" 2
+stop_app
+
 # _pk_ logs on the Peek page.
 start "$PROGRAMS/peek.scm"
 key F5

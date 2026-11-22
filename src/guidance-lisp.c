@@ -27,6 +27,7 @@
 #include "guidance-trap-info.h"
 #include "guidance-trap-view.h"
 #include <fcntl.h>
+#include <termios.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <gio/gio.h>
@@ -672,11 +673,20 @@ port_from_unix_output_fd (int master_fd)
   if (name == NULL)
     g_error ("Could not acquire slave pseudoterminal device for FD #%d",
              master_fd);
-  /* FIXME: do I need to set a terminal mode w/ tcsetattr here?
-   * If I do, it is the slave file descriptor that needs to be adjusted. */
   slave_fd = open (name, O_RDONLY | O_NOCTTY);
   if (slave_fd < 0)
     g_error ("Could not open pseudoterminal %s", name);
+
+  /* The pseudoterminal stays in canonical mode, which gives the program
+   * a line at a time, and end-of-file for Ctrl+D (see the terminal
+   * view).  Echo is off: the Terminal shows typed text itself, and the
+   * echo would pile up unread on the other side. */
+  struct termios modes;
+  if (tcgetattr (slave_fd, &modes) == 0)
+    {
+      modes.c_lflag &= ~(ECHO | ECHOE | ECHOK | ECHONL);
+      tcsetattr (slave_fd, TCSANOW, &modes);
+    }
   return set_port_utf8 (
       scm_fdopen (scm_from_int (slave_fd), scm_from_utf8_string ("r0")));
 }
