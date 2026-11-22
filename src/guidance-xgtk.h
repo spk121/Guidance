@@ -35,6 +35,17 @@ void xgtk_invoke_on_main (GSourceFunc func, gpointer data,
 void xgtk_list_store_replace_all_on_main (GListStore *store,
                                           GPtrArray * items);
 
+/* Keeps BUFFER from growing without limit.  If it has more than
+ * MAX_LINES lines or MAX_CHARS characters, deletes its oldest text, in
+ * whole lines where it can, until it has at most KEEP_LINES lines and
+ * KEEP_CHARS characters.  Returns TRUE if it deleted anything.  GTK
+ * thread only. */
+gboolean xgtk_text_buffer_drop_old_text (GtkTextBuffer *buffer,
+                                         int            max_lines,
+                                         int            keep_lines,
+                                         int            max_chars,
+                                         int            keep_chars);
+
 /* When the environment variable GUIDANCE_TRANSCRIPT names a file,
  * appends TEXT to it.  The tests use this to see what Guidance shows.
  * GTK thread only. */

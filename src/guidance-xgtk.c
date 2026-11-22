@@ -64,6 +64,45 @@ xgtk_list_store_replace_all_on_main (GListStore *store, GPtrArray *items)
   xgtk_invoke_on_main (replace_all, r, store_replacement_free);
 }
 
+gboolean
+xgtk_text_buffer_drop_old_text (GtkTextBuffer *buffer,
+                                int            max_lines,
+                                int            keep_lines,
+                                int            max_chars,
+                                int            keep_chars)
+{
+  g_assert (GTK_IS_TEXT_BUFFER (buffer));
+  g_assert (keep_lines <= max_lines && keep_chars <= max_chars);
+
+  int         lines = gtk_text_buffer_get_line_count (buffer);
+  int         chars = gtk_text_buffer_get_char_count (buffer);
+  GtkTextIter start, cut;
+
+  if (lines <= max_lines && chars <= max_chars)
+    return FALSE;
+
+  /* The cut is the later of the two places that meet a limit. */
+  gtk_text_buffer_get_start_iter (buffer, &cut);
+  if (lines > keep_lines)
+    gtk_text_iter_set_line (&cut, lines - keep_lines);
+  if (chars - gtk_text_iter_get_offset (&cut) > keep_chars)
+    {
+      gtk_text_iter_set_offset (&cut, chars - keep_chars);
+      /* Keep whole lines, unless that leaves nothing. */
+      if (!gtk_text_iter_starts_line (&cut))
+        {
+          GtkTextIter next = cut;
+          if (gtk_text_iter_forward_line (&next)
+              && !gtk_text_iter_is_end (&next))
+            cut = next;
+        }
+    }
+
+  gtk_text_buffer_get_start_iter (buffer, &start);
+  gtk_text_buffer_delete (buffer, &start, &cut);
+  return TRUE;
+}
+
 void
 xgtk_transcribe (const char *text)
 {

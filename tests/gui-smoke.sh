@@ -186,6 +186,22 @@ refute "boot-9.scm"
 refute "anonymous procedure"
 stop_app
 
+# A program that prints a great deal loses none of it, and the terminal
+# keeps only the latest part.
+start "$PROGRAMS/flood.scm"
+key F5
+wait_for "end of flood"
+wait_for "[prompt repl>]" 2
+expect_count "line " 30000
+wait_for "line 1 λ→日本語 äöü"
+wait_for "line 30000 λ→日本語 äöü"
+wait_for "[old text dropped]"
+refute "■"
+refute "�"
+type_line "(+ 40 2)"
+wait_for "→ 42"
+stop_app
+
 # Keys pressed in the wrong mode are not saved up for later.  Run
 # pressed twice runs the program once, even after Stop.
 start "$PROGRAMS/loop.scm"

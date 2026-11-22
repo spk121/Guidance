@@ -289,12 +289,43 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       message, and the GTK thread applies it ahead of terminal output
       and key presses.  Tests: two cases in `tests/gui-smoke.sh`,
       with `tests/programs/late-break.scm`.
-- [ ] **The Terminal loses output.**  `xread` in
-      `guidance-terminal-view.c` keeps at most 10 KiB per read, drops
-      the rest, inserts "■", and logs a CRITICAL.  A program printing
-      in a loop lost text 15 times in 5 seconds.  The text buffer also
-      grows without limit: the same program took Guidance to 314 MB in
-      those 5 seconds.  Read everything, and cap the scrollback.
+- [x] **The Terminal loses output.**  `xread` in
+      `guidance-terminal-view.c` kept at most 10 KiB per read, dropped
+      the rest, inserted "■", and logged a CRITICAL.  A program
+      printing in a loop lost text 15 times in 5 seconds.  The text
+      buffer also grew without limit: the same program took Guidance
+      to 314 MB in those 5 seconds.  Fixed:
+      - Everything is read.  Each time a stream is ready, up to 64 KiB
+        is read from it; what is left keeps it ready.  The streams are
+        read when the GTK thread is otherwise idle, so a program that
+        prints without pause is held up by its full pseudoterminal
+        rather than freezing the window.  Stop still acts at once.
+      - The terminal keeps the latest 10,000 lines, or 2,000,000
+        characters.  Past that, the oldest text is dropped, in whole
+        lines, down to 9,000 lines or 1,800,000 characters
+        (`xgtk_text_buffer_drop_old_text`).  The Peek log has the same
+        limit.
+      - A character of several bytes that is split between two reads
+        is put back together.  Bytes that are not UTF-8, and NULs,
+        are shown as "�" instead of cutting the output short.
+      - A line of more than 1,000 characters is shown broken into
+        lines of that length.  One 4,000,000-character line otherwise
+        took Guidance to 2.2 GB and hung it.
+      - Output is added at the end of the text, and the view is no
+        longer editable: typing in it used to change the text, and
+        output went in wherever the cursor was.
+
+      Measured: 30,000 lines arrive complete in about a second; an
+      endless printing loop ran 6 seconds at a steady 277 MB (260 MB
+      is the size with nothing printed) and stopped at once, with
+      116,255 lines received and none missing; the 4,000,000-character
+      line arrives complete in 12 seconds.  Test: one case in
+      `tests/gui-smoke.sh`, with `tests/programs/flood.scm`.
+
+      Still open: the terminal always shows the end when something
+      is printed, even if the operator has scrolled back to read.
+      The prompt stream can still run two prompts together, as
+      "repl>repl>", seen once.
 - [ ] **Local variables lose their names.**  Programs are compiled at
       Guile's default optimization level, so a `let` variable `a` in
       a ten-line procedure is listed on the Backtrace page as `tmp`,

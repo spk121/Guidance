@@ -708,6 +708,9 @@ append_peek (gpointer data)
   gtk_text_buffer_get_end_iter (buf, &end);
   gtk_text_buffer_insert (buf, &end, entry->line, -1);
   gtk_text_buffer_insert (buf, &end, "\n", 1);
+  /* The log is kept to a size, like the terminal. */
+  xgtk_text_buffer_drop_old_text (buf, 10000, 9000, 2000000, 1800000);
+  gtk_text_buffer_get_end_iter (buf, &end);
   gtk_text_view_scroll_to_iter (entry->self->peek_view, &end, 0.0, FALSE,
                                 0.0, 1.0);
 
