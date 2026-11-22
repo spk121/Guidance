@@ -195,6 +195,10 @@ logs `foo.scm:2: (double 21)` when called with 21.
 Known limitations
 -----------------
 
+- Step Into is not yet safe to use through code that throws and
+  catches an exception, or that calls `load`: the program can go
+  wrong, and Guidance can crash.  Step Over does not have this
+  problem.  See [PLAN.md](PLAN.md).
 - Which local variables can be seen at a given point is up to Guile's
   compiler.  For example, a variable may be unavailable just after its
   last use.

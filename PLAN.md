@@ -209,6 +209,11 @@ removed.
 
 ### Phase 5: Alpha release
 
+Status on 2026-11-22: eight of the nine blockers first listed are
+fixed, each with tests, and one new blocker was found and is open:
+Step Into can corrupt the program.  Everything under "Should fix"
+is open.
+
 Assessment date: 2026-11-22, on Ubuntu 24.04 with GTK 4.14.5 and
 Guile 3.0.9.  The build has no warnings and `meson test` passes (5 of
 5).  Beyond the test suite, Guidance was driven under Xvfb with
@@ -221,6 +226,8 @@ Each fix should come with a test, in `tests/repl-test.scm` where the
 debugger core is enough, otherwise in `tests/gui-smoke.sh`.
 
 #### Blockers: fix before an alpha
+
+The open one is last in this list.
 
 - [x] **A pending step survives the end of its run and breaks the
       next one.**  Step (or Step Out), then let the run end before the
@@ -438,6 +445,44 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       list of recent programs; the window title does not name the
       program.
 
+- [ ] **Step Into can corrupt the program, or crash Guidance.**
+      Found on the last day of this work, and not fixed.  Step Into
+      (F11), pressed repeatedly through a line that throws and catches
+      an exception, or that calls `load`, makes the program go wrong:
+      a `catch` returns the wrong thing, an error appears that the
+      program does not have ("vector-ref: Wrong type argument ...
+      #<unspecified>", "Apply to non-list: (#<unspecified> .
+      #<unspecified>)"), or, once in about ten runs, Guidance dies
+      with a segmentation fault.  Step Over (F10) through the same
+      lines is correct every time.
+
+      To reproduce: break in a procedure, then press F11 until past
+
+          (display (catch #t (lambda () (throw 'k 1)) (lambda args args)))
+
+      which should print `(k 1)`, or past `(load "other.scm")`.
+
+      This is older than this phase: the commit it started from
+      loses the `catch` result in 7 runs of 8, though it was not seen
+      to crash.  What the two step kinds have in common is
+      `trap-matching-instructions`, whose predicate Guile calls
+      before every instruction of the thread.  Step Over's predicate
+      returns after one comparison for frames inside the one being
+      stepped; Step Into's goes on to look up the source of every
+      frame, in Guile's own exception and `load` code too.  The same
+      thing was seen outside Guidance: a script that kept such a trap
+      on while Guile compiled a file got `#<unspecified>` where
+      values should be.  The likely cause is that Guile's VM is not
+      in a state, between some instructions, in which it is safe to
+      run that much Scheme; it has not been confirmed.
+
+      Ways to fix it, in order of preference: step into with the
+      apply hook, pausing when a procedure of the program is entered,
+      and keep the instruction hook for frames of the program only;
+      or make the predicate do no more than compare addresses until
+      the frame changes.  Until then, Step Into should be treated as
+      unsafe, and the README should say so.
+
 #### Should fix
 
 - [ ] **Other threads are outside the debugger.**  `_break_` in a
@@ -509,6 +554,64 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       0.1.0 dated 2021-12-09 and has no screenshot.  There is no NEWS
       file.  Update the README's status paragraph and its list of
       limits to match what is decided above.
+
+#### Other concerns
+
+Things noticed along the way that the items above do not cover.
+
+- **Sanitizers.**  None of this phase's changes were run locally
+  under ASan and UBSan; the GitHub workflow does that.  The GUI test
+  now has seventeen scenarios and takes 35 to 45 seconds, so its
+  time limit, and that of the REPL test, was raised from 120 to 300
+  seconds for the sanitizer job.
+- **The GUI test depends on timing.**  It waits for text in the
+  transcript.  Two failures while writing it were the test's fault,
+  not Guidance's: text from another stream landing in the middle of
+  a line it counted, and a key sent the instant a message appeared.
+  Both are dealt with, but the pattern invites more.  It also drives
+  a window with no window manager, where only the window under the
+  pointer gets keys, and it cannot work a file dialog.
+- **The compile options are tuned to Guile 3.0.9.**  Which four
+  optimizations to turn off was found by experiment.  Another
+  version of Guile may rename variables in another pass.  The test
+  in `tests/repl-test.scm` would catch that.
+- **Libraries keep their optimized names.**  Only what Guidance
+  compiles itself is compiled for debugging.  Modules that are
+  installed already compiled, or found through `-C`, are used as
+  they are, so their variables can still show as `tmp`.
+- **Debugged code is not the code that ships.**  With four
+  optimizations off, a program runs a little differently under
+  Guidance than under Guile: slower, and without the inlining that
+  could hide or cause a fault.
+- **Guidance's cache is never cleaned.**  `~/.cache/guidance` grows
+  as Guile's own cache does.
+- **Standard input is non-blocking, and port procedures are
+  replaced.**  `install-suspendable-ports!` changes `read-char`,
+  `read-line`, `put-string` and the like for the whole process, to
+  Guile's versions written in Scheme.  A program that reads file
+  descriptor 0 itself, or passes it to a library, gets Guidance's
+  own standard input, not the Terminal's; one that reads the port's
+  descriptor without Guile's port procedures can see "would block".
+- **The "documented API only" rule has exceptions now.**  The
+  optimization keywords (`#:partial-eval?` and the rest) are listed
+  by `guild compile -O help` but not in the manual.  The tests call
+  `set-module-declarative?!`.  Guidance already used
+  `vm-add-apply-hook!` and `module-submodules`.
+- **Programs run in a module that is not declarative.**  `main` sets
+  `user-modules-declarative?` to false, with a comment that doubts
+  it.  It is why procedures are not inlined across definitions and
+  why procedure breakpoints by name work.  It deserves a decision
+  and a line in the README.
+- **Stop does not stop everything.**  It ends the main thread's run.
+  Threads the program started keep running, and keep printing, into
+  the next run.
+- **`_break_` in a library frame.**  `break-handler` pauses in the
+  caller of `_break_` and tells Guile that it is the innermost
+  frame, which it is not.  This may show a wrong value for an
+  argument there.  Not seen, but not checked either (from the code).
+- **Pause in library code.**  Pause looks at most 100 frames out
+  for a frame of the program, and otherwise says "The program could
+  not be paused here."  Not tried against deep library recursion.
 
 #### Limits to document rather than fix
 

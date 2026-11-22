@@ -15,12 +15,12 @@ if guile.found()
     args: ['--debug', '-L', src_dir, '-L', stubs_dir,
            files('repl-test.scm')],
     env: test_env,
-    timeout: 120,
+    timeout: 300,
   )
 endif
 
 test('gui-smoke', find_program('gui-smoke.sh'),
   args: [guidance_exe, join_paths(meson.current_source_dir(), 'programs')],
   env: test_env,
-  timeout: 120,
+  timeout: 300,
 )
