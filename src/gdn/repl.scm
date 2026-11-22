@@ -1688,6 +1688,10 @@ that one.~%"))
   "A friendly welcome message printed to the console."
   (say "Welcome to Guidance, an alternative Guile REPL.~%")
   (say "This is linked to Guile ~a.~%" (version))
+  ;; The two procedures that a program calls to be debugged, which
+  ;; nothing else in the window would lead the operator to.
+  (say "In a program, (_break_) pauses it at that line, and \
+(_pk_ value ...) logs values on the Peek page.~%")
   (when (program-name)
     (say "Press Run (F5) to run ~a.~%" (program-name)))
   (say "~%"))

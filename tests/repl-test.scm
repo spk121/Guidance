@@ -203,6 +203,9 @@ in the REPL thread, as the GUI does while a program runs."
                 '(quit 7)))))
     (check "quit returns its status" (eqv? status 7))
     (check "prints the welcome" (output-contains? "Welcome to Guidance"))
+    (check "the welcome names _break_ and _pk_"
+           (output-order? "Welcome to Guidance" "(_break_) pauses it"
+                          "(_pk_ value ...) logs values on the Peek page"))
     (check "prints a value" (output-contains? "→ 3"))
     (check "definitions persist and multiple values print"
            (output-order? "→ 20" "→ two"))
