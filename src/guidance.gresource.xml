@@ -3,11 +3,12 @@
   <gresource prefix="/com/lonelycactus/Guidance">
     <file>gdn/lib.scm</file>
     <file>gdn/repl.scm</file>
+    <!-- So that the icon is found when Guidance is not installed. -->
+    <file alias="icons/scalable/apps/com.lonelycactus.Guidance.svg">../data/icons/hicolor/scalable/apps/com.lonelycactus.Guidance.svg</file>
     <file>gtk/backtrace-view.ui</file>
     <file>gtk/guidance-window.css</file>
     <file>gtk/guidance-window.ui</file>
     <file>gtk/help-overlay.ui</file>
-    <file>gtk/menus.ui</file>
     <file>gtk/module-view.ui</file>
     <file>gtk/source-view.ui</file>
     <file>gtk/terminal-view.ui</file>

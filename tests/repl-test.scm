@@ -20,6 +20,10 @@
              (srfi srfi-1)
              (ice-9 format))
 
+;; Guidance runs programs in a module that is not declarative, which
+;; changes how they are compiled.  Do the same here.
+(set-module-declarative?! (current-module) #f)
+
 (define *test-dir* (dirname (current-filename)))
 (define (program name)
   (string-append *test-dir* "/programs/" name))
@@ -86,6 +90,18 @@ been started with PROGRAM-ARGS.  Returns the REPL's status, and sets
   "The sequence of modes reported to the GUI."
   (filter-map (lambda (e) (and (eq? (car e) 'mode) (cadr e))) *events*))
 
+(define (count-occurrences str)
+  "How many times STR appears in the output."
+  (let loop ((start 0) (n 0))
+    (let ((i (string-contains *output* str start)))
+      (if i
+          (loop (+ i (string-length str)) (1+ n))
+          n))))
+
+(define (count-pauses)
+  "How many times the program paused in trap mode."
+  (count (lambda (mode) (eq? mode 'trap)) (modes)))
+
 (define (top-frame)
   "The innermost entry of the most recent backtrace, or #f."
   (let ((bt (last-backtrace)))
@@ -100,6 +116,13 @@ been started with PROGRAM-ARGS.  Returns the REPL's status, and sets
          (lambda (f)
            (any (lambda (b) (and (string=? (vector-ref b 0) name)
                                  (vector-ref b 3)))
+                (vector->list (vector-ref f 5))))))
+
+(define (top-frame-binding-names)
+  "The names of the bindings in the innermost frame."
+  (and=> (top-frame)
+         (lambda (f)
+           (map (lambda (b) (vector-ref b 0))
                 (vector->list (vector-ref f 5))))))
 
 (define (checkpoint description pred input)
@@ -230,6 +253,84 @@ in the REPL thread, as the GUI does while a program runs."
          (output-contains? "Returned from square with 16"))
   (check "the expression finishes" (output-contains? "→ 25"))
   (check "trap mode is entered" (memq 'trap (modes))))
+
+;; Running a program again defines its procedures again.  A trap at one
+;; of them must go on working.
+
+(define (greet-trapped?)
+  (equal? (top-frame-call) "(greet\n  world)"))
+
+(define-test "traps: a trap from the Modules page survives running again"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (push-request! '(add-proc-trap-by-name "(guile-user)" "greet"))
+           '(wake #f))
+         '(run #f)
+         (checkpoint "the trap fires in the second run"
+                     greet-trapped?
+                     '(continue #f))
+         '(run #f)
+         (checkpoint "the trap fires in the third run"
+                     greet-trapped?
+                     '(continue #f))
+         (lambda ()
+           (push-request! `(disable-trap ,(car (list-traps))))
+           '(wake #f))
+         '(run #f)                      ; the trap is off: no pause
+         (lambda ()
+           (push-request! `(enable-trap ,(car (list-traps))))
+           '(wake #f))
+         '(run #f)
+         (checkpoint "the trap fires again once it is enabled"
+                     greet-trapped?
+                     '(continue #f))
+         (lambda ()
+           (push-request! `(delete-trap ,(car (list-traps))))
+           '(wake #f))
+         '(run #f)                      ; the trap is gone: no pause
+         '(quit 0))
+   (program "greet.scm"))
+  (check "the trap is named after the procedure"
+         (output-contains? "Breakpoint at greet"))
+  (check "pauses in three of the six runs" (equal? (count-pauses) 3))
+  (check "every run finishes"
+         (equal? (count-occurrences "Hello, world") 6)))
+
+(define-test "traps: a trap from the REPL survives running again"
+  (run-repl
+   (list '(run #f)
+         '(eval "(add-trap-at-procedure-call! greet)")
+         '(run #f)
+         (checkpoint "the trap fires in the second run"
+                     greet-trapped?
+                     '(continue #f))
+         '(run #f)
+         (checkpoint "the trap fires in the third run"
+                     greet-trapped?
+                     '(continue #f))
+         '(quit 0))
+   (program "greet.scm"))
+  (check "pauses in two of the three runs" (equal? (count-pauses) 2))
+  (check "every run finishes"
+         (equal? (count-occurrences "Hello, world") 3)))
+
+(define-test "traps: procedures without a binding of their own can be trapped"
+  (run-repl
+   (list '(eval "(define triple (let ((f (lambda (x) (* 3 x)))) f))")
+         '(eval "(add-trap-at-procedure-call! triple)")
+         '(eval "(triple 5)")
+         (checkpoint "the trap fires" (lambda () (pair? (list-traps)))
+                     '(continue #f))
+         ;; A procedure of another module, named as the README does.
+         '(eval "(add-trap-at-procedure-call! (@ (srfi srfi-1) last))")
+         '(eval "(last '(1 2 3))")
+         (checkpoint "the trap in the other module fires"
+                     (lambda () (string-prefix? "(last" (top-frame-call)))
+                     '(continue #f))
+         '(quit 0)))
+  (check "both expressions finish" (output-order? "→ 15" "→ 3"))
+  (check "pauses twice" (equal? (count-pauses) 2)))
 
 (define-test "traps: trap requested by the GUI while waiting"
   (run-repl
@@ -504,6 +605,270 @@ INPUT."
               (member "peek.scm:5: (42)" (peeks))))
   (check "entries from the REPL have no location"
          (member "(from-repl 7)" (peeks))))
+
+;; A step that is still pending when its run ends must not fire in a
+;; later run, where it would pause outside the program.
+
+(define-test "step: a step ended by an error does not disturb the next run"
+  (run-repl
+   (list '(run #f)
+         '(step #f)                     ; to line 8
+         '(step #f)                     ; to line 9
+         '(step #f)                     ; to line 10
+         '(step #f)                     ; into the error
+         (checkpoint "the error is shown, in bad (line 4)"
+                     (lambda () (equal? (top-frame-line) 4))
+                     '(stop #f))
+         '(eval "(+ 40 2)")
+         '(run #f)
+         (checkpoint "the next run pauses at its break (line 7)"
+                     (lambda () (equal? (top-frame-line) 7))
+                     '(stop #f))
+         '(quit 0))
+   (program "step-error.scm"))
+  (check "the expression after the error is evaluated"
+         (output-contains? "→ 42"))
+  (check "the program runs twice"
+         (output-order? "Break at step-error.scm:7" "Stopped."
+                        "Break at step-error.scm:7" "Stopped."))
+  (check "no internal error" (not (output-contains? "make-stack"))))
+
+(define-test "step: a step ended by Stop does not disturb the next run"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           ;; The step runs the loop, which never returns; stop it.
+           (after-delay 0.3 request-stop!)
+           '(step-out #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   "-c" "(define (spin) (_break_) (let loop () (loop))) (spin)")
+  (check "the program is stopped" (output-order? "Break at" "Stopped."))
+  (check "the expression after Stop is evaluated" (output-contains? "→ 42"))
+  (check "no internal error" (not (output-contains? "make-stack"))))
+
+;; Open Program, in the menu, changes the program that Run runs.
+
+(define-test "open: a program chosen from the menu replaces the one given"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (push-request! `(set-program ,(program "greet.scm")))
+           '(wake #f))
+         '(run #f)
+         '(quit 0))
+   (program "procs.scm") "one" "two")
+  (check "first the program from the command line, then the one chosen"
+         (output-order? "Press Run (F5) to run procs.scm." "procs.scm"
+                        "Press Run (F5) to run greet.scm."
+                        "greet.scm" "Hello, world"))
+  (check "the chosen program has no arguments"
+         (equal? (command-line) (list (program "greet.scm")))))
+
+;; Programs are compiled so that they can be debugged: variables keep
+;; their names, and stepping follows the lines as written.
+
+(define-test "names: variables keep their names, and steps follow the lines"
+  (run-repl
+   (list '(run #f)
+         (checkpoint "breaks in work (line 8)"
+                     (lambda () (equal? (top-frame-line) 8))
+                     '(step #f))
+         (checkpoint "steps to the let (line 9)"
+                     (lambda () (equal? (top-frame-line) 9))
+                     '(step-into #f))
+         (checkpoint "steps into helper, which is not inlined (line 3)"
+                     (lambda () (and (equal? (top-frame-line) 3)
+                                     (string-prefix? "(helper" (top-frame-call))))
+                     '(step-out #f))
+         (checkpoint "steps out, back to the let (line 9)"
+                     (lambda () (equal? (top-frame-line) 9))
+                     '(step #f))
+         ;; a is bound by the first instruction of line 10, which has
+         ;; not run yet.
+         (checkpoint "steps to line 10"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(step #f))
+         (checkpoint "steps to line 11, where a is 7"
+                     (lambda () (and (equal? (top-frame-line) 11)
+                                     (equal? (top-frame-binding "a") "7")))
+                     '(step #f))
+         (checkpoint "steps to line 12, where a is the only variable"
+                     (lambda () (and (equal? (top-frame-line) 12)
+                                     (equal? (top-frame-binding "a") "7")
+                                     (equal? (top-frame-binding-names) '("a"))))
+                     '(eval "(list 'a-is a)"))
+         '(continue #f)
+         ;; A procedure defined at the prompt keeps its names too.
+         '(eval "(define (at-prompt n) (let ((m (* n 3))) (_break_) (+ m 1)))")
+         '(eval "(at-prompt 4)")
+         (checkpoint "m is 12 in the procedure from the prompt"
+                     (lambda () (equal? (top-frame-binding "m") "12"))
+                     '(eval "(list 'm-is m)"))
+         '(continue #f)
+         '(quit 0))
+   (program "names.scm"))
+  (check "a can be used in an expression" (output-contains? "→ (a-is 7)"))
+  (check "m can be used in an expression" (output-contains? "→ (m-is 12)"))
+  (check "the program finishes" (output-order? "14" "done" "→ 13")))
+
+;; The operator must always be able to stop: an expression of their own
+;; that does not finish, and a program that waits for input.
+
+(define-test "stop: Stop ends an endless expression, not the paused program"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (after-delay 0.3 request-stop!)
+           '(eval "(let loop () (loop))"))
+         (checkpoint "the program is still paused at its break (line 6)"
+                     (lambda () (equal? (top-frame-line) 6))
+                     '(eval "(+ 40 2)"))
+         '(continue #f)
+         '(quit 0))
+   (program "break.scm"))
+  (check "the expression is stopped, later ones work, the program goes on"
+         (output-order? "Break at break.scm:6" "The expression was stopped."
+                        "→ 42" "three" "four"))
+  (check "the program is not stopped" (not (output-contains? "Stopped."))))
+
+(define-test "stop: Stop ends an endless expression in error mode"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (after-delay 0.3 request-stop!)
+           '(eval "(let loop () (loop))"))
+         '(eval "(+ 40 2)")
+         '(stop #f)
+         '(quit 0))
+   (program "error.scm"))
+  (check "the expression is stopped, then the program"
+         (output-order? "Entering error mode" "The expression was stopped."
+                        "→ 42" "Stopped.")))
+
+(define-test "stop: Stop while the program waits for input"
+  (run-repl
+   (list (lambda ()
+           (after-delay 0.5 request-stop!)
+           '(run #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "input.scm"))
+  (check "the program is stopped while it waits"
+         (output-order? "What is your name?" "Stopped." "→ 42"))
+  (check "it read nothing" (not (output-contains? "Hello"))))
+
+(define-test "stop: Pause while the program waits for input, then input"
+  (run-repl
+   (list (lambda ()
+           (after-delay 0.5 request-pause!)
+           '(run #f))
+         (lambda ()
+           ;; Paused.  Once it continues, give it its input.
+           (after-delay 0.3 (lambda () (send-input "Ünïcode\n")))
+           '(continue #f))
+         '(quit 0))
+   (program "input.scm"))
+  (check "pauses where it waits, then reads the input"
+         (output-order? "What is your name?" "Paused at input.scm:6"
+                        "Hello, Ünïcode!"))
+  (check "pauses once" (equal? (count-pauses) 1)))
+
+;; Stepping pauses only in the program.  When a step would take it into
+;; the code that runs the program, the program runs on instead.
+
+(define (stays-in-program?)
+  (not (or (output-contains? "boot-9.scm")
+           (output-contains? "gdn/")
+           (output-contains? "anonymous procedure")
+           (output-contains? "make-stack"))))
+
+(define-test "step: step-out of the last call in a file ends the program"
+  ;; (numbers) is in tail position, so its caller is `load'.
+  (run-repl
+   (list '(run #f)
+         '(step-out #f)
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "break.scm"))
+  (check "the return is reported, the program ends, the REPL goes on"
+         (output-order? "Break at break.scm:6" "four"
+                        "Returned from numbers" "→ 42"))
+  (check "no pause after the break" (equal? (count-pauses) 1))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: stepping past the last line ends the program"
+  (run-repl
+   (list '(run #f)
+         '(step #f)                     ; to line 7
+         '(step #f)                     ; to line 8
+         '(step #f)                     ; to line 9
+         '(step #f)                     ; to line 10
+         (checkpoint "at the last line of numbers (line 10)"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(step #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "break.scm"))
+  (check "the program ends, the REPL goes on" (output-order? "four" "→ 42"))
+  (check "pauses at the break and four steps" (equal? (count-pauses) 5))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: step-into past the last line ends the program"
+  (run-repl
+   (list '(run #f)
+         '(step-into #f) '(step-into #f) '(step-into #f) '(step-into #f)
+         (checkpoint "at the last line of numbers (line 10)"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(step-into #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "break.scm"))
+  (check "the program ends, the REPL goes on" (output-order? "four" "→ 42"))
+  (check "pauses at the break and four steps" (equal? (count-pauses) 5))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: instruction steps past the end end the program"
+  (run-repl
+   (append (list '(run #f))
+           ;; Far more than the program has left.  Those that remain
+           ;; when it ends are ignored by the REPL.
+           (make-list 300 '(step-instruction #f))
+           (list '(eval "(+ 40 2)")
+                 '(quit 0)))
+   (program "break.scm"))
+  (check "steps through the rest of numbers"
+         (output-order? "Break at break.scm:6" "Step to break.scm:7"
+                        "Step to break.scm:10"))
+  (check "the program ends, the REPL goes on" (output-order? "four" "→ 42"))
+  (check "never pauses outside the program" (stays-in-program?)))
+
+(define-test "step: step-out to a library caller pauses at the next program line"
+  ;; visit is called by map.
+  (run-repl
+   (list '(run #f)
+         (checkpoint "breaks in the first call of visit (line 8)"
+                     (lambda () (equal? (top-frame-line) 8))
+                     '(step-out #f))
+         (checkpoint "pauses on entering the second call of visit (line 5)"
+                     (lambda () (and (equal? (top-frame-line) 5)
+                                     (string-prefix? "(visit" (top-frame-call))))
+                     '(step-out #f))
+         (checkpoint "pauses back in visit-all, after map (line 12)"
+                     (lambda () (and (equal? (top-frame-line) 12)
+                                     (string-prefix? "(visit-all"
+                                                     (top-frame-call))))
+                     '(step-out #f))
+         (checkpoint "pauses at the top level, where it was called (line 16)"
+                     (lambda () (equal? (top-frame-line) 16))
+                     '(continue #f))
+         '(quit 0))
+   (program "map.scm"))
+  (check "both returns from visit are reported"
+         (output-order? "Returned from visit with 2"
+                        "Returned from visit with 4"
+                        "(2 4)" "Returned from visit-all" "end"))
+  (check "never pauses outside the program" (stays-in-program?)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

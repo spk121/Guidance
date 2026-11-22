@@ -98,6 +98,21 @@ wait_for () {
     echo "ok: $1"
 }
 
+# refute TEXT: fails if TEXT has appeared.
+refute () {
+    if grep -qF -- "$1" "$TRANSCRIPT"; then
+        fail "unexpected '$1'"
+    fi
+    echo "ok: no $1"
+}
+
+# expect_count TEXT COUNT: fails unless TEXT has appeared COUNT times.
+expect_count () {
+    n=$(grep -cF -- "$1" "$TRANSCRIPT")
+    [ "$n" -eq "$2" ] || fail "'$1' appeared $n times, not $2"
+    echo "ok: $1 ($2 times)"
+}
+
 key () {
     xdotool key "$@"
 }
@@ -143,6 +158,131 @@ key F5
 wait_for "Breakpoint at break.scm:6, at break.scm:6"
 key shift+F5
 wait_for "Stopped."
+stop_app
+
+# Stepping out of the program, and past its last line, lets it finish
+# rather than pausing in the code that runs it.
+start "$PROGRAMS/break.scm"
+key F5
+wait_for "[prompt break>]"
+key shift+F11
+wait_for "Returned from numbers"
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "[prompt break>]" 2
+key F10
+wait_for "Step to break.scm:7"
+key F10
+wait_for "Step to break.scm:8"
+key F10
+wait_for "Step to break.scm:9"
+key F10
+wait_for "Step to break.scm:10"
+key F10
+wait_for "[prompt repl>]" 3
+type_line "(+ 40 2)"
+wait_for "→ 42"
+refute "boot-9.scm"
+refute "anonymous procedure"
+stop_app
+
+# A program that prints a great deal loses none of it, and the terminal
+# keeps only the latest part.
+# The first run compiles the program.  The compiler's notes come by the
+# error stream, and can land in the middle of an output line, so the
+# lines are counted in a second run, which has none.
+start "$PROGRAMS/flood.scm"
+key F5
+wait_for "end of flood"
+wait_for "[prompt repl>]" 2
+stop_app
+start "$PROGRAMS/flood.scm"
+key F5
+wait_for "end of flood"
+wait_for "[prompt repl>]" 2
+refute ";;;"
+expect_count "line " 30000
+wait_for "line 1 λ→日本語 äöü"
+wait_for "line 30000 λ→日本語 äöü"
+wait_for "[old text dropped]"
+refute "■"
+refute "�"
+type_line "(+ 40 2)"
+wait_for "→ 42"
+stop_app
+
+# Keys pressed in the wrong mode are not saved up for later.  Run
+# pressed twice runs the program once, even after Stop.
+start "$PROGRAMS/loop.scm"
+xdotool key F5 F5 F5 F10
+wait_for "spinning"
+sleep 0.5
+key F5
+key F10
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+sleep 1
+expect_count "Running" 1
+expect_count "spinning" 1
+refute "[prompt step>]"
+stop_app
+
+# Run and Step pressed while the program runs do not carry it past its
+# next break.
+start "$PROGRAMS/late-break.scm"
+key F5
+wait_for "started"
+key F5
+key F10
+key F11
+wait_for "[prompt break>]"
+sleep 1
+refute "after the break"
+refute "[prompt step>]"
+key F5
+wait_for "after the break"
+wait_for "[prompt repl>]" 2
+# Steps and Stop do nothing at the REPL prompt, and Run still works.
+key F10
+key shift+F5
+key F5
+wait_for "started" 2
+key shift+F5
+wait_for "Stopped."
+stop_app
+
+# Stop ends an endless expression entered while the program is paused,
+# and leaves the program paused.
+start "$PROGRAMS/break.scm"
+key F5
+wait_for "[prompt break>]"
+type_line "(let loop () (loop))"
+sleep 0.5
+key shift+F5
+wait_for "The expression was stopped."
+type_line "(+ 40 2)"
+wait_for "→ 42"
+key F5
+wait_for "four"
+wait_for "[prompt repl>]" 2
+refute "Stopped."
+stop_app
+
+# A program waiting for input can be paused, continued, and stopped.
+start "$PROGRAMS/input.scm"
+key F5
+wait_for "What is your name?"
+key F6
+wait_for "Paused at input.scm:6"
+key F5
+sleep 0.5
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+type_line "(+ 40 2)"
+wait_for "→ 42"
+refute "Hello"
 stop_app
 
 # Pause a running program, evaluate an expression, then stop.
@@ -195,6 +335,26 @@ wait_for "[prompt repl>]" 2
 type_line "(+ 1 1)"
 wait_for "→ 2"
 stop_app
+
+# Quit, from the menu or with Ctrl+Q, ends Guidance cleanly, also while
+# a program is running.
+start "$PROGRAMS/loop.scm"
+key F5
+wait_for "spinning"
+key ctrl+q
+i=0
+while kill -0 "$APP" 2>/dev/null; do
+    i=$((i + 1))
+    [ $i -gt 100 ] && fail "Guidance did not quit"
+    sleep 0.1
+done
+wait "$APP"
+status=$?
+[ "$status" -eq 0 ] || fail "Guidance quit with status $status"
+if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
+    fail "problems were logged"
+fi
+echo "ok: quit"
 
 echo "PASS"
 finish 0

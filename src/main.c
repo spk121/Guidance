@@ -75,11 +75,52 @@ handle_info_options (int argc, char **argv)
   return FALSE;
 }
 
+/* Guile keeps the files it compiles automatically in
+ * $XDG_CACHE_HOME/guile/ccache, and uses one that is there in
+ * preference to compiling again.  Guidance compiles programs
+ * differently from Guile, to keep them debuggable: see
+ * %debug-compile-options in (gdn repl).  A file compiled by Guile
+ * itself would hide that, so Guidance has a cache of its own, under
+ * $XDG_CACHE_HOME/guidance.
+ *
+ * Guile works out where its cache is once, when it starts.  So the
+ * variable is changed only for that long, and the program being
+ * debugged, and GTK, see the value it had. */
+static char *original_cache_home = NULL;
+
+static void
+use_own_compiled_cache (void)
+{
+  const char *cache_home = g_getenv ("XDG_CACHE_HOME");
+  char *      own;
+
+  original_cache_home = g_strdup (cache_home);
+  if (cache_home != NULL && *cache_home != '\0')
+    own = g_build_filename (cache_home, "guidance", NULL);
+  else
+    own = g_build_filename (g_get_home_dir (), ".cache", "guidance", NULL);
+  g_setenv ("XDG_CACHE_HOME", own, TRUE);
+  g_free (own);
+}
+
+static void
+restore_cache_home (void)
+{
+  if (original_cache_home != NULL)
+    g_setenv ("XDG_CACHE_HOME", original_cache_home, TRUE);
+  else
+    g_unsetenv ("XDG_CACHE_HOME");
+  g_clear_pointer (&original_cache_home, g_free);
+}
+
 static void
 inner_main (G_GNUC_UNUSED void *data, int argc, char **argv)
 {
   GdnApplication *app = NULL;
   int             ret;
+
+  /* Guile has started. */
+  restore_cache_home ();
 
   /* Set up gettext translations */
   bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
@@ -101,6 +142,7 @@ int
 main (int argc, char **argv)
 {
   scm_c_set_default_vm_engine_x (1);
+  use_own_compiled_cache ();
   scm_boot_guile (argc, argv, inner_main, NULL);
   return 0;
 }

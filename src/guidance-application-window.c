@@ -32,6 +32,8 @@
 #include "guidance-trap-view.h"
 #include "guidance-xgtk.h"
 #include <glib-unix.h>
+#include <glib/gi18n.h>
+#include <libguile.h>
 
 /* The REPL's modes, as reported by gdn-set-input-mode! */
 typedef enum
@@ -62,7 +64,7 @@ struct _GdnApplicationWindow
   GtkButton *step_into_button;
   GtkButton *step_into_instruction_button;
   GtkButton *step_out_button;
-  GtkButton *menu_button;
+  GtkMenuButton *menu_button;
 
   /* Peek tab */
   GtkTextView *peek_view;
@@ -158,8 +160,18 @@ static void     handle_process_pause (GSimpleAction *simple,
 static void     handle_set_breakpoint (GSimpleAction *simple,
                                        GVariant *     parameter,
                                        gpointer       user_data);
+static void     handle_open_program (GSimpleAction *simple,
+                                     GVariant *     parameter,
+                                     gpointer       user_data);
+static void     handle_about (GSimpleAction *simple,
+                              GVariant *     parameter,
+                              gpointer       user_data);
 static void     show_page (GdnApplicationWindow *self, const char *name);
-static gboolean is_running (GdnApplicationWindow *self);
+static GdnInputMode input_mode (GdnApplicationWindow *self);
+static gboolean     can_run (GdnInputMode mode);
+static gboolean     is_running (GdnApplicationWindow *self);
+static void set_actions_for_mode (GdnApplicationWindow *self,
+                                  GdnInputMode          mode);
 static void     clear_peek_log (GdnApplicationWindow *self);
 
 static void add_simple_action (GdnApplicationWindow *self,
@@ -358,6 +370,10 @@ gdn_application_window_init (GdnApplicationWindow *self)
                             G_CALLBACK (clear_peek_log), self);
   add_simple_action (self, "set-breakpoint",
                      G_CALLBACK (handle_set_breakpoint));
+  add_simple_action (self, "open-program", G_CALLBACK (handle_open_program));
+  add_simple_action (self, "about", G_CALLBACK (handle_about));
+
+  set_actions_for_mode (self, GDN_INPUT_MODE_REPL);
 
   scm_c_define_module ("gdn widgets", gdn_widgets_guile_init, self);
 
@@ -564,7 +580,8 @@ handle_step_into (G_GNUC_UNUSED GSimpleAction *simple,
                   gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INTO, NULL);
+  if (input_mode (self) == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INTO, NULL);
 }
 
 static void
@@ -573,8 +590,8 @@ handle_step_into_instruction (G_GNUC_UNUSED GSimpleAction *simple,
                               gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp,
-                              GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION, NULL);
+  if (input_mode (self) == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INTO_INSTRUCTION, NULL);
 }
 
 static void
@@ -583,7 +600,8 @@ handle_step_over (G_GNUC_UNUSED GSimpleAction *simple,
                   gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP, NULL);
+  if (input_mode (self) == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP, NULL);
 }
 
 static void
@@ -592,8 +610,8 @@ handle_step_over_instruction (G_GNUC_UNUSED GSimpleAction *simple,
                               gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INSTRUCTION,
-                              NULL);
+  if (input_mode (self) == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_INSTRUCTION, NULL);
 }
 
 static void
@@ -602,7 +620,8 @@ handle_step_out (G_GNUC_UNUSED GSimpleAction *simple,
                  gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_OUT, NULL);
+  if (input_mode (self) == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STEP_OUT, NULL);
 }
 
 static void
@@ -611,7 +630,8 @@ handle_process_run (G_GNUC_UNUSED GSimpleAction *simple,
                     gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_RUN, NULL);
+  if (can_run (input_mode (self)))
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_RUN, NULL);
 }
 
 static void
@@ -620,7 +640,8 @@ handle_process_continue (G_GNUC_UNUSED GSimpleAction *simple,
                          gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_CONTINUE, NULL);
+  if (input_mode (self) == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_CONTINUE, NULL);
 }
 
 static void
@@ -630,12 +651,113 @@ handle_process_stop (G_GNUC_UNUSED GSimpleAction *simple,
 {
   GdnApplicationWindow *self = user_data;
 
-  /* A running program isn't waiting for input, so it is interrupted.
-   * In error and trap mode, the REPL is waiting for this command. */
-  if (is_running (self))
-    gdn_lisp_stop_async (self->lisp);
-  else
-    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STOP, NULL);
+  /* The REPL thread is interrupted, whatever it is doing: running the
+   * program, or, in error and trap mode, evaluating an expression of
+   * the operator's that may never finish.  In those modes it may
+   * instead be waiting for the operator, where an interrupt alone
+   * would not be noticed, so it is woken as well. */
+  if (input_mode (self) == GDN_INPUT_MODE_REPL)
+    return; /* Nothing to stop. */
+  gdn_lisp_stop_async (self->lisp);
+  if (!is_running (self))
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_WAKE, NULL);
+}
+
+/* The operator has chosen a program, or has cancelled. */
+static void
+open_program_finish (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  GFile *file = gtk_file_dialog_open_finish (GTK_FILE_DIALOG (source), result,
+                                             NULL);
+  char * path = file != NULL ? g_file_get_path (file) : NULL;
+
+  /* The dialog was open for a while: the mode may have changed. */
+  if (path != NULL && input_mode (self) == GDN_INPUT_MODE_REPL)
+    {
+      gdn_lisp_request_set_program (self->lisp, path);
+      /* Show it, so that breakpoints can be set before it runs. */
+      gdn_source_view_show_location (self->source_view, path, 1, 0);
+    }
+  g_free (path);
+  g_clear_object (&file);
+  g_object_unref (self);
+}
+
+/* Open Program: chooses the program that Run runs, in place of the one
+ * on the command line. */
+static void
+handle_open_program (G_GNUC_UNUSED GSimpleAction *simple,
+                     G_GNUC_UNUSED GVariant *     parameter,
+                     gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  GtkFileDialog *       dialog;
+  GtkFileFilter *       scheme, *all;
+  GListStore *          filters;
+
+  if (input_mode (self) != GDN_INPUT_MODE_REPL)
+    return;
+
+  scheme = gtk_file_filter_new ();
+  gtk_file_filter_set_name (scheme, _("Scheme programs"));
+  gtk_file_filter_add_pattern (scheme, "*.scm");
+  all = gtk_file_filter_new ();
+  gtk_file_filter_set_name (all, _("All files"));
+  gtk_file_filter_add_pattern (all, "*");
+  filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
+  g_list_store_append (filters, scheme);
+  g_list_store_append (filters, all);
+
+  dialog = gtk_file_dialog_new ();
+  /* Start where Guidance was started, as a path on its command line
+   * would. */
+  {
+    char * directory = g_get_current_dir ();
+    GFile *folder = g_file_new_for_path (directory);
+    gtk_file_dialog_set_initial_folder (dialog, folder);
+    g_object_unref (folder);
+    g_free (directory);
+  }
+  gtk_file_dialog_set_title (dialog, _("Open Program"));
+  gtk_file_dialog_set_modal (dialog, TRUE);
+  gtk_file_dialog_set_filters (dialog, G_LIST_MODEL (filters));
+  gtk_file_dialog_open (dialog, GTK_WINDOW (self), NULL, open_program_finish,
+                        g_object_ref (self));
+
+  g_object_unref (dialog);
+  g_object_unref (filters);
+  g_object_unref (scheme);
+  g_object_unref (all);
+}
+
+static void
+handle_about (G_GNUC_UNUSED GSimpleAction *simple,
+              G_GNUC_UNUSED GVariant *     parameter,
+              gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  const char *          authors[] = { "Michael L. Gran", NULL };
+  char *                versions;
+
+  versions = g_strdup_printf ("Guile %d.%d.%d\nGTK %u.%u.%u",
+                              SCM_MAJOR_VERSION, SCM_MINOR_VERSION,
+                              SCM_MICRO_VERSION, gtk_get_major_version (),
+                              gtk_get_minor_version (),
+                              gtk_get_micro_version ());
+  gtk_show_about_dialog (
+      GTK_WINDOW (self),
+      "program-name", "Guidance",
+      "version", PACKAGE_VERSION,
+      "comments", _("A graphical debugger for GNU Guile"),
+      "logo-icon-name", "com.lonelycactus.Guidance",
+      "website", "https://github.com/spk121/Guidance",
+      "copyright", "Copyright © 2021–2026 Michael L. Gran",
+      "license-type", GTK_LICENSE_GPL_3_0,
+      "authors", authors,
+      "system-information", versions,
+      NULL);
+  g_free (versions);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -693,6 +815,9 @@ append_peek (gpointer data)
   gtk_text_buffer_get_end_iter (buf, &end);
   gtk_text_buffer_insert (buf, &end, entry->line, -1);
   gtk_text_buffer_insert (buf, &end, "\n", 1);
+  /* The log is kept to a size, like the terminal. */
+  xgtk_text_buffer_drop_old_text (buf, 10000, 9000, 2000000, 1800000);
+  gtk_text_buffer_get_end_iter (buf, &end);
   gtk_text_view_scroll_to_iter (entry->self->peek_view, &end, 0.0, FALSE,
                                 0.0, 1.0);
 
@@ -719,10 +844,57 @@ scm_add_peek_x (SCM s_appwin, SCM s_text)
   return SCM_UNSPECIFIED;
 }
 
+/* The REPL's mode, as the REPL thread last reported it.  The operator's
+ * actions are checked against this, not against the toolbar, which
+ * only catches up when the GTK thread is next idle. */
+static GdnInputMode
+input_mode (GdnApplicationWindow *self)
+{
+  return g_atomic_int_get (&self->input_mode);
+}
+
 static gboolean
 is_running (GdnApplicationWindow *self)
 {
-  return g_atomic_int_get (&self->input_mode) == GDN_INPUT_MODE_RUN;
+  return input_mode (self) == GDN_INPUT_MODE_RUN;
+}
+
+/* Run starts the program from the REPL, and continues it from a
+ * trap. */
+static gboolean
+can_run (GdnInputMode mode)
+{
+  return mode == GDN_INPUT_MODE_REPL || mode == GDN_INPUT_MODE_TRAP;
+}
+
+static void
+set_action_enabled (GdnApplicationWindow *self,
+                    const char *          name,
+                    gboolean              enabled)
+{
+  GAction *action = g_action_map_lookup_action (G_ACTION_MAP (self), name);
+  g_assert_nonnull (action);
+  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
+}
+
+/* GTK THREAD: Enables the actions that make sense in MODE.  The toolbar
+ * buttons and the keyboard shortcuts both follow the actions. */
+static void
+set_actions_for_mode (GdnApplicationWindow *self, GdnInputMode mode)
+{
+  gboolean step = (mode == GDN_INPUT_MODE_TRAP);
+
+  /* The program can be changed when none is running or paused. */
+  set_action_enabled (self, "open-program", mode == GDN_INPUT_MODE_REPL);
+  set_action_enabled (self, "process-run", can_run (mode));
+  set_action_enabled (self, "process-continue", step);
+  set_action_enabled (self, "process-pause", mode == GDN_INPUT_MODE_RUN);
+  set_action_enabled (self, "process-stop", mode != GDN_INPUT_MODE_REPL);
+  set_action_enabled (self, "step-into", step);
+  set_action_enabled (self, "step-into-instruction", step);
+  set_action_enabled (self, "step-over", step);
+  set_action_enabled (self, "step-over-instruction", step);
+  set_action_enabled (self, "step-out", step);
 }
 
 static void
@@ -766,18 +938,7 @@ apply_input_mode (gpointer data)
   GdnApplicationWindow *self = change->self;
   GdnInputMode          mode = change->mode;
 
-  gboolean run = (mode == GDN_INPUT_MODE_REPL || mode == GDN_INPUT_MODE_TRAP);
-  gboolean stop = (mode != GDN_INPUT_MODE_REPL);
-  gboolean step = (mode == GDN_INPUT_MODE_TRAP);
-
-  xgtk_button_set_sensitive (self->run_button, run);
-  xgtk_button_set_sensitive (self->pause_button, mode == GDN_INPUT_MODE_RUN);
-  xgtk_button_set_sensitive (self->stop_button, stop);
-  xgtk_button_set_sensitive (self->step_into_button, step);
-  xgtk_button_set_sensitive (self->step_into_instruction_button, step);
-  xgtk_button_set_sensitive (self->step_over_button, step);
-  xgtk_button_set_sensitive (self->step_over_instruction_button, step);
-  xgtk_button_set_sensitive (self->step_out_button, step);
+  set_actions_for_mode (self, mode);
 
   /* While a program runs, the entry is its standard input. */
   gdn_terminal_view_set_port_mode (self->terminal_view,
@@ -806,13 +967,26 @@ scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
     scm_wrong_type_arg_msg ("gdn-set-input-mode!", SCM_ARG2, s_mode,
                             "one of repl, run, error, or trap");
 
+  /* While the program ran, nothing the operator pressed was meant for
+   * the mode that follows.  The handlers check the mode, but an action
+   * can be queued just before the REPL thread takes up an earlier one
+   * and starts running: Run pressed twice, say.  Drop those, rather
+   * than run the program a second time when the first run ends. */
+  if (g_atomic_int_get (&self->input_mode) == GDN_INPUT_MODE_RUN
+      && mode != GDN_INPUT_MODE_RUN)
+    gdn_lisp_discard_actions (self->lisp);
+
   g_atomic_int_set (&self->input_mode, mode);
   gdn_lisp_set_running (self->lisp, mode == GDN_INPUT_MODE_RUN);
 
   InputModeChange *change = g_new0 (InputModeChange, 1);
   change->self = g_object_ref (self);
   change->mode = mode;
-  xgtk_invoke_on_main (apply_input_mode, change, input_mode_change_free);
+  /* Ahead of the terminal's output and of key presses: once the
+   * operator can see that the program has paused, the actions for
+   * that are already enabled. */
+  g_idle_add_full (G_PRIORITY_HIGH, apply_input_mode, change,
+                   input_mode_change_free);
   return SCM_UNSPECIFIED;
 }
 

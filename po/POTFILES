@@ -3,4 +3,4 @@ data/com.lonelycactus.Guidance.appdata.xml.in
 data/com.lonelycactus.Guidance.gschema.xml
 src/gtk/guidance-window.ui
 src/gtk/help-overlay.ui
-src/gtk/menus.ui
+src/guidance-application-window.c

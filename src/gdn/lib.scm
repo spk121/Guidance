@@ -30,10 +30,13 @@
   #:export (gdn-error-frames
             gdn-frame-frames
             guile-internal-frame?
+            guidance-frame?
             gdn-loaded-modules
             gdn-module-list
             gdn-module-procedures
             gdn-trap-at-line
+            gdn-trap-at-binding
+            gdn-procedure-binding
             gdn-loaded-code-at-line?
             gdn-parse-command-line
             gdn-get-backtrace
@@ -115,12 +118,22 @@ program name.  Returns an alist with these keys:
 ;; STACKS
 
 ;; Guile's own source files are recorded with paths relative to the
-;; load path, e.g. "ice-9/boot-9.scm".  Guidance's own modules are
-;; included too, for when they are loaded from files rather than from
-;; Guidance's resources, as in the tests.
+;; load path, e.g. "ice-9/boot-9.scm".  So are Guidance's own modules:
+;; Guidance gives them these names when it compiles them from its
+;; resources, and they have them when loaded from files, as in the
+;; tests.
+(define %guidance-source-prefix "gdn/")
+
 (define %guile-source-prefixes
-  '("ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
-    "web/" "sxml/" "texinfo/" "gdn/"))
+  (list "ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
+        "web/" "sxml/" "texinfo/" %guidance-source-prefix))
+
+(define (guidance-frame? frame)
+  "True if FRAME is running Guidance's own code."
+  (let* ((source (frame-source frame))
+         (file (and source (source:file source))))
+    (and (string? file)
+         (string-prefix? %guidance-source-prefix file))))
 
 (define (guile-internal-frame? frame)
   "True if FRAME is running code from Guile's own libraries, or from
@@ -445,6 +458,55 @@ reaching the line, so their first hit is ignored."
         (lambda* (#:optional frame)
           (enable '())))))
   (enable current-frames))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; BREAKPOINTS AT PROCEDURES
+
+;; Guile's trap-at-procedure-call traps one procedure object.  Running
+;; a program again defines its procedures again, as new objects, so
+;; such a trap would silently stop firing.  Guidance's procedure traps
+;; instead belong to a binding, a variable of a module, and trap calls
+;; to whichever procedure it holds at the time.
+
+(define (gdn-procedure-binding proc module)
+  "Returns the variable that holds the procedure PROC and its name, a
+symbol, as two values, or #f and #f if PROC is not the value of a
+binding with its own name.  MODULE is looked in first, then the other
+loaded modules."
+  (let ((name (procedure-name proc)))
+    (define (binding-in module)
+      (let ((variable (module-variable module name)))
+        (and variable
+             (variable-bound? variable)
+             (eq? (variable-ref variable) proc)
+             variable)))
+    (let ((variable (and (symbol? name)
+                         (or (binding-in module)
+                             (any binding-in (gdn-loaded-modules))))))
+      (if variable
+          (values variable name)
+          (values #f #f)))))
+
+(define (gdn-trap-at-binding variable handler)
+  "Creates an enabled low-level trap that calls HANDLER with the frame
+whenever the procedure that VARIABLE holds at the time is called.  As
+with Guile's own procedure traps, procedures that share their code,
+such as the closures made by one `lambda', are not told apart."
+  (define (apply-hook frame)
+    (when (variable-bound? variable)
+      (let ((proc (variable-ref variable)))
+        (when (and (program? proc)
+                   (= (frame-instruction-pointer frame) (program-code proc)))
+          (handler frame)))))
+  ;; The trap interface: calling an enabled trap disables it and
+  ;; returns a procedure that enables it again, and so on.
+  (define (enable)
+    (vm-add-apply-hook! apply-hook)
+    (lambda* (#:optional frame)
+      (vm-remove-apply-hook! apply-hook)
+      (lambda* (#:optional frame)
+        (enable))))
+  (enable))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; BACKTRACE

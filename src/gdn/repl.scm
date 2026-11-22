@@ -42,6 +42,7 @@
   #:use-module (gdn ports)
   #:use-module (gdn widgets)
   #:use-module (ice-9 format)
+  #:use-module (ice-9 suspendable-ports)
   #:use-module (srfi srfi-1)
   #:use-module (system base compile)
   #:use-module (system vm frame)
@@ -49,10 +50,15 @@
   #:use-module (system vm traps)
   #:use-module (system vm vm)
   #:use-module (system vm trap-state)
+  #:use-module ((system vm trap-state)
+                #:select ((add-trap-at-procedure-call!
+                           . guile:add-trap-at-procedure-call!)))
   #:export (gdn-top-repl
             gdn-async-poll
             _break_
             _pk_)
+  ;; Guidance's version is the one the operator gets; see below.
+  #:replace (add-trap-at-procedure-call!)
   #:declarative? #f)
 
 ;; Aborting to this prompt stops the running program and returns to
@@ -62,6 +68,13 @@
 ;; This prompt is installed directly around the program being run, so
 ;; that backtraces can be cut to show only the program's own frames.
 (define %stack-tag (make-prompt-tag "gdn-stack"))
+
+;; Aborting to this prompt stops an expression that the operator
+;; entered while the program is paused, and returns to that pause.
+(define %eval-tag (make-prompt-tag "gdn-eval"))
+
+;; True while such an expression is being evaluated.
+(define *in-eval* (make-parameter #f))
 
 ;; True while a program is running under the debugger.
 (define *in-run* (make-parameter #f))
@@ -78,6 +91,10 @@
 ;; operator's expressions are evaluated.  The GUI selects it.
 (define *selected-frame* 0)
 
+;; The disable thunks of the one-shot traps, made by stepping, that
+;; have not fired yet.  They belong to the run that made them.
+(define *pending-steps* '())
+
 ;; The module list most recently sent to the GUI.
 (define *last-module-list* #f)
 
@@ -86,6 +103,47 @@
 
 (define (option key)
   (assq-ref *options* key))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; COMPILING FOR DEBUGGING
+
+;; Guile's optimizer makes a program hard to follow in a debugger.  A
+;; `let' variable can turn up in a backtrace as `tmp', next to
+;; temporaries of the compiler's own, and then cannot be used by name
+;; in the operator's expressions; and procedures are inlined, so that
+;; stepping jumps about in their lines.
+;;
+;; So Guidance compiles without the optimizations that do this: the
+;; programs it loads, the modules they use, and the operator's
+;; expressions.  The rest stay on.  The list was found by experiment,
+;; with Guile 3.0.9, compiling into a module that is not declarative,
+;; as the programs Guidance runs are:
+;;
+;; - partial evaluation inlines, and removes variables;
+;; - simplification and dead-code elimination leave a variable that
+;;   holds the result of a call named `tmp';
+;; - common subexpression elimination adds variables named `box' and
+;;   `arg'.
+;;
+;; Lower optimization levels keep the names too, but their line
+;; information is worse: every statement of a body also counts as
+;; being on the line where the body begins, so stepping keeps
+;; returning there.
+;;
+;; main.c gives Guidance its own cache of compiled files, so that
+;; files compiled by Guile itself are not used instead.
+(define %debug-compile-options
+  '(#:partial-eval? #f
+    #:simplify? #f
+    #:cse? #f
+    #:eliminate-dead-code? #f))
+
+(define (compile-for-debugging!)
+  "Makes Guile compile the files that it loads from here on with
+%debug-compile-options."
+  (unless (memq #:partial-eval? %auto-compilation-options)
+    (set! %auto-compilation-options
+      (append %debug-compile-options %auto-compilation-options))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HELPERS
@@ -146,8 +204,9 @@ Definitions are compiled as they are, so that they are made at the top
 level; anything else is compiled as a thunk, so that all of its values
 are returned."
   (if (definition? form)
-      (compile form #:env (current-module))
-      ((compile `(lambda () ,form) #:env (current-module)))))
+      (compile form #:env (current-module) #:opts %debug-compile-options)
+      ((compile `(lambda () ,form) #:env (current-module)
+                #:opts %debug-compile-options))))
 
 (define (eval-forms str)
   "Compiles and runs the expressions in STR, one at a time, in the
@@ -199,11 +258,18 @@ scope.  Errors are reported, but do not change the mode."
          (frame (and (< *selected-frame* (length frames))
                      (list-ref frames *selected-frame*)))
          (top? (and (*pause-top-frame?*) (zero? *selected-frame*))))
-    (call-with-values
-        (lambda ()
-          (print-error-on-exception
-           (lambda () (eval-in-frame str frame top?))))
-      print-return-values)))
+    ;; The expression may not finish.  Stop then aborts to this prompt,
+    ;; from gdn-async-poll, leaving the program paused as it was.
+    (call-with-prompt %eval-tag
+      (lambda ()
+        (parameterize ((*in-eval* #t))
+          (call-with-values
+              (lambda ()
+                (print-error-on-exception
+                 (lambda () (eval-in-frame str frame top?))))
+            print-return-values)))
+      (lambda (k)
+        (format #t "~&The expression was stopped.~%")))))
 
 (define (refresh-modules!)
   "Sends the module list to the GUI, if it has changed."
@@ -233,15 +299,45 @@ Keep it positive while a program runs."
 (define (report-new-trap idx)
   (format #t "~&Trap ~a: ~a~%" idx (trap-name idx)))
 
-(define (lookup-procedure module-name-string symbol-string)
-  "Returns the value of SYMBOL-STRING in the loaded module named by
-MODULE-NAME-STRING, or signals an error."
+(define (lookup-binding module-name-string symbol-string)
+  "Returns the variable for SYMBOL-STRING in the loaded module named by
+MODULE-NAME-STRING, and the symbol, as two values, or signals an
+error."
   (let* ((name (call-with-input-string module-name-string read))
          (module (and (list? name)
-                      (resolve-module name #f #f #:ensure #f))))
+                      (resolve-module name #f #f #:ensure #f)))
+         (symbol (string->symbol symbol-string))
+         (variable (and module (module-variable module symbol))))
     (unless module
       (error "No such module" module-name-string))
-    (module-ref module (string->symbol symbol-string))))
+    (unless variable
+      (error "No such procedure" symbol-string))
+    (values variable symbol)))
+
+(define (add-binding-trap! variable name)
+  "Adds a trap to the trap list for calls to the procedure that
+VARIABLE holds, whichever it is at the time.  NAME is its name."
+  (let* ((idx #f)
+         (trap (gdn-trap-at-binding
+                variable
+                (lambda (frame)
+                  (trap-handler frame idx (trap-name idx))))))
+    (set! idx (add-trap! trap (format #f "Breakpoint at ~a" name)))
+    idx))
+
+(define (add-trap-at-procedure-call! proc)
+  "Adds a trap to the trap list for calls to PROC, and returns its
+index.  This replaces Guile's procedure of the same name.
+
+If PROC is the value of a binding with its own name, as a procedure
+made with `define' is, the trap is for the binding.  So it goes on
+working when the program is run again, which defines the procedure
+again.  Otherwise it is Guile's trap, for PROC itself."
+  (call-with-values (lambda () (gdn-procedure-binding proc (current-module)))
+    (lambda (variable name)
+      (if variable
+          (add-binding-trap! variable name)
+          (guile:add-trap-at-procedure-call! proc)))))
 
 (define (add-source-trap! file line)
   "Adds a trap at LINE (1-based) of FILE to the trap list."
@@ -257,6 +353,20 @@ MODULE-NAME-STRING, or signals an error."
 take effect if some is.~%" (basename file) line))
     idx))
 
+(define (set-program! file)
+  "Makes FILE the program that Run runs, in place of the one given on
+the command line, and without arguments.  The other options, such as
+the load path, stay as they are."
+  (set! *options*
+    (map (lambda (entry)
+           (case (car entry)
+             ((script) (cons 'script file))
+             ((expression) (cons 'expression #f))
+             ((arguments) (cons 'arguments '()))
+             (else entry)))
+         *options*))
+  (format #t "~&Press Run (F5) to run ~a.~%" (program-name)))
+
 (define (process-request request)
   "Handles one request from the GUI.  A request is a list whose first
 element says what it is."
@@ -269,8 +379,9 @@ element says what it is."
        ;; (add-proc-trap-by-name MODULE-NAME SYMBOL), both strings
        ((add-proc-trap-by-name)
         (report-new-trap
-         (add-trap-at-procedure-call!
-          (lookup-procedure (cadr request) (caddr request)))))
+         (call-with-values
+             (lambda () (lookup-binding (cadr request) (caddr request)))
+           add-binding-trap!)))
        ;; (add-source-trap FILE LINE)
        ((add-source-trap)
         (report-new-trap (add-source-trap! (cadr request) (caddr request))))
@@ -287,6 +398,9 @@ element says what it is."
        ((module-procedures)
         (gdn-set-module-procedures! *gdn-module-view* (cadr request)
                                     (gdn-module-procedures (cadr request))))
+       ;; (set-program FILE): the program that Run runs
+       ((set-program)
+        (set-program! (cadr request)))
        ;; (select-frame INDEX): the frame for evaluating expressions
        ((select-frame)
         (let ((index (cadr request))
@@ -316,25 +430,72 @@ arrive in the meantime.  Returns a list (ACTION DATA)."
     (process-requests!)
     (let ((input (gdn-get-user-input *gdn-lisp*)))
       (process-requests!)
-      (if (eq? (car input) 'wake)
-          (loop)
-          input))))
+      (cond
+       ((eq? (car input) 'wake)
+        ;; The GUI also wakes the REPL when the operator presses Stop
+        ;; while the program is paused.  The async it sent with that
+        ;; may not have run yet, so look now.
+        (gdn-async-poll)
+        (loop))
+       (else input)))))
 
 (define (gdn-async-poll)
-  "The GUI runs this asynchronously in the REPL thread while a program
-is running.  It handles queued requests, and stops or pauses the
-program if the operator asked for that."
+  "The GUI runs this asynchronously in the REPL thread, while a program
+is running or paused.  It handles queued requests, and stops or pauses
+the program if the operator asked for that.  If the operator's own
+expression is being evaluated, while the program is paused, Stop stops
+that instead."
   ;; Asyncs are blocked while handling requests, so that further polls
   ;; wait their turn instead of running inside this one.
   (call-with-blocked-asyncs process-requests!)
   (case (gdn-take-interrupt-request! *gdn-lisp*)
     ((stop)
-     (when (*in-run*)
-       (abort-to-prompt %stop-tag)))
+     (cond
+      ((*in-eval*) (abort-to-prompt %eval-tag))
+      ((*in-run*) (abort-to-prompt %stop-tag))))
     ((pause)
      (when (and (*in-run*) (not (*paused*)))
        (pause-here)))
     (else #t)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; STANDARD INPUT
+
+;; A thread that is blocked reading a file descriptor does not run
+;; asyncs, which is how Guidance stops and pauses a program.  So a
+;; program waiting for input could be neither stopped nor paused.
+;;
+;; Guile's suspendable ports are the way around that.  With them, a
+;; read from a non-blocking port that has nothing to read calls the
+;; `current-read-waiter'.  Guidance's waiter waits for the program's
+;; standard input a little at a time, in Scheme, where asyncs do run.
+
+;; How long to wait at a time, in microseconds.
+(define %input-wait-microseconds 100000)
+
+(define (make-input-waiter fallback)
+  "Returns a read waiter that waits for the program's standard input so
+that asyncs can run meanwhile, and calls FALLBACK, the waiter that it
+replaces, for any other port."
+  (lambda (port)
+    (if (eq? port %gdn-input-port)
+        (catch 'system-error
+          (lambda ()
+            (select (list (fileno port)) '() '() 0 %input-wait-microseconds))
+          ;; Interrupted by a signal.  The read is tried again, and
+          ;; comes back here if there is still nothing.
+          (lambda args #f))
+        (fallback port))))
+
+(define (call-with-interruptible-input thunk)
+  "Calls THUNK with the program's standard input set up as above."
+  (install-suspendable-ports!)
+  (fcntl %gdn-input-port F_SETFL
+         (logior O_NONBLOCK (fcntl %gdn-input-port F_GETFL)))
+  (set-current-input-port %gdn-input-port)
+  (parameterize ((current-read-waiter
+                  (make-input-waiter (current-read-waiter))))
+    (thunk)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; RUN MODE
@@ -389,6 +550,7 @@ exception."
                     exception-handler-unwind
                     exception-handler-pre-unwind))
                 (lambda ()
+                  (cancel-pending-steps!)
                   (disable-break))))))))
     (lambda (k . args)
       (format #t "~&Stopped.~%")
@@ -460,11 +622,12 @@ program until they press Stop."
       (error-mode-interact key args frames))))
 
 (define (error-mode-interact key args frames)
+  ;; The mode comes first, as in pause-interact.
+  (gdn-set-input-mode! *gdn-application-window* 'error)
   (print-exception-message (current-error-port) key args)
   (gdn-update-backtrace! *gdn-backtrace-view* frames)
   (format #t "~&Entering error mode.  The Backtrace page shows the stack.~%")
   (format #t "When ready, press the Stop button to return to the REPL.~%")
-  (gdn-set-input-mode! *gdn-application-window* 'error)
   (let loop ()
     (refresh-views!)
     (display "error>" %gdn-prompt-port)
@@ -502,18 +665,45 @@ program until they press Stop."
 (define (add-ephemeral-trap! make-trap handler)
   "Creates a trap that fires once.  MAKE-TRAP takes a handler and
 returns the trap's disable thunk, as the low-level trap constructors
-do.  HANDLER receives the same arguments as the trap's handler."
+do.  HANDLER receives the same arguments as the trap's handler.
+
+The trap lasts no longer than the run that it is made in: see
+cancel-pending-steps!."
   (let ((disable #f))
     (set! disable
       (make-trap (lambda args
+                   (set! *pending-steps* (delq disable *pending-steps*))
                    (disable)
-                   (apply handler args))))))
+                   (apply handler args))))
+    (set! *pending-steps* (cons disable *pending-steps*))))
+
+(define (cancel-pending-steps!)
+  "Disables the one-shot traps that have not fired.  A run can end
+while a step is still pending: with an error, with Stop, or because
+the program finished first.  Left enabled, the step would fire in the
+next run or expression, outside the program."
+  (let ((pending *pending-steps*))
+    (set! *pending-steps* '())
+    (for-each (lambda (disable)
+                ;; One trap that cannot be disabled should not keep
+                ;; the others enabled, or stop the run from ending.
+                (false-if-exception (disable)))
+              pending)))
+
+(define (step-frame? frame internal?)
+  "True if stepping may pause in FRAME: it has source code, and is not
+in Guile's own libraries, unless INTERNAL?, which is true when the
+step began in them.  Stepping never pauses in Guidance's own code,
+which is what runs the program."
+  (and (frame-source frame)
+       (not (guidance-frame? frame))
+       (or internal? (not (guile-internal-frame? frame)))))
 
 (define (add-line-step-trap! frame into?)
   "Pauses the program at the next line reached in FRAME, or in a frame
 that FRAME returns to.  With INTO?, also pauses in procedures that FRAME
 calls.  Code in Guile's own libraries is skipped, unless FRAME is in
-it."
+it.  If the program ends first, it just ends."
   (let ((fp (frame-address frame))
         (line (frame-line frame))
         (internal? (guile-internal-frame? frame)))
@@ -522,43 +712,71 @@ it."
        (trap-matching-instructions
         (lambda (f)
           (and (or into? (<= (frame-address f) fp))
-               (frame-source f)
-               (or internal? (not (guile-internal-frame? f)))
+               (step-frame? f internal?)
                (or (not (= (frame-address f) fp))
                    (not (eqv? (frame-line f) line)))))
         handler))
      step-handler)))
 
-(define (add-instruction-step-trap! frame into?)
+(define (add-next-line-trap! internal?)
+  "Pauses the program at the next line it reaches, in any frame in
+which stepping may pause; see step-frame?."
+  (add-ephemeral-trap!
+   (lambda (handler)
+     (trap-matching-instructions
+      (lambda (f) (step-frame? f internal?))
+      handler))
+   step-handler))
+
+(define (add-instruction-step-trap! frame into? outermost)
   "Pauses the program at the next instruction in FRAME, or in a frame
-it returns to.  With INTO?, also in procedures that FRAME calls."
-  (let ((fp (frame-address frame)))
+it returns to.  With INTO?, also in procedures that FRAME calls.
+
+Unlike line steps, these go through Guile's libraries too.  So that
+they stay in the program, they do not go further out than OUTERMOST,
+the outermost frame of the program: when that returns to the code that
+runs the program, the program just runs on."
+  (let ((fp (frame-address frame))
+        (limit (frame-address outermost)))
     (add-ephemeral-trap!
      (lambda (handler)
        (trap-matching-instructions
-        (lambda (f) (or into? (<= (frame-address f) fp)))
+        (lambda (f)
+          (and (or into? (<= (frame-address f) fp))
+               (>= (frame-address f) limit)
+               (not (guidance-frame? f))))
         handler))
      step-handler)))
 
 (define (add-step-out-trap! frame)
-  "Pauses the program in FRAME's caller, when FRAME returns."
-  (let ((name (or (frame-procedure-name frame) "the procedure")))
+  "Pauses the program in FRAME's caller, when FRAME returns.
+
+The caller may not be the program's: it is in Guile's libraries if
+FRAME was called by, say, `map', or by `load' as the last thing in its
+file.  Then the return is reported, and the program pauses at the next
+line of its own that it reaches, if it reaches one."
+  (let ((name (or (frame-procedure-name frame) "the procedure"))
+        (internal? (guile-internal-frame? frame)))
     (add-ephemeral-trap!
      (lambda (handler)
        (trap-frame-finish frame handler (lambda (f) #t)))
      (lambda (returning-frame)
-       (let ((caller (or (frame-previous returning-frame) returning-frame))
-             (values (or (false-if-exception
-                          (frame-return-values returning-frame))
-                         '())))
-         (pause caller
-                (format #f "Returned from ~a~a, to ~a"
-                        name
-                        (if (null? values)
-                            ""
-                            (format #f " with ~{~s~^, ~}" values))
-                        (frame-location caller))
-                "step>"))))))
+       (let* ((caller (frame-previous returning-frame))
+              (values (or (false-if-exception
+                           (frame-return-values returning-frame))
+                          '()))
+              (message (format #f "Returned from ~a~a"
+                               name
+                               (if (null? values)
+                                   ""
+                                   (format #f " with ~{~s~^, ~}" values)))))
+         (if (and caller (step-frame? caller internal?))
+             (pause caller
+                    (format #f "~a, to ~a" message (frame-location caller))
+                    "step>")
+             (begin
+               (format #t "~&~a~%" message)
+               (add-next-line-trap! internal?))))))))
 
 (define* (pause frame message prompt #:key (top-frame? #t))
   "Pauses the program at FRAME and lets the operator inspect it, then
@@ -571,11 +789,19 @@ that is executing, as it is when a trap fires."
                    (*pause-top-frame?* top-frame?))
       (pause-interact frame frames message prompt))))
 
+(define (outermost-frame frame frames)
+  "The outermost frame of the program paused at FRAME, given FRAMES,
+its stack as shown in the backtrace: innermost first, without the
+frames of the code that runs the program."
+  (if (null? frames) frame (last frames)))
+
 (define (pause-interact frame frames message prompt)
   (begin
+    ;; The mode comes first: the GUI accepts the operator's actions
+    ;; by the mode, and they may act as soon as they see the message.
+    (gdn-set-input-mode! *gdn-application-window* 'trap)
     (format #t "~&~a~%" message)
     (gdn-update-backtrace! *gdn-backtrace-view* frames (*pause-top-frame?*))
-    (gdn-set-input-mode! *gdn-application-window* 'trap)
     (let loop ()
       (refresh-views!)
       (display prompt %gdn-prompt-port)
@@ -586,8 +812,10 @@ that is executing, as it is when a trap fires."
           ((run continue) #t)
           ((step) (add-line-step-trap! frame #f))
           ((step-into) (add-line-step-trap! frame #t))
-          ((step-instruction) (add-instruction-step-trap! frame #f))
-          ((step-into-instruction) (add-instruction-step-trap! frame #t))
+          ((step-instruction)
+           (add-instruction-step-trap! frame #f (outermost-frame frame frames)))
+          ((step-into-instruction)
+           (add-instruction-step-trap! frame #t (outermost-frame frame frames)))
           ((step-out) (add-step-out-trap! frame))
           ((stop) (abort-to-prompt %stop-tag))
           ((eval)
@@ -721,8 +949,9 @@ command arrives.  Returns the exit status."
   ;; Make the trap procedures, like add-trap-at-procedure-call!,
   ;; available to the operator.
   (module-use! (current-module) (resolve-interface '(system vm trap-state)))
+  (compile-for-debugging!)
   (apply-command-line! (cdr (command-line)))
   (repl-welcome)
-  (let ((status (repl-loop)))
+  (let ((status (call-with-interruptible-input repl-loop)))
     (format #t "The REPL has ended with a return status of ~a.~%" status)
     status))

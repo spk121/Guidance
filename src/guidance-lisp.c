@@ -106,7 +106,7 @@ static void *after_sweep_handler (void *hook_data, void *fn_data, void *data);
 static int  unix_pty_fd_new (void);
 static SCM  port_from_unix_input_fd (int fd);
 static SCM  port_from_unix_output_fd (int fd);
-static void eval_resource (const char *path);
+static void eval_resource (const char *path, const char *file_name);
 static void mark_async_poll (GdnLisp *self);
 
 static SCM  response_data_to_scm (GdnLispUserInput *input);
@@ -151,7 +151,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
 
   /* Everything in (gdn lib) should not require special gdn
    * primitives */
-  eval_resource ("/com/lonelycactus/Guidance/gdn/lib.scm");
+  eval_resource ("/com/lonelycactus/Guidance/gdn/lib.scm", "gdn/lib.scm");
 
   /* Provide GUI-related primitives */
   scm_c_define_module ("gdn gui", gdn_gui_guile_init, NULL);
@@ -235,7 +235,7 @@ gdn_lisp_run (GdnLisp *self)
 {
   g_assert (GDN_IS_LISP (self));
 
-  eval_resource ("/com/lonelycactus/Guidance/gdn/repl.scm");
+  eval_resource ("/com/lonelycactus/Guidance/gdn/repl.scm", "gdn/repl.scm");
   self->default_thread =
       scm_spawn_thread (spawn_top_repl, NULL, spawn_handler, NULL);
 }
@@ -309,6 +309,32 @@ gdn_lisp_set_user_response (GdnLisp *self, GdnLispCommand cmd, const void *data)
   if (cmd == GDN_LISP_COMMAND_EVAL)
     input->data = g_strdup (data);
   g_async_queue_push (self->user_input_queue, input);
+}
+
+/* Removes the operator's actions (run, continue, stop, and the steps)
+ * that are waiting for the REPL thread.  Expressions that the operator
+ * entered are kept, and so are wake-ups, which stand for requests. */
+void
+gdn_lisp_discard_actions (GdnLisp *self)
+{
+  g_assert (GDN_IS_LISP (self));
+
+  GQueue            kept = G_QUEUE_INIT;
+  GdnLispUserInput *input;
+
+  g_async_queue_lock (self->user_input_queue);
+  while ((input = g_async_queue_try_pop_unlocked (self->user_input_queue))
+         != NULL)
+    {
+      if (input->cmd == GDN_LISP_COMMAND_EVAL
+          || input->cmd == GDN_LISP_COMMAND_WAKE)
+        g_queue_push_tail (&kept, input);
+      else
+        g_free (input);
+    }
+  while ((input = g_queue_pop_head (&kept)) != NULL)
+    g_async_queue_push_unlocked (self->user_input_queue, input);
+  g_async_queue_unlock (self->user_input_queue);
 }
 
 void
@@ -387,6 +413,12 @@ gdn_lisp_request_module_procedures (GdnLisp *self, const char *module_name)
 {
   push_request (self,
                 scm_list_2 (sym ("module-procedures"), str (module_name)));
+}
+
+void
+gdn_lisp_request_set_program (GdnLisp *self, const char *file)
+{
+  push_request (self, scm_list_2 (sym ("set-program"), str (file)));
 }
 
 void
@@ -473,9 +505,14 @@ after_sweep_handler (G_GNUC_UNUSED void *hook_data,
 /* Evaluates a Scheme file stored in the GResource bundle.  It is
  * compiled rather than interpreted: compiled procedures are faster,
  * and Guile's procedure traps can only tell compiled procedures
- * apart. */
+ * apart.
+ *
+ * FILE_NAME is recorded as the source file of its procedures, as if it
+ * had been loaded from the load path.  The debugger recognizes
+ * Guidance's own frames by it, to keep them out of backtraces and
+ * stepping; see guile-internal-frame? in (gdn lib). */
 static void
-eval_resource (const char *path)
+eval_resource (const char *path, const char *file_name)
 {
   GBytes *     contents;
   gsize        len;
@@ -487,8 +524,9 @@ eval_resource (const char *path)
   g_assert_nonnull (contents);
   data = g_bytes_get_data (contents, &len);
   eval_string = scm_c_public_ref ("ice-9 eval-string", "eval-string");
-  scm_call_3 (eval_string, scm_from_utf8_stringn (data, len),
-              scm_from_utf8_keyword ("compile?"), SCM_BOOL_T);
+  scm_call_5 (eval_string, scm_from_utf8_stringn (data, len),
+              scm_from_utf8_keyword ("compile?"), SCM_BOOL_T,
+              scm_from_utf8_keyword ("file"), scm_from_utf8_string (file_name));
   g_bytes_unref (contents);
 }
 

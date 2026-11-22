@@ -34,6 +34,21 @@ struct _GdnTerminalView
   guint          prompt_source;
   guint          error_source;
   int            output_fd;
+  int            input_fd; /* The program's output */
+  int            error_fd; /* The program's error output */
+  /* Bytes read from each stream that end part-way through a UTF-8
+   * character, kept until the rest arrives. */
+  GByteArray *   input_pending;
+  GByteArray *   prompt_pending;
+  GByteArray *   error_pending;
+  GtkTextMark *  end_mark; /* Stays at the end of the text */
+  guint          scroll_source;
+  /* For the transcript: whether old text has been dropped, whether
+   * the transcript says so yet, and whether it is at a line start. */
+  gboolean       trimmed;
+  gboolean       trim_noted;
+  gboolean       at_line_start;
+  int            line_chars; /* Characters in the last line of the text */
   gboolean       port_mode;
   gboolean       echo_mode;
 };
@@ -52,7 +67,14 @@ poll_terminal_prompt (gint fd, GIOCondition condition, gpointer user_data);
 static gboolean
 poll_terminal_error (gint fd, GIOCondition condition, gpointer user_data);
 
-static char *xread (int fd);
+static char *read_text (int fd, GByteArray *pending);
+static void  append_text (GdnTerminalView *self,
+                          const char *     text,
+                          const char *     tag_name);
+static void  drain_stream (GdnTerminalView *self,
+                           int              fd,
+                           GByteArray *     pending,
+                           const char *     tag_name);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -97,6 +119,20 @@ gdn_terminal_view_init (GdnTerminalView *self)
   self->history = NULL;
   self->history_cur = NULL;
   self->output_fd = STDOUT_FILENO;
+  self->input_pending = g_byte_array_new ();
+  self->prompt_pending = g_byte_array_new ();
+  self->error_pending = g_byte_array_new ();
+  {
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->text_view);
+    GtkTextIter    end;
+    gtk_text_buffer_get_end_iter (buffer, &end);
+    self->end_mark = gtk_text_buffer_create_mark (buffer, NULL, &end, FALSE);
+  }
+  self->scroll_source = 0;
+  self->trimmed = FALSE;
+  self->trim_noted = FALSE;
+  self->at_line_start = TRUE;
+  self->line_chars = 0;
   self->port_mode = TRUE;
   self->echo_mode = TRUE;
 
@@ -115,13 +151,30 @@ gdn_terminal_view_connect_ports (GdnTerminalView *self,
                                  int              error_fd,
                                  int              output_fd)
 {
-  self->input_source = g_unix_fd_add_full (
-      G_PRIORITY_DEFAULT, input_fd, G_IO_IN, poll_terminal_text, self, NULL);
-  self->prompt_source = g_unix_fd_add_full (
-      G_PRIORITY_DEFAULT, prompt_fd, G_IO_IN, poll_terminal_prompt, self, NULL);
-  self->error_source = g_unix_fd_add_full (
-      G_PRIORITY_DEFAULT, error_fd, G_IO_IN, poll_terminal_error, self, NULL);
+  /* The program's output is read when the GTK thread has nothing else
+   * to do.  A program that prints without pause then cannot keep the
+   * window from being drawn or from responding: it is held up, by its
+   * full pseudoterminal, until its output has been read. */
+  self->input_source =
+      g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, input_fd, G_IO_IN,
+                          poll_terminal_text, self, NULL);
+  self->prompt_source =
+      g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, prompt_fd, G_IO_IN,
+                          poll_terminal_prompt, self, NULL);
+  self->error_source =
+      g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, error_fd, G_IO_IN,
+                          poll_terminal_error, self, NULL);
   self->output_fd = output_fd;
+  self->input_fd = input_fd;
+  self->error_fd = error_fd;
+
+  /* A stream that is ready when the GTK thread looks may have been
+   * read by drain_stream by the time its handler runs.  The read must
+   * then come back empty-handed rather than wait, which would stop the
+   * GTK thread. */
+  g_unix_set_fd_nonblocking (input_fd, TRUE, NULL);
+  g_unix_set_fd_nonblocking (prompt_fd, TRUE, NULL);
+  g_unix_set_fd_nonblocking (error_fd, TRUE, NULL);
 }
 
 void
@@ -185,38 +238,11 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
 
   if (self->echo_mode)
     {
-      /* Write the prompt and the text from the input GtkEntry box
-       * onto the main output widget */
-      GtkTextView *  view = self->text_view;
-      GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-      GtkTextIter    iter_start, iter_end;
-      GtkTextMark *  mark_start;
-      // const char *   prompt = gtk_label_get_text (self->prompt_label);
-
-      /* Store the 'before' location */
-      gtk_text_buffer_get_iter_at_mark (
-          text_buffer, &iter_start, gtk_text_buffer_get_insert (text_buffer));
-      mark_start =
-          gtk_text_buffer_create_mark (text_buffer, NULL, &iter_start, TRUE);
-
-      /* Write the prompt and the input text to the main output widget */
-      // gtk_text_buffer_insert_at_cursor (text_buffer, prompt, strlen
-      // (prompt));
-      gtk_text_buffer_insert_at_cursor (text_buffer, text, strlen (text));
-      gtk_text_buffer_insert_at_cursor (text_buffer, "\n", 1);
-      xgtk_transcribe (text);
-      xgtk_transcribe ("\n");
-
-      /* Change the presentation for the prompt and entry text */
-      gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
-      gtk_text_buffer_get_iter_at_mark (
-          text_buffer, &iter_end, gtk_text_buffer_get_insert (text_buffer));
-      gtk_text_buffer_apply_tag_by_name (text_buffer, "input", &iter_start,
-                                         &iter_end);
-      gtk_text_buffer_delete_mark (text_buffer, mark_start);
-
-      gtk_text_view_scroll_mark_onscreen (
-          view, gtk_text_buffer_get_insert (text_buffer));
+      /* Show the text from the input GtkEntry box in the main output
+       * widget. */
+      char *line = g_strconcat (text, "\n", NULL);
+      append_text (self, line, "input");
+      g_free (line);
     }
 
   /* Append the entry to the history */
@@ -235,23 +261,13 @@ poll_terminal_text (gint                       fd,
                     gpointer                   user_data)
 {
   GdnTerminalView *self = user_data;
+  char *           text = read_text (fd, self->input_pending);
 
-  GtkTextView *  view = self->text_view;
-  GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-
-  /* Get all the text from the read port. */
-  char *buf = xread (fd);
-  int   len = strlen (buf);
-
-  /* Copy it over to the GtkTextView output widget. */
-  if (len > 0)
-    gtk_text_buffer_insert_at_cursor (text_buffer, buf, len);
-  xgtk_transcribe (buf);
-  gtk_text_view_scroll_mark_onscreen (view,
-                                      gtk_text_buffer_get_insert (text_buffer));
-  g_free (buf);
-
-  return TRUE;
+  if (text == NULL)
+    return G_SOURCE_REMOVE;
+  append_text (self, text, NULL);
+  g_free (text);
+  return G_SOURCE_CONTINUE;
 }
 
 gboolean
@@ -260,36 +276,13 @@ poll_terminal_error (gint                       fd,
                      gpointer                   user_data)
 {
   GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
-  GtkTextView *    view = self->text_view;
-  GtkTextBuffer *text_buffer = gtk_text_view_get_buffer (view);
-  char *         buf = xread (fd);
-  int            len = strlen (buf);
+  char *           text = read_text (fd, self->error_pending);
 
-  GtkTextIter  iter_start, iter_end;
-  GtkTextMark *mark_start;
-
-  /* Store the 'before' location */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  mark_start =
-      gtk_text_buffer_create_mark (text_buffer, NULL, &iter_start, TRUE);
-
-  /* Copy it over to the GtkTextView output widget. */
-  gtk_text_buffer_insert_at_cursor (text_buffer, buf, len);
-  gtk_text_view_scroll_mark_onscreen (view,
-                                      gtk_text_buffer_get_insert (text_buffer));
-  xgtk_transcribe (buf);
-
-  /* Change the presentation for the error text */
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
-  gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_end,
-                                    gtk_text_buffer_get_insert (text_buffer));
-  gtk_text_buffer_apply_tag_by_name (text_buffer, "error", &iter_start,
-                                     &iter_end);
-  gtk_text_buffer_delete_mark (text_buffer, mark_start);
-  g_free (buf);
-
-  return TRUE;
+  if (text == NULL)
+    return G_SOURCE_REMOVE;
+  append_text (self, text, "error");
+  g_free (text);
+  return G_SOURCE_CONTINUE;
 }
 
 gboolean
@@ -303,11 +296,18 @@ poll_terminal_prompt (gint                       fd,
   GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
   char *buf;
 
+  /* The REPL prints its prompt after the output that goes before it,
+   * but by another stream.  Show that output first. */
+  drain_stream (self, self->input_fd, self->input_pending, NULL);
+  drain_stream (self, self->error_fd, self->error_pending, "error");
+
   /* Clear out the old label */
   gtk_label_set_text (self->prompt_label, "");
 
   /* Read from the port */
-  buf = xread (fd);
+  buf = read_text (fd, self->prompt_pending);
+  if (buf == NULL)
+    return G_SOURCE_REMOVE;
 
   /* How big a prompt should we handle? */
   glong u8_len;
@@ -331,56 +331,208 @@ poll_terminal_prompt (gint                       fd,
     }
   g_free (buf);
 
-  return TRUE;
+  return G_SOURCE_CONTINUE;
 }
 
 ////////////////////////////////////////////////////////////////
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
+/* The terminal keeps this much text.  When it has more, the oldest is
+ * dropped, in whole lines, down to the lower figure, so that it need
+ * not be trimmed every time something is printed.  The limit in
+ * characters is for output with few line breaks. */
+#define MAX_LINES 10000
+#define TRIMMED_LINES 9000
+#define MAX_CHARS 2000000
+#define TRIMMED_CHARS 1800000
+
+/* A text view becomes very slow, and uses a great deal of memory, when
+ * a single line is enormous.  Lines longer than this are shown broken
+ * into lines of this length. */
+#define MAX_LINE_CHARS 1000
+
+/* Returns TEXT with a line break added wherever a line would become
+ * longer than MAX_LINE_CHARS, or NULL if it needs none.  LINE_CHARS is
+ * the length of the line that TEXT continues, and is updated. */
 static char *
-xread (int fd)
+break_long_lines (const char *text, int *line_chars)
 {
-#define BLOCK_LEN 1024
-#define MAX_LEN 10 * BLOCK_LEN
-  ssize_t     len, total_len;
-  guint8      buf[BLOCK_LEN];
-  guint8      nullbuf[1] = { '\0' };
-  guint8      badbuf[] = "■\n";
-  GByteArray *gbarray;
+  GString *   broken = NULL;
+  const char *piece = text;
 
-  total_len = 0;
-  gbarray = g_byte_array_new ();
-  do
+  for (const char *p = text; *p != '\0'; p = g_utf8_next_char (p))
     {
-      memset (buf, 0, BLOCK_LEN);
-      len = read (fd, buf, BLOCK_LEN);
+      if (*p == '\n')
+        *line_chars = 0;
+      else if (*line_chars == MAX_LINE_CHARS)
+        {
+          if (broken == NULL)
+            broken = g_string_new (NULL);
+          g_string_append_len (broken, piece, p - piece);
+          g_string_append_c (broken, '\n');
+          piece = p;
+          *line_chars = 1;
+        }
+      else
+        (*line_chars)++;
+    }
+  if (broken == NULL)
+    return NULL;
+  g_string_append (broken, piece);
+  return g_string_free (broken, FALSE);
+}
+
+/* Reads what is waiting on FD, which must be ready to read, and
+ * returns it as valid, NUL-terminated UTF-8, to be freed with g_free.
+ * Nothing is left out: whatever is still waiting keeps FD ready, and
+ * is read by the next call.
+ *
+ * A read can end part-way through a UTF-8 character.  Those bytes are
+ * kept in PENDING and returned with the rest of the character by a
+ * later call.  Bytes that are not UTF-8 at all are replaced.
+ *
+ * Returns NULL if FD can no longer be read. */
+static char *
+read_text (int fd, GByteArray *pending)
+{
+#define READ_LEN 65536
+  guint       old_len = pending->len;
+  ssize_t     len;
+  const char *data, *end;
+  gsize       valid_len, rest_len;
+  char *      text;
+
+  g_byte_array_set_size (pending, old_len + READ_LEN);
+  len = read (fd, pending->data + old_len, READ_LEN);
+  if (len <= 0)
+    {
+      g_byte_array_set_size (pending, old_len);
+      if (len == -1 && (errno == EINTR || errno == EAGAIN))
+        return g_strdup ("");
       if (len == -1)
-        {
-          g_critical ("reading from Lisp file descriptor failed: %s",
-                      strerror (errno));
-          break;
-        }
-      else if (len == 0)
-        {
-          g_critical ("EOF detected when reading from Lisp file descriptor");
-          break;
-        }
-      else if (total_len <= MAX_LEN)
-        {
-          g_byte_array_append (gbarray, buf, len);
-        }
-      total_len += len;
+        g_critical ("reading from Lisp file descriptor failed: %s",
+                    strerror (errno));
+      else
+        g_critical ("EOF detected when reading from Lisp file descriptor");
+      return NULL;
     }
-  while (len == BLOCK_LEN);
+  g_byte_array_set_size (pending, old_len + len);
 
-  if (total_len > MAX_LEN)
+  /* The text is handled as C strings, which a NUL would cut short.
+   * Make it a byte that is not UTF-8, to be replaced like any other. */
+  for (guint i = old_len; i < pending->len; i++)
+    if (pending->data[i] == '\0')
+      pending->data[i] = 0xff;
+
+  data = (const char *) pending->data;
+  if (g_utf8_validate (data, pending->len, &end))
     {
-      g_critical ("truncating excessive input read from Lisp file descriptor");
-      g_byte_array_append (gbarray, badbuf, sizeof (badbuf));
+      text = g_strndup (data, pending->len);
+      g_byte_array_set_size (pending, 0);
+      return text;
     }
-  g_byte_array_append (gbarray, nullbuf, 1);
-  return (char *) g_byte_array_free (gbarray, FALSE);
+
+  valid_len = end - data;
+  rest_len = pending->len - valid_len;
+  if (g_utf8_get_char_validated (end, rest_len) == (gunichar) -2)
+    {
+      /* The rest is the start of a character.  Keep it. */
+      text = g_strndup (data, valid_len);
+      g_byte_array_remove_range (pending, 0, valid_len);
+      return text;
+    }
+
+  text = g_utf8_make_valid (data, pending->len);
+  g_byte_array_set_size (pending, 0);
+  return text;
+}
+
+/* Reads and shows what is waiting on FD now, without waiting for more.
+ * It stops after a few megabytes, in case another thread of the
+ * program is printing without end. */
+static void
+drain_stream (GdnTerminalView *self,
+              int              fd,
+              GByteArray *     pending,
+              const char *     tag_name)
+{
+  for (int i = 0; i < 64; i++)
+    {
+      GPollFD poll_fd = { fd, G_IO_IN, 0 };
+      char *  text;
+
+      if (g_poll (&poll_fd, 1, 0) <= 0 || !(poll_fd.revents & G_IO_IN))
+        break;
+      text = read_text (fd, pending);
+      if (text == NULL)
+        break;
+      append_text (self, text, tag_name);
+      g_free (text);
+    }
+}
+
+static gboolean
+scroll_to_end (gpointer user_data)
+{
+  GdnTerminalView *self = user_data;
+
+  self->scroll_source = 0;
+  gtk_text_view_scroll_mark_onscreen (self->text_view, self->end_mark);
+  return G_SOURCE_REMOVE;
+}
+
+/* Appends TEXT to the terminal, in the style of the tag TAG_NAME if it
+ * is not NULL, drops the oldest text if there is now too much, and
+ * shows the end. */
+static void
+append_text (GdnTerminalView *self, const char *text, const char *tag_name)
+{
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->text_view);
+  GtkTextIter    end;
+  char *         broken;
+  const char *   shown;
+
+  if (*text == '\0')
+    return;
+
+  /* The transcript has the text as it came.  For the tests, it also
+   * notes, once and between lines, that old text has been dropped. */
+  if (self->trimmed && !self->trim_noted && self->at_line_start)
+    {
+      self->trim_noted = TRUE;
+      xgtk_transcribe ("[old text dropped]\n");
+    }
+  xgtk_transcribe (text);
+  self->at_line_start = g_str_has_suffix (text, "\n");
+  broken = break_long_lines (text, &self->line_chars);
+  shown = broken != NULL ? broken : text;
+
+  /* At the end, wherever the operator's cursor or selection is. */
+  gtk_text_buffer_get_end_iter (buffer, &end);
+  if (tag_name != NULL)
+    gtk_text_buffer_insert_with_tags_by_name (buffer, &end, shown, -1,
+                                              tag_name, NULL);
+  else
+    gtk_text_buffer_insert (buffer, &end, shown, -1);
+  g_free (broken);
+
+  if (xgtk_text_buffer_drop_old_text (buffer, MAX_LINES, TRIMMED_LINES,
+                                      MAX_CHARS, TRIMMED_CHARS))
+    self->trimmed = TRUE;
+
+  /* Show the end.  The view scrolls once it has laid out the new
+   * text, which it does when idle, not for each piece of output. */
+  gtk_text_view_scroll_to_mark (self->text_view, self->end_mark, 0.0, TRUE,
+                                0.0, 1.0);
+
+  /* After a lot of output at once, that can stop short of the end,
+   * because the view only estimates the height of text that it has
+   * not laid out yet.  Go to the end again once things are quiet. */
+  if (self->scroll_source == 0)
+    self->scroll_source =
+        g_idle_add_full (G_PRIORITY_LOW, scroll_to_end, g_object_ref (self),
+                         g_object_unref);
 }
 
 ////////////////////////////////////////////////////////////////

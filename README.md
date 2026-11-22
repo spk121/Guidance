@@ -58,6 +58,11 @@ Press Run (F5) to run FILE with the ARGs, as `guile FILE ARG...`
 would.  The program sees its own command line, so `(command-line)`
 returns `("FILE" "ARG" ...)`.  Without a FILE, Guidance is a REPL.
 
+The menu's Open Program (Ctrl+O) chooses a program in place of FILE,
+without arguments.  The options, such as `-L`, stay in effect.  The
+menu also has the keyboard shortcuts (Ctrl+?), About, and Quit
+(Ctrl+Q).
+
 These options are a subset of Guile's:
 
 | Option         | Meaning                                                    |
@@ -147,7 +152,9 @@ There are a few ways to pause a program where you want to look at it.
    can be set before the program is loaded, and it remains when the
    program is run again.
 
-3. Set a breakpoint at a procedure, from the Modules page.
+3. Set a breakpoint at a procedure, from the Modules page.  It is for
+   the procedure of that name, so it too remains when the program is
+   run again and defines the procedure again.
 
 4. Use Guile's trap procedures in the REPL, which Guidance makes
    available.  For example, to pause at `number->locale-string` in
@@ -155,10 +162,22 @@ There are a few ways to pause a program where you want to look at it.
 
        (add-trap-at-procedure-call! (@ (ice-9 i18n) number->locale-string))
 
+   Guidance's `add-trap-at-procedure-call!` makes the same kind of
+   breakpoint as the Modules page when the procedure is a module's
+   binding of that name, as one made with `define` is.  For any other
+   procedure it is Guile's own, a trap for that one procedure object.
+
 5. Press Pause (F6) while the program runs.
 
 Breakpoints work with compiled code.  Programs run by Guidance are
 compiled automatically, as Guile does by default.
+
+Guidance compiles them, and the modules they use, with some of Guile's
+optimizations turned off, so that variables keep their names and
+stepping follows the lines as written.  It keeps what it compiles in a
+cache of its own, `$XDG_CACHE_HOME/guidance` or `~/.cache/guidance`,
+apart from Guile's.  A variable bound to the result of a call becomes
+visible one step after the line that binds it.
 
 The Peek log
 ------------
@@ -176,6 +195,10 @@ logs `foo.scm:2: (double 21)` when called with 21.
 Known limitations
 -----------------
 
+- Step Into is not yet safe to use through code that throws and
+  catches an exception, or that calls `load`: the program can go
+  wrong, and Guidance can crash.  Step Over does not have this
+  problem.  See [PLAN.md](PLAN.md).
 - Which local variables can be seen at a given point is up to Guile's
   compiler.  For example, a variable may be unavailable just after its
   last use.
