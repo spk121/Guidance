@@ -214,6 +214,10 @@ in the REPL thread, as the GUI does while a program runs."
            (and (>= (vector-length bt) 2)
                 (string-prefix? "(outer" (vector-ref (vector-ref bt 1) 0)))))
   (check "argument value is shown" (equal? (top-frame-binding "x") "5"))
+  (check "the outermost frame is shown as the top level"
+         (let ((bt (last-backtrace)))
+           (equal? (vector-ref (vector-ref bt (1- (vector-length bt))) 0)
+                   "(top level)")))
   (check "the program stops at the error"
          (not (output-contains? "not reached"))))
 

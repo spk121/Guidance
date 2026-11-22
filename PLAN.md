@@ -573,11 +573,28 @@ The open one is last in this list.
         choosing one puts it back in the entry.
 
       Tests: one in `tests/repl-test.scm`, one in `tests/gui-smoke.sh`.
-- [ ] **Backtrace page layout.**  At the default window size the Value
+- [x] **Backtrace page layout.**  At the default window size the Value
       column, the one that matters, is off the right edge, and the
       Location column is cut to "fact.sc".  The Type column is blank
       except for "A" on arguments.  A top-level frame is shown as
-      `(_)`.
+      `(_)`.  Fixed:
+      - The variables columns are now Name, Value and Kind.  Value
+        expands to take the free width and ellipsizes at the end, with
+        the full text as a tooltip; any extra information Guile gives
+        about the value is appended after "⇒".  The separate
+        Representation and Info columns are gone.
+      - Kind reads "argument" or "local", plus how the value is stored
+        when it is not an ordinary Scheme object (for example
+        "local, f64").
+      - The Location label is wide enough for "program.scm:120" and,
+        when it is not, drops the start of the name rather than the
+        line number.  The stack pane starts wider (400 pixels) and the
+        default window is 1000×650, so both panes fit without
+        scrolling.
+      - A procedure with no name (Guile names it `_`) is shown as `λ`,
+        and the outermost frame, which is the top level of the program
+        being loaded, as "(top level)".  The REPL test checks the
+        latter.
 - [ ] **Source page.**  No line numbers, and no mark on lines that
       have breakpoints (already noted under Phase 2).
 - [ ] **Threads page.**  Rows read `#<thread 139940890986176

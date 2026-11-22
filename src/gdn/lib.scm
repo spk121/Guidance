@@ -590,11 +590,24 @@ TOP-FRAME? should be true if the first frame is the one executing, as
 when the program is paused by a trap.  Returns a vector of backtrace
 entries, as described above."
   (if (and frames (pair? frames))
-      (list->vector
-       (cons (frame->backtrace-entry (car frames) top-frame?)
-             (map (lambda (f) (frame->backtrace-entry f #f))
-                  (cdr frames))))
+      (let ((entries
+             (list->vector
+              (cons (frame->backtrace-entry (car frames) top-frame?)
+                    (map (lambda (f) (frame->backtrace-entry f #f))
+                         (cdr frames))))))
+        (name-top-level! entries)
+        entries)
       (vector)))
+
+(define (name-top-level! entries)
+  "The outermost frame of a program, if it is a procedure with no name
+and no arguments, is the top level of a file, or an expression from the
+REPL: show it as such, rather than as (λ)."
+  (let* ((last (1- (vector-length entries)))
+         (entry (vector-ref entries last)))
+    (when (and (string=? (vector-ref entry 0) "(λ)")
+               (zero? (vector-ref entry 4)))
+      (vector-set! entry 0 "(top level)"))))
 
 (define (object->extra-info x)
   (cond
@@ -616,7 +629,8 @@ ending in _ for a rest argument that is not available."
   (with-output-to-string
     (lambda ()
       (display "(")
-      (display (or (car call) 'λ))
+      ;; Guile gives _ for a procedure with no name.
+      (display (if (memq (car call) '(#f _)) 'λ (car call)))
       (let loop ((args (cdr call)))
         (cond
          ((pair? args)
