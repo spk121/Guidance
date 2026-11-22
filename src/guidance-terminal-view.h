@@ -34,5 +34,6 @@ void gdn_terminal_view_connect_ports (GdnTerminalView *self,
                                       int              output_fd);
 void gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *view);
 void gdn_terminal_view_set_port_mode (GdnTerminalView *view, gboolean flag);
+void gdn_terminal_view_focus_entry (GdnTerminalView *view);
 
 G_END_DECLS

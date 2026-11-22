@@ -160,24 +160,18 @@ gdn_binding_info_get_extra (GdnBindingInfo *self)
   return self->extra;
 }
 
-void
-gdn_binding_info_list_store_update_all (GListStore *store, SCM all_bindings)
+GPtrArray *
+gdn_binding_info_array_new_from_scm (SCM all_bindings)
 {
-  g_assert_cmpuint (G_OBJECT_TYPE (store), ==, G_TYPE_LIST_STORE);
   g_assert (scm_is_vector (all_bindings));
 
-  SCM             entry;
-  GdnBindingInfo *info;
-  size_t          i;
+  size_t     len = scm_c_vector_length (all_bindings);
+  GPtrArray *array = g_ptr_array_new_full (len, g_object_unref);
 
-  g_list_store_remove_all (store);
-
-  for (i = 0; i < scm_c_vector_length (all_bindings); i++)
-    {
-      entry = scm_c_vector_ref (all_bindings, i);
-      info = info_new_from_scm (entry);
-      g_list_store_append (store, info);
-    }
+  for (size_t i = 0; i < len; i++)
+    g_ptr_array_add (array,
+                     info_new_from_scm (scm_c_vector_ref (all_bindings, i)));
+  return array;
 }
 
 ////////////////////////////////////////////////////////////////

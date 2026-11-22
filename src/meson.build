@@ -34,7 +34,7 @@ guidance_sources += gnome.compile_resources('guidance-resources',
   c_name: 'guidance'
 )
 
-executable('guidance', guidance_sources,
+guidance_exe = executable('guidance', guidance_sources,
   dependencies: guidance_deps,
   include_directories: config_inc,
   install: true,

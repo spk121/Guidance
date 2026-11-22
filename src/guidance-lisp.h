@@ -25,9 +25,10 @@ G_BEGIN_DECLS
 
 #define SCM_TO_GPOINTER(x) ((gpointer) (scm_t_bits *) (SCM_UNPACK (x)))
 #define GPOINTER_TO_SCM(p) (SCM_PACK ((scm_t_bits) p))
+
 /*
- * Indicates an operator request to the lisp interpreter during a
- * trap or break.
+ * Indicates an operator request to the lisp interpreter.  These are
+ * delivered to the Scheme side as the symbols listed in (gdn repl).
  */
 typedef enum
 {
@@ -38,11 +39,10 @@ typedef enum
   GDN_LISP_COMMAND_STEP_INSTRUCTION,
   GDN_LISP_COMMAND_STEP_OUT,
   GDN_LISP_COMMAND_RUN,
-  GDN_LISP_COMMAND_RUN_DEBUG,
   GDN_LISP_COMMAND_CONTINUE,
   GDN_LISP_COMMAND_STOP,
-  GDN_LISP_COMMAND_RESTART,
   GDN_LISP_COMMAND_EVAL,
+  GDN_LISP_COMMAND_WAKE,
   GDN_LISP_N_COMMANDS
 } GdnLispCommand;
 
@@ -55,64 +55,31 @@ typedef struct _GdnLispUserInput
 #define GDN_LISP_TYPE (gdn_lisp_get_type ())
 G_DECLARE_FINAL_TYPE (GdnLisp, gdn_lisp, GDN, LISP, GObject)
 
-GdnLisp *             gdn_lisp_new (void);
-void                  gdn_lisp_run (GdnLisp *self);
-void                  gdn_lisp_cancel_thread_async (GdnLisp *lisp);
-void                  gdn_lisp_exit_async (GdnLisp *self);
-void                  gdn_lisp_break_async (GdnLisp *lisp);
-gboolean              gdn_lisp_switch_thread (GdnLisp *lisp, int thd_idx);
-SCM                   gdn_lisp_get_default_thread (GdnLisp *lisp);
-int                   gdn_lisp_get_input_fd (GdnLisp *self);
-int                   gdn_lisp_get_input_error_fd (GdnLisp *self);
-int                   gdn_lisp_get_input_prompt_fd (GdnLisp *self);
-int                   gdn_lisp_get_output_fd (GdnLisp *self);
-void                  gdn_lisp_set_user_response (GdnLisp *      self,
-                                                  GdnLispCommand cmd,
-                                                  const void *   data);
-SCM                   gdn_lisp_to_scm (GdnLisp *self);
+GdnLisp *gdn_lisp_new (void);
 
+/* Starts the Guidance REPL in a new Guile thread. */
+void gdn_lisp_run (GdnLisp *self);
+
+SCM  gdn_lisp_get_default_thread (GdnLisp *lisp);
+int  gdn_lisp_get_input_fd (GdnLisp *self);
+int  gdn_lisp_get_input_error_fd (GdnLisp *self);
+int  gdn_lisp_get_input_prompt_fd (GdnLisp *self);
+int  gdn_lisp_get_output_fd (GdnLisp *self);
+SCM  gdn_lisp_to_scm (GdnLisp *self);
 char **gdn_lisp_get_paths (void);
 
-void gdn_lisp_add_proc_trap_async (GdnLisp *self, SCM proc);
+/* GTK THREAD: Delivers an operator action to the REPL, which is
+ * waiting for one in error, trap, or REPL mode. */
+void gdn_lisp_set_user_response (GdnLisp *      self,
+                                 GdnLispCommand cmd,
+                                 const void *   data);
 
-void                  gdn_lisp_continue (GdnLisp *lisp, GdnLispCommand command);
-int                   gdn_lisp_set_input_callback (GdnLisp *            lisp,
-                                                   GMainContext *       ctx,
-                                                   GPollableSourceFunc *func,
-                                                   gpointer             data);
+/* GTK THREAD: Asks the REPL to add a trap at a call to PROC.  If the
+ * program is RUNNING, the request is delivered asynchronously;
+ * otherwise it is handled while the REPL waits for input. */
+void gdn_lisp_add_proc_trap (GdnLisp *self, SCM proc, gboolean running);
 
-/*
- * Returns the store that holds Guile thread info.
- * @param lisp The object pointer.
- * @return A GListStore of GdnThreadInfo.
- */
-GListStore *gdn_lisp_get_threads (GdnLisp *lisp);
-
-/*
- * Requests an update of the Guile thread info store.
- * @param lisp The object pointer.
- */
-void gdn_lisp_update_threads (GdnLisp *lisp);
-
-/*
- * Returns the store that hods the currently loaded modules.
- * @param lisp The object pointer.
- * @return A GListStore of a GdnModuleInfo.
- */
-GListStore *gdn_lisp_get_modules (GdnLisp *lisp);
-
-/*
- * Returns the store that holds the current traps.
- * @param lisp The object pointer.
- * @return A GListStore of GdnTrapInfo elements.
- */
-GListStore *gdn_lisp_get_traps (GdnLisp *lisp);
-
-void gdn_lisp_disable_trap (GdnLisp *lisp, int id);
-void gdn_lisp_enable_trap (GdnLisp *lisp, int id);
-void gdn_lisp_delete_trap (GdnLisp *lisp, int id);
-int
-    gdn_lisp_create_trap_at_procedure (GdnLisp *lisp, GFile *file, GString *name);
-int gdn_lisp_create_trap_at_line (GdnLisp *lisp, GFile *file, int line);
+/* GTK THREAD: Asks the REPL to stop the running program. */
+void gdn_lisp_stop_async (GdnLisp *self);
 
 G_END_DECLS

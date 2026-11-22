@@ -17,6 +17,7 @@
  */
 
 #include "guidance-backtrace-view.h"
+#include "guidance-xgtk.h"
 #include "guidance-binding-info.h"
 #include "guidance-frame-info.h"
 
@@ -54,6 +55,12 @@ typedef struct _GdnBacktraceViewAndListItem
   GdnBacktraceView *view;
   GtkListItem *     item;
 } GdnBacktraceViewAndListItem;
+
+typedef struct
+{
+  GdnBacktraceView *view;
+  GPtrArray *       frames; /* of GdnFrameInfo */
+} BacktraceUpdate;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
@@ -144,6 +151,9 @@ static GdnBacktraceViewAndListItem *create_pair (GdnBacktraceView *view,
                                                  GtkListItem *     item);
 static void free_pair (GdnBacktraceViewAndListItem *bvli);
 static void free_pair_closure_notify (gpointer data, GClosure *closure);
+static void show_bindings (GdnBacktraceView *self, GdnFrameInfo *info);
+static gboolean apply_backtrace_update (gpointer user_data);
+static void     backtrace_update_free (gpointer user_data);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -221,9 +231,7 @@ frame_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
   g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_BACKTRACE_VIEW);
   GdnFrameInfo *info = gtk_list_item_get_item (bvli->item);
   g_assert_cmpuint (G_OBJECT_TYPE (info), ==, GDN_FRAME_INFO_TYPE);
-  SCM bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
-
-  gdn_binding_info_list_store_update_all (self->bindings, bindings);
+  show_bindings (self, info);
 }
 
 /* This GtkButton::clicked handler */
@@ -239,9 +247,9 @@ location_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
     {
       int line = gdn_frame_info_get_line (info);
       int col = gdn_frame_info_get_column (info);
-      // FIXME: do I need to strdup here. How do I free?
-      g_signal_emit (bvli->view, signals[LOCATION], 0, g_strdup (filename),
-                     line, col);
+      /* G_TYPE_STRING signal arguments are copied by the signal
+       * system, so there is nothing to free here. */
+      g_signal_emit (bvli->view, signals[LOCATION], 0, filename, line, col);
     }
 }
 
@@ -588,6 +596,47 @@ add_column_factory (GtkColumnViewColumn *col,
   gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
 }
 
+/* GTK THREAD: Replaces the bindings list with those of INFO, or clears
+ * it if INFO is NULL. */
+static void
+show_bindings (GdnBacktraceView *self, GdnFrameInfo *info)
+{
+  guint n_old = g_list_model_get_n_items (G_LIST_MODEL (self->bindings));
+
+  if (info == NULL || gdn_frame_info_get_bindings (info) == NULL)
+    {
+      g_list_store_remove_all (self->bindings);
+      return;
+    }
+  GPtrArray *bindings = gdn_frame_info_get_bindings (info);
+  g_list_store_splice (self->bindings, 0, n_old, bindings->pdata,
+                       bindings->len);
+}
+
+/* GTK THREAD: Installs a new backtrace and shows the variables of the
+ * innermost frame. */
+static gboolean
+apply_backtrace_update (gpointer user_data)
+{
+  BacktraceUpdate * u = user_data;
+  GdnBacktraceView *self = u->view;
+
+  g_list_store_splice (self->frames, 0,
+                       g_list_model_get_n_items (G_LIST_MODEL (self->frames)),
+                       u->frames->pdata, u->frames->len);
+  show_bindings (self, u->frames->len > 0 ? u->frames->pdata[0] : NULL);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+backtrace_update_free (gpointer user_data)
+{
+  BacktraceUpdate *u = user_data;
+  g_object_unref (u->view);
+  g_ptr_array_unref (u->frames);
+  g_free (u);
+}
+
 static GdnBacktraceViewAndListItem *
 create_pair (GdnBacktraceView *view, GtkListItem *item)
 {
@@ -629,12 +678,13 @@ gdn_backtrace_view_to_scm (GdnBacktraceView *self)
 }
 
 static SCM
-scm_update_backtrace_x (SCM s_self, SCM s_frame)
+scm_update_backtrace_x (SCM s_self, SCM s_frames, SCM s_top_frame)
 {
   scm_assert_foreign_object_type (scm_backtrace_view_type, s_self);
-  if (SCM_UNBNDP (s_frame))
-    s_frame = SCM_BOOL_F;
-  SCM frames = scm_call_1 (get_backtrace_func, s_frame);
+  if (SCM_UNBNDP (s_top_frame))
+    s_top_frame = SCM_BOOL_F;
+  /* S_FRAMES is a list of frames, innermost first, or #f. */
+  SCM frames = scm_call_2 (get_backtrace_func, s_frames, s_top_frame);
 #ifndef G_DISABLE_ASSERT
   g_assert (scm_is_vector (frames));
   for (size_t i = 0; i < scm_c_vector_length (frames); i++)
@@ -651,8 +701,14 @@ scm_update_backtrace_x (SCM s_self, SCM s_frame)
     }
 #endif
 
+  /* This is called from the Guile thread.  Build the GObjects here,
+   * where reading the SCM data is natural, then hand them to the GTK
+   * thread, which is the only one allowed to touch the list stores. */
   GdnBacktraceView *self = scm_foreign_object_ref (s_self, 0);
-  gdn_frame_info_store_update (self->frames, frames);
+  BacktraceUpdate * u = g_new0 (BacktraceUpdate, 1);
+  u->view = g_object_ref (self);
+  u->frames = gdn_frame_info_array_new_from_scm (frames);
+  xgtk_invoke_on_main (apply_backtrace_update, u, backtrace_update_free);
   return SCM_UNSPECIFIED;
 }
 
@@ -668,7 +724,7 @@ gdn_backtrace_view_guile_init (void)
   get_backtrace_func =
       scm_variable_ref (scm_c_public_lookup ("gdn lib", "gdn-get-backtrace"));
 
-  scm_c_define_gsubr ("gdn-update-backtrace!", 1, 1, 0,
+  scm_c_define_gsubr ("gdn-update-backtrace!", 2, 1, 0,
                       (scm_t_subr) scm_update_backtrace_x);
   scm_c_export ("gdn-update-backtrace!", NULL);
 }

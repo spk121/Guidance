@@ -18,6 +18,7 @@
 
 #include "guidance-environment-view.h"
 #include "guidance-environment-info.h"
+#include "guidance-xgtk.h"
 #include <glib-unix.h>
 
 struct _GdnEnvironmentView
@@ -29,7 +30,6 @@ struct _GdnEnvironmentView
   GtkColumnViewColumn *value_col;
   GtkTreeListModel *   model;
 
-  SCM                  temp_store;
   GListStore *         store;
 };
 
@@ -38,7 +38,6 @@ G_DEFINE_TYPE (GdnEnvironmentView, gdn_environment_view, GTK_TYPE_BOX)
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
 ////////////////////////////////////////////////////////////////
-static GMutex lock;
 
 static SCM scm_environment_view_type = SCM_BOOL_F;
 
@@ -90,7 +89,6 @@ gdn_environment_view_init (GdnEnvironmentView *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
 
-  self->temp_store = SCM_BOOL_F;
   self->store = g_list_store_new (GDN_ENVIRONMENT_INFO_TYPE);
   self->model = gtk_tree_list_model_new (
       G_LIST_MODEL (self->store), FALSE, FALSE,
@@ -245,16 +243,30 @@ compare (gconstpointer a, gconstpointer b, G_GNUC_UNUSED gpointer user_data)
   return gdn_environment_info_compare (a, b);
 }
 
-/* This GSourceFunc is used on-idle to move the SCM temp_store to the
+/* This GSourceFunc is used on-idle to move the SCM entries to the
  * environment GListStore that the GUI uses. This has to occur in the
  * GTK thread. */
+typedef struct
+{
+  GdnEnvironmentView *view;
+  SCM                 entries; /* GC-protected until freed */
+} EnvironmentUpdate;
+
+static void
+environment_update_free (gpointer user_data)
+{
+  EnvironmentUpdate *u = user_data;
+  scm_gc_unprotect_object (u->entries);
+  g_object_unref (u->view);
+  g_free (u);
+}
+
 static gboolean
 update_store (gpointer user_data)
 {
-  GdnEnvironmentView *self = GDN_ENVIRONMENT_VIEW (user_data);
-
-  g_mutex_lock (&lock);
-  SCM entries = self->temp_store;
+  EnvironmentUpdate * u = user_data;
+  GdnEnvironmentView *self = u->view;
+  SCM                 entries = u->entries;
   for (size_t i = 0; i < scm_c_vector_length (entries); i++)
     {
       SCM                 entry;
@@ -318,7 +330,6 @@ update_store (gpointer user_data)
               g_list_store_insert_sorted (self->store, info, compare, NULL);
         }
     }
-  g_mutex_unlock (&lock);
 
   /* We only run this once. */
   return G_SOURCE_REMOVE;
@@ -339,12 +350,16 @@ static SCM
 scm_update_environments_x (SCM s_self, SCM entries)
 {
   scm_assert_foreign_object_type (scm_environment_view_type, s_self);
-  GdnEnvironmentView *self;
-  g_mutex_lock (&lock);
-  self = scm_foreign_object_ref (s_self, 0);
-  self->temp_store = entries;
-  g_mutex_unlock (&lock);
-  g_idle_add (update_store, self);
+  SCM_ASSERT_TYPE (scm_is_vector (entries), entries, SCM_ARG2,
+                   "gdn-update-environments!", "vector");
+
+  /* Called from the Guile thread.  The store must be updated on the
+   * GTK thread, and ENTRIES must survive until then.  The GTK thread
+   * is also in Guile mode, so it may convert the SCM data. */
+  EnvironmentUpdate *u = g_new0 (EnvironmentUpdate, 1);
+  u->view = g_object_ref (scm_foreign_object_ref (s_self, 0));
+  u->entries = scm_gc_protect_object (entries);
+  xgtk_invoke_on_main (update_store, u, environment_update_free);
   return SCM_UNSPECIFIED;
 }
 

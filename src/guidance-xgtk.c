@@ -21,6 +21,51 @@
 void
 xgtk_button_set_sensitive (GtkButton *button, gboolean flag)
 {
-  g_assert_cmpstr (G_OBJECT_TYPE_NAME (button), ==, "GtkButton");
+  g_assert (GTK_IS_BUTTON (button));
   gtk_widget_set_sensitive (GTK_WIDGET (button), flag);
+}
+
+void
+xgtk_invoke_on_main (GSourceFunc func, gpointer data, GDestroyNotify notify)
+{
+  /* Idle sources of equal priority are dispatched in the order they
+   * were added, which keeps the GUI updates in order. */
+  g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, func, data, notify);
+}
+
+typedef struct
+{
+  GListStore *store;
+  GPtrArray * items;
+} StoreReplacement;
+
+static gboolean
+replace_all (gpointer user_data)
+{
+  StoreReplacement *r = user_data;
+  g_list_store_splice (r->store, 0,
+                       g_list_model_get_n_items (G_LIST_MODEL (r->store)),
+                       r->items->pdata, r->items->len);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+store_replacement_free (gpointer user_data)
+{
+  StoreReplacement *r = user_data;
+  g_object_unref (r->store);
+  g_ptr_array_unref (r->items);
+  g_free (r);
+}
+
+void
+xgtk_list_store_replace_all_on_main (GListStore *store, GPtrArray *items)
+{
+  g_assert (G_IS_LIST_STORE (store));
+  g_assert_nonnull (items);
+
+  StoreReplacement *r = g_new0 (StoreReplacement, 1);
+  r->store = g_object_ref (store);
+  r->items = items;
+  xgtk_invoke_on_main (replace_all, r, store_replacement_free);
 }

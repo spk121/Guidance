@@ -18,6 +18,7 @@
 
 #include "guidance-trap-view.h"
 #include "guidance-trap-info.h"
+#include "guidance-xgtk.h"
 #include <glib-unix.h>
 
 struct _GdnTrapView
@@ -31,7 +32,6 @@ struct _GdnTrapView
   GtkColumnViewColumn *active_col;
   GtkColumnViewColumn *delete_col;
 
-  GPtrArray * temp_store;
   GListStore *store;
 };
 
@@ -49,8 +49,6 @@ enum
 ////////////////////////////////////////////////////////////////
 static unsigned signals[N_SIGNALS];
 static SCM      scm_trap_view_type = SCM_BOOL_F;
-static GMutex   lock;
-static gboolean update_store (gpointer user_data);
 
 typedef void (*factory_func_t) (GtkListItemFactory *self,
                                 GtkListItem *       listitem,
@@ -137,7 +135,6 @@ gdn_trap_view_init (GdnTrapView *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
 
-  self->temp_store = g_ptr_array_new_full (1, g_object_unref);
   self->store = g_list_store_new (GDN_TRAP_INFO_TYPE);
 
   set_column_view_model (self->column_view, G_LIST_MODEL (self->store));
@@ -324,34 +321,6 @@ delete_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
-/* This GSourceFunc is used on-idle to move the trap temp_store to
- * the trap GListStore that the GUI uses. This has to occur in the
- * GTK thread. */
-static gboolean
-update_store (gpointer user_data)
-{
-  GdnTrapView * self = GDN_TRAP_VIEW (user_data);
-  gsize         len;
-  GdnTrapInfo **array;
-
-  g_mutex_lock (&lock);
-  array = (GdnTrapInfo **) g_ptr_array_steal (self->temp_store, &len);
-
-  /* This operation adds a reference to each entry in the array. */
-  g_list_store_splice (self->store, 0,
-                       g_list_model_get_n_items (G_LIST_MODEL (self->store)),
-                       (gpointer *) array, len);
-
-  /* So we can drop the temp store's original references here. */
-  for (gsize i = 0; i < len; i++)
-    g_object_unref (array[i]);
-  g_free (array);
-  g_mutex_unlock (&lock);
-
-  /* We only run this once. */
-  return G_SOURCE_REMOVE;
-}
-
 static void
 set_column_view_model (GtkColumnView *view, GListModel *model)
 {
@@ -394,25 +363,18 @@ scm_update_traps_x (SCM s_self, SCM trap_list)
 {
   scm_assert_foreign_object_type (scm_trap_view_type, s_self);
 
-  g_mutex_lock (&lock);
   SCM          trap_vec = scm_vector (trap_list);
   GdnTrapView *self = scm_foreign_object_ref (s_self, 0);
+  size_t       len = scm_c_vector_length (trap_vec);
+  GPtrArray *  items = g_ptr_array_new_full (len, g_object_unref);
 
-  g_ptr_array_set_size (self->temp_store, 0);
+  for (size_t i = 0; i < len; i++)
+    g_ptr_array_add (items,
+                     trap_info_new_from_trap_id (
+                         scm_to_int (scm_c_vector_ref (trap_vec, i)), 0));
 
-  for (size_t i = 0; i < scm_c_vector_length (trap_vec); i++)
-    {
-      GdnTrapInfo *info = trap_info_new_from_trap_id (
-          scm_to_int (scm_c_vector_ref (trap_vec, i)), 0);
-      g_ptr_array_insert (self->temp_store, -1, info);
-    }
-
-  g_mutex_unlock (&lock);
-
-  /* The GListModel can only be updated from the GTK thread, so
-   * we stage the changes to the temp storage array, and update the
-   * GListModel in the next available tick. */
-  g_idle_add (update_store, self);
+  /* The GListModel can only be updated from the GTK thread. */
+  xgtk_list_store_replace_all_on_main (self->store, items);
 
   return SCM_UNSPECIFIED;
 }

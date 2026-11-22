@@ -17,6 +17,7 @@
  */
 
 #include "guidance-source-view.h"
+#include "guidance-xgtk.h"
 #include "guidance-lisp.h"
 
 struct _GdnSourceView
@@ -210,6 +211,32 @@ gdn_source_view_to_scm (GdnSourceView *self)
   return scm_make_foreign_object_1 (scm_source_view_type, self);
 }
 
+typedef struct
+{
+  GdnSourceView *view;
+  char *         filename;
+  int            line;
+  int            column;
+} SourceLocation;
+
+static gboolean
+show_location_on_main (gpointer data)
+{
+  SourceLocation *loc = data;
+  gdn_source_view_show_location (loc->view, loc->filename, loc->line,
+                                 loc->column);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+source_location_free (gpointer data)
+{
+  SourceLocation *loc = data;
+  g_object_unref (loc->view);
+  g_free (loc->filename);
+  g_free (loc);
+}
+
 static SCM
 scm_source_view_show_location (SCM s_self, SCM s_fname, SCM s_line, SCM s_col)
 {
@@ -221,13 +248,17 @@ scm_source_view_show_location (SCM s_self, SCM s_fname, SCM s_line, SCM s_col)
   SCM_ASSERT_TYPE (scm_is_exact_integer (s_col), s_col, SCM_ARG4,
                    "gdn-source-view-show-location", "integer");
 
-  GdnSourceView *self = scm_foreign_object_ref (s_self, 0);
-  char *         fname = scm_to_utf8_string (s_fname);
-  gboolean ret;
-  ret = gdn_source_view_show_location (self, fname, scm_to_int (s_line),
-                                       scm_to_int (s_col));
+  /* Called from the Guile thread, so the GTK work is sent to the GTK
+   * thread. */
+  SourceLocation *loc = g_new0 (SourceLocation, 1);
+  char *          fname = scm_to_utf8_string (s_fname);
+  loc->view = g_object_ref (scm_foreign_object_ref (s_self, 0));
+  loc->filename = g_strdup (fname);
+  loc->line = scm_to_int (s_line);
+  loc->column = scm_to_int (s_col);
   free (fname);
-  return scm_from_bool (ret);
+  xgtk_invoke_on_main (show_location_on_main, loc, source_location_free);
+  return SCM_UNSPECIFIED;
 }
 
 void

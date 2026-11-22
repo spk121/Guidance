@@ -92,24 +92,59 @@ pointer types and implicit declarations are now errors.
 
 ### Phase 1: Working trap/step loop
 
-- [ ] Keep the VM trace level correct whenever traps are added,
+- [x] Keep the VM trace level correct whenever traps are added,
       enabled, or disabled, so that breakpoints fire.
-- [ ] Make `_break_` stop at its call site.
-- [ ] Add `'stop` to the trap handler, aborting to a prompt that
+- [x] Make `_break_` stop at its call site.
+- [x] Add `'stop` to the trap handler, aborting to a prompt that
       returns to Eval mode.  Remove `sleep` from the error loop.
-- [ ] Marshal every GTK update from the Guile thread to the GTK
+- [x] Marshal every GTK update from the Guile thread to the GTK
       thread.
-- [ ] Start backtraces at the user's frame.
-- [ ] Replace the 8-slot `trap-thunk-N` ring with a single queue.
-- [ ] Example `.scm` programs plus an automated headless smoke test.
+- [x] Start backtraces at the user's frame.
+- [x] Replace the 8-slot `trap-thunk-N` ring with a single queue.
+- [x] Example `.scm` programs plus an automated headless smoke test.
+- [x] Stop interrupts a running program (pulled forward from Phase 2).
+- [x] Keyboard shortcuts: F5 run/continue, Shift+F5 stop, F10 step
+      over, F11 step into, Shift+F11 step out.
+
+Phase 1 notes:
+
+- How it works: `run-under-debugger` in `(gdn repl)` wraps every run
+  in a stop prompt, the trap handler, a pre-unwind error handler, and
+  a stack prompt used to cut backtraces.  It keeps the VM trace level
+  at 1 while the program runs.  `_break_` is a low-level procedure
+  trap installed for each run, so it pauses through a VM hook like
+  every other trap.  Step and Step Into go line by line, built on
+  `trap-matching-instructions`, and skip Guile's own library code.
+  Step Out pauses in the caller and reports the return values.
+- The GTK thread sends the REPL operator actions through a queue, and
+  other requests (such as adding a trap) through a second queue.
+  While a program runs, it interrupts the REPL thread with a single
+  async, `gdn-async-poll`.  A stop flag keeps a late async from
+  stopping a later program.
+- The Scheme modules are compiled when they are loaded, because
+  Guile's procedure traps cannot tell interpreted procedures apart.
+  This costs about a second at startup; installing the modules where
+  Guile can cache the compiled code would avoid it.
+- Tests: `meson test` runs `tests/repl-test.scm`, which tests the
+  debugger core in plain Guile with the GUI stubbed out
+  (`tests/stubs`), and `tests/gui-smoke.sh`, which drives the real app
+  on Xvfb using a terminal transcript (`GUIDANCE_TRANSCRIPT`).  The
+  smoke test is skipped if Xvfb or xdotool is missing.
+- Known cosmetic issue: output and error text arrive through separate
+  pseudoterminals, so their relative order in the terminal can vary.
 
 ### Phase 2: Finish the panels
 
 - [ ] Modules page: register the module view and hook module loading.
+      Adding a trap from it should use `gdn_lisp_add_proc_trap`.
 - [ ] Backtrace frame click jumps to source; set breakpoints from a
       source line.
-- [ ] Enable/disable/delete traps from the Traps page.
-- [ ] Pause: interrupt a running program with a system async.
+- [ ] Enable/disable/delete traps from the Traps page, as new request
+      types handled by `process-request` in `(gdn repl)`.
+- [ ] Pause: interrupt a running program and enter trap mode, using
+      the same async as Stop.
+- [ ] Evaluate expressions in error and trap mode in the paused
+      frame's environment, so local variables are visible.
 
 ### Phase 3: README features
 

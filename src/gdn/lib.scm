@@ -20,11 +20,96 @@
 (define-module (gdn lib)
   #:use-module (ice-9 i18n)
   #:use-module (ice-9 format)
+  #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-43)
   #:use-module (system vm frame)
   #:use-module (system vm program)
-  #:export (gdn-get-backtrace
+  #:export (gdn-error-frames
+            gdn-frame-frames
+            guile-internal-frame?
+            gdn-get-backtrace
             gdn-get-environment))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; STACKS
+
+;; Guile's own source files are recorded with paths relative to the
+;; load path, e.g. "ice-9/boot-9.scm".
+(define %guile-source-prefixes
+  '("ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
+    "web/" "sxml/" "texinfo/"))
+
+(define (guile-internal-frame? frame)
+  "True if FRAME is running code from Guile's own libraries."
+  (let* ((source (frame-source frame))
+         (file (and source (source:file source))))
+    (and (string? file)
+         (any (lambda (prefix) (string-prefix? prefix file))
+              %guile-source-prefixes))))
+
+(define (stack->frame-list stack)
+  (let loop ((i (1- (stack-length stack)))
+             (frames '()))
+    (if (< i 0)
+        frames
+        (loop (1- i) (cons (stack-ref stack i) frames)))))
+
+(define (drop-through-last pred frames)
+  "Drops FRAMES up to and including the last frame satisfying PRED.
+Returns FRAMES unchanged if no frame does."
+  (let loop ((rest frames) (result frames))
+    (cond
+     ((null? rest) result)
+     ((pred (car rest)) (loop (cdr rest) (cdr rest)))
+     (else (loop (cdr rest) result)))))
+
+(define (frame-has-source-file? frame)
+  (let ((source (frame-source frame)))
+    (and source (string? (source:file source)))))
+
+(define (trim-outer-internal-frames frames)
+  "Drops the outermost frames that belong to Guile's libraries or have
+no source file, such as the machinery of `load'.  Never drops every
+frame."
+  (let ((trimmed (reverse (drop-while
+                           (lambda (f)
+                             (or (guile-internal-frame? f)
+                                 (not (frame-has-source-file? f))))
+                           (reverse frames)))))
+    (if (null? trimmed) frames trimmed)))
+
+(define (gdn-error-frames stack-tag)
+  "Call from within a pre-unwind exception handler.  Returns the list
+of frames, innermost first, between the point where the exception was
+raised and the prompt STACK-TAG, without the frames of Guile's exception
+machinery or of the handler itself."
+  (let* ((frames (stack->frame-list (make-stack #t 0 stack-tag)))
+         ;; Everything up to the raise is the handler and its callers.
+         (frames (drop-through-last
+                  (lambda (f) (eq? (frame-procedure-name f) 'raise-exception))
+                  frames))
+         ;; Then drop helpers like `error' and `throw' so the
+         ;; innermost frame is the code that raised the exception.
+         (user (drop-while guile-internal-frame? frames)))
+    (trim-outer-internal-frames (if (null? user) frames user))))
+
+(define (gdn-frame-frames frame stack-tag)
+  "Returns the list of frames, innermost first, from FRAME out to the
+prompt STACK-TAG.  FRAME is kept even if it is in Guile's libraries,
+since it may be the subject of a trap."
+  (let ((frames (stack->frame-list (make-stack frame 0 stack-tag))))
+    (if (null? frames)
+        frames
+        (let ((outer (trim-outer-internal-frames (cdr frames))))
+          (cons (car frames)
+                ;; If every outer frame is internal, the trim keeps
+                ;; them all; drop them all instead.
+                (if (every (lambda (f)
+                             (or (guile-internal-frame? f)
+                                 (not (frame-has-source-file? f))))
+                           outer)
+                    '()
+                    outer))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; BACKTRACE
@@ -44,37 +129,50 @@
 ;; - representation (string)
 ;; - value (string)
 ;; - extra (string)
-;;
-;; It does the trick where it builds it upside-down then reverses at
-;; the end.
-(define (gdn-get-backtrace frame)
-  (let loop ((frame frame)
-             (backtrace '()))
-    (cond
-     ((and frame
-           (not (eqv? (frame-procedure-name frame) '%start-stack))
-           (not (eqv? (frame-procedure-name frame) 'save-module-excursion)))
-      ;; Were still in the program's stack.
-      ;; Assemble this frame's data then step up the stack.
-      (let* ((source (frame-source frame))
-             (file (if source (or (source:file source) "") ""))
-             (line (if source (source:line-for-user source) 0))
-             (col (if source (source:column source) 0)))
-        (loop (frame-previous frame)
-              (cons (vector
-                     (format-frame-arguments frame)
-                     file
-                     line
-                     col
-                     (length (frame-arguments frame))
-                     (list->vector (map (lambda (binding)
-                                          (unpack-binding (length (frame-arguments frame)) binding))
-                                        (frame-bindings frame))))
-                    backtrace))))
-     (else
-      ;; We've reached the top of the program's frames. Above here
-      ;; is Guile's own frames.
-      (list->vector (reverse backtrace))))))
+(define (frame->backtrace-entry frame top-frame?)
+  ;; A frame may be inspected at any instruction, where some of its
+  ;; information may not be available, so each part falls back to a
+  ;; default rather than failing.  TOP-FRAME? tells Guile that FRAME
+  ;; is the innermost frame, so arguments not yet copied into local
+  ;; variables can still be read, e.g. at a procedure-call trap.
+  (let* ((source (false-if-exception (frame-source frame)))
+         (file (if source (or (source:file source) "") ""))
+         (line (if source (source:line-for-user source) 0))
+         (col (if source (source:column source) 0))
+         (call (false-if-exception
+                (frame-call-representation frame #:top-frame? top-frame?)))
+         (nargs (if (pair? call) (length (cdr call)) 0))
+         (bindings (or (false-if-exception
+                        (frame-bindings frame top-frame?))
+                       '())))
+    (vector
+     (or (and (pair? call) (format-call call))
+         (format #f "(~a)" (or (false-if-exception
+                                (frame-procedure-name frame))
+                               "λ")))
+     file
+     line
+     col
+     nargs
+     (list->vector
+      (filter-map (lambda (binding)
+                    ;; Unnamed bindings are compiler temporaries.
+                    (and (binding-name binding)
+                         (false-if-exception (unpack-binding nargs binding))))
+                  bindings)))))
+
+(define* (gdn-get-backtrace frames #:optional top-frame?)
+  "FRAMES is a list of frames, innermost first, as returned by
+gdn-error-frames or gdn-frame-frames, or #f for an empty backtrace.
+TOP-FRAME? should be true if the first frame is the one executing, as
+when the program is paused by a trap.  Returns a vector of backtrace
+entries, as described above."
+  (if (and frames (pair? frames))
+      (list->vector
+       (cons (frame->backtrace-entry (car frames) top-frame?)
+             (map (lambda (f) (frame->backtrace-entry f #f))
+                  (cdr frames))))
+      (vector)))
 
 (define (object->extra-info x)
   (cond
@@ -89,17 +187,19 @@
    (else
     "")))
 
-(define (format-frame-arguments frame)
+(define (format-call call)
+  "Formats a call representation (PROCEDURE-NAME ARG ...), with each
+argument on its own line."
   (with-output-to-string
     (lambda ()
       (display "(")
-      (display (or (frame-procedure-name frame) 'λ))
+      (display (or (car call) 'λ))
       (for-each
        (lambda (arg)
          (newline)
          (display "  ")
          (display arg))
-       (frame-arguments frame))
+       (cdr call))
       (display ")"))))
 
 (define (unpack-binding n_args binding)

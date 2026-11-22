@@ -72,6 +72,27 @@ gdn_application_class_init (GdnApplicationClass *klass)
   gobj_class->finalize = application_finalize;
 }
 
+static void
+set_accels (GdnApplication *app)
+{
+  static const struct
+  {
+    const char *action;
+    const char *accels[2];
+  } accels[] = {
+    { "win.process-run", { "F5", NULL } },
+    { "win.process-stop", { "<Shift>F5", NULL } },
+    { "win.step-over", { "F10", NULL } },
+    { "win.step-into", { "F11", NULL } },
+    { "win.step-out", { "<Shift>F11", NULL } },
+  };
+
+  for (gsize i = 0; i < G_N_ELEMENTS (accels); i++)
+    gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+                                           accels[i].action,
+                                           accels[i].accels);
+}
+
 /* The app's "activate" signal handler */
 static void
 on_activate (GdnApplication *app)
@@ -80,10 +101,12 @@ on_activate (GdnApplication *app)
 
   /* Get the current window or create one if necessary. */
   window = gtk_application_get_active_window (GTK_APPLICATION (app));
+  set_accels (app);
   if (window == NULL)
     window = g_object_new (GDN_TYPE_APPLICATION_WINDOW, "application", app,
                            "default-width", 700, "default-height", 400, NULL);
   gtk_window_present (window);
+  gdn_application_window_focus_entry (GDN_APPLICATION_WINDOW (window));
 }
 
 static int

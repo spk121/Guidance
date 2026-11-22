@@ -1,0 +1,136 @@
+#!/bin/sh
+# Copyright 2026 Michael Gran
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# A smoke test of the Guidance GUI.  It runs Guidance on a virtual X
+# display, drives it with the keyboard, and checks the terminal
+# transcript.  It is skipped (exit status 77) if Xvfb or xdotool is
+# not installed.
+#
+# Usage: gui-smoke.sh GUIDANCE-BINARY TEST-PROGRAM-DIRECTORY
+
+set -u
+BIN=$1
+PROGRAMS=$2
+
+if ! command -v xdotool >/dev/null 2>&1; then
+    echo "xdotool is not installed; skipping"
+    exit 77
+fi
+if [ -z "${GUIDANCE_SMOKE_INNER:-}" ]; then
+    if ! command -v xvfb-run >/dev/null 2>&1; then
+        echo "xvfb-run is not installed; skipping"
+        exit 77
+    fi
+    GUIDANCE_SMOKE_INNER=1
+    export GUIDANCE_SMOKE_INNER
+    exec xvfb-run -a -s "-screen 0 1024x768x24" "$0" "$@"
+fi
+
+WORK=$(mktemp -d)
+TRANSCRIPT=$WORK/transcript
+LOG=$WORK/log
+APP=
+
+# start PROGRAM: starts Guidance on PROGRAM with a fresh transcript.
+start () {
+    : > "$TRANSCRIPT"
+    : > "$LOG"
+    echo "=== $1"
+    GUIDANCE_TRANSCRIPT=$TRANSCRIPT \
+    GTK_A11Y=none \
+    GDK_BACKEND=x11 \
+    LC_ALL=C.UTF-8 \
+    ASAN_OPTIONS=detect_leaks=0 \
+        "$BIN" "$PROGRAMS/$1" > "$LOG" 2>&1 &
+    APP=$!
+    wait_for "[prompt repl>]"
+    # Without a window manager, keyboard input goes to the window
+    # under the pointer.
+    xdotool mousemove 200 200
+}
+
+# stop_app: checks that Guidance is healthy, then closes it.
+stop_app () {
+    kill -0 "$APP" 2>/dev/null || fail "Guidance exited"
+    if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
+        fail "problems were logged"
+    fi
+    kill "$APP" 2>/dev/null
+    wait "$APP" 2>/dev/null
+}
+
+finish () {
+    kill "$APP" 2>/dev/null
+    wait "$APP" 2>/dev/null
+    echo "--- transcript ---"; cat "$TRANSCRIPT"
+    echo "--- log ---"; cat "$LOG"
+    rm -rf "$WORK"
+    exit "$1"
+}
+
+fail () {
+    echo "FAIL: $*"
+    finish 1
+}
+
+# wait_for TEXT [COUNT]: waits until TEXT appears COUNT times.
+wait_for () {
+    count=${2:-1}
+    i=0
+    while [ "$(grep -cF -- "$1" "$TRANSCRIPT")" -lt "$count" ]; do
+        kill -0 "$APP" 2>/dev/null || fail "Guidance exited while waiting for '$1'"
+        i=$((i + 1))
+        [ $i -gt 300 ] && fail "timed out waiting for '$1'"
+        sleep 0.1
+    done
+    echo "ok: $1"
+}
+
+key () {
+    xdotool key "$@"
+}
+
+type_line () {
+    xdotool type --delay 20 "$1"
+    xdotool key Return
+}
+
+# Break, step, continue, then an error and Stop.
+start break.scm
+key F5
+wait_for "Break at break.scm:6"
+wait_for "[prompt break>]"
+key F10
+wait_for "Step to break.scm:7"
+key F5
+wait_for "four"
+wait_for "[prompt repl>]" 2
+
+type_line "(car 5)"
+wait_for "Entering error mode"
+key shift+F5
+wait_for "Stopped."
+type_line "(+ 40 2)"
+wait_for "→ 42"
+
+stop_app
+
+# Stop interrupts a running program.
+start loop.scm
+key F5
+wait_for "spinning"
+sleep 1
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+type_line "(+ 1 1)"
+wait_for "→ 2"
+stop_app
+
+echo "PASS"
+finish 0

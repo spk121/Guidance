@@ -33,9 +33,23 @@
 #include "guidance-xgtk.h"
 #include <glib-unix.h>
 
+/* The REPL's modes, as reported by gdn-set-input-mode! */
+typedef enum
+{
+  GDN_INPUT_MODE_REPL,
+  GDN_INPUT_MODE_RUN,
+  GDN_INPUT_MODE_ERROR,
+  GDN_INPUT_MODE_TRAP
+} GdnInputMode;
+
 struct _GdnApplicationWindow
 {
   GtkApplicationWindow parent_instance;
+
+  /* Atomic GdnInputMode.  Set by the REPL thread as soon as the mode
+   * changes, so the GTK thread can route operator actions correctly
+   * even before the toolbar catches up. */
+  gint input_mode;
 
   GtkStack *main_stack;
 
@@ -111,6 +125,7 @@ static void     handle_module_view_trap (GdnModuleView *view,
                                          guint64        packed_var,
                                          gpointer       user_data);
 static void     show_page (GdnApplicationWindow *self, const char *name);
+static gboolean is_running (GdnApplicationWindow *self);
 
 static void add_simple_action (GdnApplicationWindow *self,
                                const char *          name,
@@ -393,7 +408,7 @@ handle_module_view_trap (GdnModuleView *view,
   GdnApplicationWindow *self = user_data;
   scm_t_bits            x_bits = (scm_t_bits) packed_var;
   SCM                   proc = SCM_PACK (x_bits);
-  gdn_lisp_add_proc_trap_async (self->lisp, proc);
+  gdn_lisp_add_proc_trap (self->lisp, proc, is_running (self));
 }
 
 static void
@@ -476,7 +491,13 @@ handle_process_stop (G_GNUC_UNUSED GSimpleAction *simple,
                      gpointer                user_data)
 {
   GdnApplicationWindow *self = user_data;
-  gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STOP, NULL);
+
+  /* A running program isn't waiting for input, so it is interrupted.
+   * In error and trap mode, the REPL is waiting for this command. */
+  if (is_running (self))
+    gdn_lisp_stop_async (self->lisp);
+  else
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STOP, NULL);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -493,6 +514,19 @@ add_simple_action (GdnApplicationWindow *self,
   if (callback != NULL)
     g_signal_connect (action, "activate", callback, self);
   g_action_map_add_action (G_ACTION_MAP (self), G_ACTION (action));
+}
+
+void
+gdn_application_window_focus_entry (GdnApplicationWindow *self)
+{
+  g_assert (GDN_IS_APPLICATION_WINDOW (self));
+  gdn_terminal_view_focus_entry (self->terminal_view);
+}
+
+static gboolean
+is_running (GdnApplicationWindow *self)
+{
+  return g_atomic_int_get (&self->input_mode) == GDN_INPUT_MODE_RUN;
 }
 
 static void
@@ -514,64 +548,73 @@ gdn_application_window_to_scm (GdnApplicationWindow *self)
   return scm_make_foreign_object_1 (scm_application_window_type, self);
 }
 
+typedef struct
+{
+  GdnApplicationWindow *self;
+  GdnInputMode          mode;
+} InputModeChange;
+
+static void
+input_mode_change_free (gpointer data)
+{
+  InputModeChange *change = data;
+  g_object_unref (change->self);
+  g_free (change);
+}
+
+/* GTK THREAD: Updates the toolbar and terminal for a new mode. */
+static gboolean
+apply_input_mode (gpointer data)
+{
+  InputModeChange *     change = data;
+  GdnApplicationWindow *self = change->self;
+  GdnInputMode          mode = change->mode;
+
+  gboolean run = (mode == GDN_INPUT_MODE_REPL || mode == GDN_INPUT_MODE_TRAP);
+  gboolean stop = (mode != GDN_INPUT_MODE_REPL);
+  gboolean step = (mode == GDN_INPUT_MODE_TRAP);
+
+  xgtk_button_set_sensitive (self->run_button, run);
+  xgtk_button_set_sensitive (self->stop_button, stop);
+  xgtk_button_set_sensitive (self->step_into_button, step);
+  xgtk_button_set_sensitive (self->step_into_instruction_button, step);
+  xgtk_button_set_sensitive (self->step_over_button, step);
+  xgtk_button_set_sensitive (self->step_over_instruction_button, step);
+  xgtk_button_set_sensitive (self->step_out_button, step);
+
+  /* While a program runs, the entry is its standard input. */
+  gdn_terminal_view_set_port_mode (self->terminal_view,
+                                   mode == GDN_INPUT_MODE_RUN);
+  return G_SOURCE_REMOVE;
+}
+
+/* GUILE THREAD: (gdn-set-input-mode! window mode), where MODE is one
+ * of the symbols repl, run, error, or trap. */
 static SCM
 scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
 {
   scm_assert_foreign_object_type (scm_application_window_type, s_appwin);
   GdnApplicationWindow *self = scm_foreign_object_ref (s_appwin, 0);
+  GdnInputMode          mode;
 
   if (scm_is_eq (s_mode, scm_repl_sym))
-    {
-      xgtk_button_set_sensitive (self->run_button, TRUE);
-      // xgtk_button_set_sensitive (self->continue_button, FALSE);
-      xgtk_button_set_sensitive (self->stop_button, FALSE);
-      xgtk_button_set_sensitive (self->step_into_button, FALSE);
-      xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
-      xgtk_button_set_sensitive (self->step_over_button, FALSE);
-      xgtk_button_set_sensitive (self->step_over_instruction_button, FALSE);
-      xgtk_button_set_sensitive (self->step_out_button, FALSE);
-      gdn_terminal_view_set_port_mode (self->terminal_view, FALSE);
-    }
+    mode = GDN_INPUT_MODE_REPL;
   else if (scm_is_eq (s_mode, scm_run_sym))
-    {
-      xgtk_button_set_sensitive (self->run_button, FALSE);
-      // xgtk_button_set_sensitive (self->continue_button, FALSE);
-      xgtk_button_set_sensitive (self->stop_button, TRUE);
-      xgtk_button_set_sensitive (self->step_into_button, FALSE);
-      xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
-      xgtk_button_set_sensitive (self->step_over_button, FALSE);
-      xgtk_button_set_sensitive (self->step_over_instruction_button, FALSE);
-      xgtk_button_set_sensitive (self->step_out_button, FALSE);
-      gdn_terminal_view_set_port_mode (self->terminal_view, TRUE);
-    }
+    mode = GDN_INPUT_MODE_RUN;
   else if (scm_is_eq (s_mode, scm_error_sym))
-    {
-      xgtk_button_set_sensitive (self->run_button, FALSE);
-      // xgtk_button_set_sensitive (self->continue_button, FALSE);
-      xgtk_button_set_sensitive (self->stop_button, TRUE);
-      xgtk_button_set_sensitive (self->step_into_button, FALSE);
-      xgtk_button_set_sensitive (self->step_into_instruction_button, FALSE);
-      xgtk_button_set_sensitive (self->step_over_button, FALSE);
-      xgtk_button_set_sensitive (self->step_over_instruction_button, FALSE);
-      xgtk_button_set_sensitive (self->step_out_button, FALSE);
-      gdn_terminal_view_set_port_mode (self->terminal_view, FALSE);
-    }
+    mode = GDN_INPUT_MODE_ERROR;
   else if (scm_is_eq (s_mode, scm_trap_sym))
-    {
-      xgtk_button_set_sensitive (self->run_button, TRUE);
-      // xgtk_button_set_sensitive (self->continue_button, TRUE);
-      xgtk_button_set_sensitive (self->stop_button, TRUE);
-      xgtk_button_set_sensitive (self->step_into_button, TRUE);
-      xgtk_button_set_sensitive (self->step_into_instruction_button, TRUE);
-      xgtk_button_set_sensitive (self->step_over_button, TRUE);
-      xgtk_button_set_sensitive (self->step_over_instruction_button, TRUE);
-      xgtk_button_set_sensitive (self->step_out_button, TRUE);
-      gdn_terminal_view_set_port_mode (self->terminal_view, FALSE);
-    }
+    mode = GDN_INPUT_MODE_TRAP;
   else
-    {
-      g_critical ("unknown mode in set-input-mode-x!");
-    }
+    scm_wrong_type_arg_msg ("gdn-set-input-mode!", SCM_ARG2, s_mode,
+                            "one of repl, run, error, or trap");
+
+  g_atomic_int_set (&self->input_mode, mode);
+
+  InputModeChange *change = g_new0 (InputModeChange, 1);
+  change->self = g_object_ref (self);
+  change->mode = mode;
+  xgtk_invoke_on_main (apply_input_mode, change, input_mode_change_free);
   return SCM_UNSPECIFIED;
 }
 
