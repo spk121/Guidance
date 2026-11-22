@@ -724,10 +724,25 @@ The open one is last in this list.
         parsing and runs programs with `-e (@ ...)` and
         `--use-srfi`; the GUI test starts Guidance with `--debug
         --no-auto-compile` and `-e (@ ...)`.
-- [ ] **Leftovers.**  The last 340 lines of `src/gdn/lib.scm` are a
+- [x] **Leftovers.**  The last 340 lines of `src/gdn/lib.scm` are a
       commented-out copy of an old REPL.  `menus.ui` and the history
       fields are unused.  Tooltips are lower case and do not give the
-      shortcuts ("run process" rather than "Run (F5)").
+      shortcuts ("run process" rather than "Run (F5)").  Fixed:
+      - The commented-out REPL is gone from `(gdn lib)`, which now
+        ends with the Environment page's procedures.
+      - `menus.ui` and the old history fields had already gone; the
+        Terminal's history is the one added for multi-line entry.
+        The emoji helper went with the Threads page fix.  Also
+        removed: the CSS rules for classes nothing uses (all but
+        `fat_border`), the Terminal's two style classes that had no
+        rules, and a commented-out debugging `printf` in
+        `guidance-frame-info.c`.
+      - The toolbar's tooltips are in title case and give their keys:
+        "Run or Continue (F5)", "Stop (Shift+F5)", "Step Over (F10)",
+        "Step Into (F11)", "Step Out (Shift+F11)"; the two expression
+        steps have no keys.  Checked by screenshot; the existing tests
+        cover the rest (the REPL test compiles `(gdn lib)` without
+        warnings).
 - [ ] **Release housekeeping.**  The AppStream metadata lists release
       0.1.0 dated 2021-12-09 and has no screenshot.  There is no NEWS
       file.  Update the README's status paragraph and its list of

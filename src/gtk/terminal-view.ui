@@ -60,9 +60,6 @@
             <property name="right-margin">6</property>
             <property name="top-margin">4</property>
             <property name="buffer">text_buffer</property>
-            <style>
-              <class name="terminal_text_buffer" />
-            </style>
           </object>
         </child>
       </object>
@@ -75,7 +72,6 @@
             <property name="margin-start">6</property>
             <property name="margin-end">6</property>
             <style>
-              <class name="terminal_prompt" />
               <class name="monospace" />
             </style>
           </object>

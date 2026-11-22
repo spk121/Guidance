@@ -86,7 +86,6 @@ gdn_frame_info_finalize (GObject *object)
   GdnFrameInfo *self = GDN_FRAME_INFO (object);
   g_assert (self->name != NULL);
 
-  // printf ("Freeing frame info %p name %s\n", object, self->name);
   free (self->name);
   self->name = NULL;
   free (self->filename);
