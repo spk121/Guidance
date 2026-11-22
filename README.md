@@ -72,13 +72,19 @@ These options are a subset of Guile's:
 | `-l FILE`      | Load FILE before running the program.                      |
 | `-s FILE`      | The program to run; the remaining arguments are its ARGs.  |
 | `-c EXPR`      | The program to run is the expression EXPR.                 |
-| `-e FUNCTION`  | After loading the program, call FUNCTION with its command line. |
+| `-e FUNCTION`  | After loading the program, call FUNCTION with its command line.  FUNCTION is a name, or `(@ (MODULE) NAME)` for a module's procedure. |
+| `-x EXTENSION` | Add EXTENSION to the file name extensions tried when loading. |
+| `--use-srfi=LIST` | Import the SRFIs in the comma-separated LIST, such as `1,26`. |
+| `--fresh-auto-compile` | Compile the program even if a compiled copy is cached. |
 | `--`           | Stop scanning options; the next argument is FILE.          |
 | `-h`, `--help` | Display help and exit.                                     |
 | `-v`, `--version` | Display version information and exit.                   |
 
 Options end at FILE, so `guidance foo.scm --help` passes `--help` to
-`foo.scm`.
+`foo.scm`.  Guile's `--debug`, `--no-debug`, `--auto-compile`,
+`--no-auto-compile` and `-q` are accepted, so that a `guile` command
+line can be reused, but make no difference: Guidance always debugs,
+and always compiles the program, in its own way.
 
 Modes
 -----

@@ -778,10 +778,38 @@ INPUT."
            (and (equal? (ref a 'expression) "(f)")
                 (equal? (ref a 'arguments) '("p")))))
   (check "bad options are reported"
-         (and (equal? (ref (parse "-x" "f.scm") 'errors)
-                      '("unrecognized option -x"))
+         (and (equal? (ref (parse "--bogus" "f.scm") 'errors)
+                      '("unrecognized option --bogus"))
               (equal? (ref (parse "-L") 'errors)
-                      '("option -L requires an argument")))))
+                      '("option -L requires an argument"))))
+  (check "Guile's harmless options are accepted"
+         (let ((a (parse "--debug" "--no-debug" "--auto-compile" "-q"
+                         "f.scm")))
+           (and (null? (ref a 'errors)) (null? (ref a 'notes))
+                (equal? (ref a 'script) "f.scm"))))
+  (check "--no-auto-compile is accepted, with a note"
+         (let ((a (parse "--no-auto-compile" "f.scm")))
+           (and (null? (ref a 'errors))
+                (equal? (ref a 'notes)
+                        '("--no-auto-compile is ignored: Guidance compiles \
+programs, to debug them"))
+                (equal? (ref a 'script) "f.scm"))))
+  (check "--fresh-auto-compile, -x, and --use-srfi"
+         (let ((a (parse "--fresh-auto-compile" "-x" ".ss" "-x" ".sls"
+                         "--use-srfi=1,26" "f.scm")))
+           (and (ref a 'fresh-auto-compile?)
+                (equal? (ref a 'extensions) '(".ss" ".sls"))
+                (equal? (ref a 'srfis) '(1 26))
+                (null? (ref a 'errors)))))
+  (check "a bad SRFI list is reported"
+         (equal? (ref (parse "--use-srfi=1,x") 'errors)
+                 '("bad SRFI list in --use-srfi=1,x")))
+  (check "-e takes a symbol or an expression"
+         (and (eq? (ref (parse "-e" "main") 'entry) 'main)
+              (equal? (ref (parse "-e" "(@ (my module) main)") 'entry)
+                      '(@ (my module) main))
+              (equal? (ref (parse "-e" "(@ (my") 'errors)
+                      '("cannot read the function (@ (my given to -e")))))
 
 (define-test "command line: running a program with options and arguments"
   (run-repl (list '(run #f) '(quit 0))
@@ -796,13 +824,24 @@ INPUT."
   (check "-e calls the function with the command line"
          (output-order? "Hello, world" "(main (" "args.scm a b))")))
 
+(define-test "command line: -e with a module's procedure"
+  (run-repl (list '(run #f) '(quit 0))
+            "-L" (program "modules")
+            "-e" "(@ (guidance-test greeting) greet-arguments)"
+            (program "args.scm") "a")
+  (check "-e calls the procedure from the module"
+         (output-order? "Hello, world" "(greet-arguments (" "args.scm a))")))
+
 (define-test "command line: -c and bad options"
   (run-repl (list '(run #f) '(quit 0))
-            "-q" "-c" "(display (command-line))" "p")
-  (check "the expression runs with its arguments"
-         (output-contains? "(guidance p)"))
+            "--bogus" "--no-auto-compile" "--use-srfi=26" "-c"
+            "(display (list (command-line) ((cut + 1 <>) 41)))" "p")
+  (check "the expression runs with its arguments, and the SRFI"
+         (output-contains? "((guidance p) 42)"))
   (check "unrecognized options are reported"
-         (output-contains? "guidance: unrecognized option -q")))
+         (output-contains? "guidance: unrecognized option --bogus"))
+  (check "ignored options are noted"
+         (output-contains? "guidance: --no-auto-compile is ignored")))
 
 (define-test "peek: _pk_ logs on the Peek page"
   (run-repl (list '(run #f) '(eval "(_pk_ 'from-repl 7)") '(quit 0))

@@ -426,6 +426,16 @@ wait_for "args.scm one two))"
 wait_for "(main ("
 stop_app
 
+# Guile's harmless options are accepted, and -e takes a module's
+# procedure.
+start --debug --no-auto-compile -L "$PROGRAMS/modules" \
+      -e "(@ (guidance-test greeting) greet-arguments)" "$PROGRAMS/args.scm" one
+wait_for "guidance: --no-auto-compile is ignored"
+key F5
+wait_for "(greet-arguments ("
+refute "unrecognized option"
+stop_app
+
 # Stop interrupts a running program.
 start "$PROGRAMS/loop.scm"
 key F5

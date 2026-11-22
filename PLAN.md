@@ -701,11 +701,29 @@ The open one is last in this list.
         are compiled in memory as before.  Startup to the first
         prompt went from about 2.7 s to 0.6 s here.  The GUI test
         starts with an empty cache and checks that both are cached.
-- [ ] **Options.**  Guile options that Guidance does not know, such as
+- [x] **Options.**  Guile options that Guidance does not know, such as
       `--no-auto-compile` and `--debug`, are reported as unrecognized
       after the first prompt.  Accept the harmless ones.  `-e` only
       takes a plain symbol, not Guile's `(@ (module) name)` form (from
-      the code).
+      the code).  Fixed (`gdn-parse-command-line` in `(gdn lib)`):
+      - `--debug`, `--no-debug`, `--auto-compile` and `-q` are
+        accepted silently: Guidance always uses the debugging VM and
+        its own compiler settings, and does not load `~/.guile`.
+        `--no-auto-compile` is accepted with a note that it is
+        ignored, since Guidance must compile the program to debug it.
+      - Three more of Guile's options are supported, being simple:
+        `-x EXTENSION` (added to `%load-extensions`),
+        `--use-srfi=LIST` (the SRFIs are imported into
+        `(guile-user)`), and `--fresh-auto-compile` (sets
+        `%fresh-auto-compile`).  Others, such as `--listen`, are
+        still reported as unrecognized.
+      - `-e` reads an argument that starts with "(" as an expression,
+        such as `(@ (my module) main)`, and evaluates it to find the
+        procedure; one that cannot be read is reported.
+      - `--help` lists the new options.  The REPL test checks the
+        parsing and runs programs with `-e (@ ...)` and
+        `--use-srfi`; the GUI test starts Guidance with `--debug
+        --no-auto-compile` and `-e (@ ...)`.
 - [ ] **Leftovers.**  The last 340 lines of `src/gdn/lib.scm` are a
       commented-out copy of an old REPL.  `menus.ui` and the history
       fields are unused.  Tooltips are lower case and do not give the

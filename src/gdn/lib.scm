@@ -56,6 +56,23 @@
 ;; --version itself, before starting the GUI, using the same rules
 ;; for where the options end, and has the usage message.
 
+(define %ignored-options
+  ;; Guile options that make no difference under Guidance.  Guidance
+  ;; always uses the debugging VM and its own compiler settings, and
+  ;; does not load ~/.guile.
+  '("--debug" "--no-debug" "--auto-compile" "-q"))
+
+(define (parse-entry-point value)
+  "Parses the argument of -e: a symbol, or an expression such as
+(@ (my module) main).  Returns it, or #f if it cannot be read."
+  (if (string-prefix? "(" value)
+      (catch #t
+        (lambda ()
+          (let ((datum (call-with-input-string value read)))
+            (and (pair? datum) datum)))
+        (lambda args #f))
+      (string->symbol value)))
+
 (define (gdn-parse-command-line args)
   "Parses Guidance's command-line arguments, ARGS, not including the
 program name.  Returns an alist with these keys:
@@ -63,62 +80,96 @@ program name.  Returns an alist with these keys:
   load-path       directories from -L, in order
   compiled-path   directories from -C, in order
   load-files      files from -l, in order
+  extensions      file name extensions from -x, in order
+  srfis           SRFI numbers from --use-srfi, in order
+  fresh-auto-compile?  whether --fresh-auto-compile was given
   script          the program FILE, or #f
   expression      the program EXPR from -c, or #f
-  entry           the FUNCTION from -e, as a symbol, or #f
+  entry           the FUNCTION from -e: a symbol, an expression such
+                  as (@ (my module) main), or #f
   arguments       the program's ARGs
+  notes           a list of messages about options that are ignored
   errors          a list of messages about bad arguments"
-  (let loop ((args args)
-             (load-path '()) (compiled-path '()) (load-files '())
-             (entry #f) (errors '()))
-    (define (finish script expression arguments errors)
-      `((load-path . ,(reverse load-path))
-        (compiled-path . ,(reverse compiled-path))
-        (load-files . ,(reverse load-files))
-        (script . ,script)
-        (expression . ,expression)
-        (entry . ,entry)
-        (arguments . ,arguments)
-        (errors . ,(reverse errors))))
-    (define (missing option)
-      (finish #f #f '()
-              (cons (format #f "option ~a requires an argument" option)
-                    errors)))
+  (define load-path '())
+  (define compiled-path '())
+  (define load-files '())
+  (define extensions '())
+  (define srfis '())
+  (define fresh? #f)
+  (define entry #f)
+  (define notes '())
+  (define errors '())
+  (define (note! fmt . args)
+    (set! notes (cons (apply format #f fmt args) notes)))
+  (define (error! fmt . args)
+    (set! errors (cons (apply format #f fmt args) errors)))
+  (define (finish script expression arguments)
+    `((load-path . ,(reverse load-path))
+      (compiled-path . ,(reverse compiled-path))
+      (load-files . ,(reverse load-files))
+      (extensions . ,(reverse extensions))
+      (srfis . ,(reverse srfis))
+      (fresh-auto-compile? . ,fresh?)
+      (script . ,script)
+      (expression . ,expression)
+      (entry . ,entry)
+      (arguments . ,arguments)
+      (notes . ,(reverse notes))
+      (errors . ,(reverse errors))))
+  (define (use-srfis! arg list)
+    (let ((numbers (map string->number (string-split list #\,))))
+      (if (and (pair? numbers) (every (lambda (n) (and (exact-integer? n) (>= n 0))) numbers))
+          (set! srfis (append (reverse numbers) srfis))
+          (error! "bad SRFI list in ~a" arg))))
+  (let loop ((args args))
     (if (null? args)
-        (finish #f #f '() errors)
+        (finish #f #f '())
         (let ((arg (car args))
               (rest (cdr args)))
           (cond
-           ((member arg '("-L" "-C" "-l" "-e" "-s" "-c"))
+           ((member arg '("-L" "-C" "-l" "-x" "-e" "-s" "-c"))
             (if (null? rest)
-                (missing arg)
+                (begin
+                  (error! "option ~a requires an argument" arg)
+                  (finish #f #f '()))
                 (let ((value (car rest)))
                   (cond
-                   ((string=? arg "-L")
-                    (loop (cdr rest) (cons value load-path) compiled-path
-                          load-files entry errors))
-                   ((string=? arg "-C")
-                    (loop (cdr rest) load-path (cons value compiled-path)
-                          load-files entry errors))
-                   ((string=? arg "-l")
-                    (loop (cdr rest) load-path compiled-path
-                          (cons value load-files) entry errors))
-                   ((string=? arg "-e")
-                    (loop (cdr rest) load-path compiled-path load-files
-                          (string->symbol value) errors))
-                   ((string=? arg "-s")
-                    (finish value #f (cdr rest) errors))
-                   (else              ; -c
-                    (finish #f value (cdr rest) errors))))))
+                   ((string=? arg "-s") (finish value #f (cdr rest)))
+                   ((string=? arg "-c") (finish #f value (cdr rest)))
+                   (else
+                    (cond
+                     ((string=? arg "-L") (set! load-path (cons value load-path)))
+                     ((string=? arg "-C")
+                      (set! compiled-path (cons value compiled-path)))
+                     ((string=? arg "-l") (set! load-files (cons value load-files)))
+                     ((string=? arg "-x") (set! extensions (cons value extensions)))
+                     (else              ; -e
+                      (let ((parsed (parse-entry-point value)))
+                        (if parsed
+                            (set! entry parsed)
+                            (error! "cannot read the function ~a given to -e"
+                                    value)))))
+                    (loop (cdr rest)))))))
            ((string=? arg "--")
             (if (null? rest)
-                (finish #f #f '() errors)
-                (finish (car rest) #f (cdr rest) errors)))
+                (finish #f #f '())
+                (finish (car rest) #f (cdr rest))))
+           ((member arg %ignored-options)
+            (loop rest))
+           ((string=? arg "--no-auto-compile")
+            (note! "~a is ignored: Guidance compiles programs, to debug them" arg)
+            (loop rest))
+           ((string=? arg "--fresh-auto-compile")
+            (set! fresh? #t)
+            (loop rest))
+           ((string-prefix? "--use-srfi=" arg)
+            (use-srfis! arg (substring arg (string-length "--use-srfi=")))
+            (loop rest))
            ((and (> (string-length arg) 1) (char=? (string-ref arg 0) #\-))
-            (loop rest load-path compiled-path load-files entry
-                  (cons (format #f "unrecognized option ~a" arg) errors)))
+            (error! "unrecognized option ~a" arg)
+            (loop rest))
            (else
-            (finish arg #f rest errors)))))))
+            (finish arg #f rest)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; STACKS

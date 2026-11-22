@@ -798,18 +798,35 @@ files given with -l, then calling the function given with -e."
                (load path)
                (eval-forms expression))
            (when entry
-             ((module-ref (current-module) entry) (command-line))))))))))
+             ((if (symbol? entry)
+                  (module-ref (current-module) entry)
+                  (eval entry (current-module)))
+              (command-line))))))))))
 
 (define (apply-command-line! args)
   "Parses Guidance's command-line ARGS and applies the options that
 take effect at once."
   (set! *options* (gdn-parse-command-line args))
   (for-each (lambda (message)
+              (format #t "guidance: ~a~%" message))
+            (option 'notes))
+  (for-each (lambda (message)
               (format (current-error-port) "guidance: ~a~%" message))
             (option 'errors))
   (set! %load-path (append (option 'load-path) %load-path))
   (set! %load-compiled-path
-    (append (option 'compiled-path) %load-compiled-path)))
+    (append (option 'compiled-path) %load-compiled-path))
+  (set! %load-extensions (append (option 'extensions) %load-extensions))
+  (when (option 'fresh-auto-compile?)
+    (set! %fresh-auto-compile #t))
+  ;; As Guile's --use-srfi does, for the program and the operator.
+  (for-each (lambda (n)
+              (module-use! (resolve-module '(guile-user))
+                           (resolve-interface
+                            (list 'srfi
+                                  (string->symbol
+                                   (format #f "srfi-~a" n))))))
+            (option 'srfis)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ERROR MODE
