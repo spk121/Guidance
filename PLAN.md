@@ -1153,9 +1153,14 @@ Each item has a test: see "Tests for these" at the end of this phase.
   expression.  It was: Up recalls lines, not entries: after an
   expression entered over two lines, Up gives its second line alone,
   which is a read error.
-- A mistyped name at `repl>` enters Error mode, which then needs
-  Stop.  This follows from running expressions as programs, but is
-  heavy for a typo.
+- Fixed: an error raised by an expression entered at `repl>`, in that
+  expression itself and not in a procedure that it called, is just
+  reported: there is no stack worth showing (`slip-of-the-operator?`).
+  An error in a procedure that the expression calls enters Error mode
+  as before.  Three REPL tests and the GUI test cover both.  It was: A
+  mistyped name at `repl>` enters Error mode, which then needs Stop.
+  This follows from running expressions as programs, but is heavy for
+  a typo.
 - File descriptors 1 and 2 are now the Terminal's, so what the C
   library, GLib's fallbacks, or a sanitizer writes straight to them
   appears in the Terminal, not where Guidance was started.  A

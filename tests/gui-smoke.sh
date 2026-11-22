@@ -176,7 +176,14 @@ key F5
 wait_for "four"
 wait_for "[prompt repl>]" 2
 
+# A slip in an expression is just reported; an error in a procedure
+# that it calls enters error mode.
 type_line "(car 5)"
+wait_for "Wrong type argument"
+wait_for "[prompt repl>]" 3
+refute "Entering error mode"
+type_line "(define (first-of x) (car x))"
+type_line "(first-of 5)"
 wait_for "Entering error mode"
 key shift+F5
 wait_for "Stopped."

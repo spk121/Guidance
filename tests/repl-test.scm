@@ -229,9 +229,36 @@ in the REPL thread, as the GUI does while a program runs."
                         "No program was given"))
   (check "no read errors" (not (output-contains? "end of input"))))
 
-(define-test "eval: an error enters error mode until Stop"
+(define-test "eval: a slip in an expression is reported, without error mode"
   (run-repl
    (list '(eval "(car 5)")
+         '(eval "no-such-name")
+         '(eval "(error \"said so\")")
+         '(eval "(define unlucky (vector-ref (vector) 3))")
+         '(eval "(+ 40 2)")
+         '(quit 0)))
+  (check "each error is reported"
+         (output-order? "Wrong type argument" "Unbound variable: no-such-name"
+                        "said so" "out of range" "→ 42"))
+  (check "error mode is not entered" (not (memq 'error (modes))))
+  (check "nor announced" (not (output-contains? "Entering error mode"))))
+
+(define-test "eval: an error in a procedure, called other than last, enters error mode"
+  ;; See the next test for a call that is the whole expression.
+  (run-repl
+   (list '(eval "(define (first-of x) (car x))")
+         '(eval "(list (first-of 5))")
+         '(stop #f)
+         '(eval "(define unluckier (first-of 6))")
+         '(stop #f)
+         '(quit 0)))
+  (check "error mode is entered both times"
+         (equal? (count-occurrences "Entering error mode") 2)))
+
+(define-test "eval: an error in a procedure enters error mode until Stop"
+  (run-repl
+   (list '(eval "(define (first-of x) (car x))")
+         '(eval "(first-of 5)")
          (checkpoint "backtrace is shown on error"
                      (lambda () (last-backtrace))
                      '(eval "(* 6 7)"))
@@ -242,8 +269,8 @@ in the REPL thread, as the GUI does while a program runs."
   (check "evaluates in error mode" (output-contains? "→ 42"))
   (check "stop returns to the REPL"
          (output-order? "Stopped." "→ 2"))
-  (check "modes go run, error, then back to repl"
-         (equal? (take (modes) 4) '(repl run error repl))))
+  (check "modes go run and repl for the definition, then run, error, repl"
+         (equal? (take (modes) 6) '(repl run repl run error repl))))
 
 (define-test "run: error in a program shows the program's frames"
   (run-repl
