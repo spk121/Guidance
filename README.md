@@ -45,7 +45,9 @@ To build with the address and undefined-behavior sanitizers, add
 analyzer, add `-Danalyzer=true`.
 
 The tests need Guile.  The GUI test also needs Xvfb (`xvfb-run`) and
-`xdotool`, and is skipped without them.
+`xdotool`, and is skipped without them.  GitHub Actions builds
+Guidance and runs the tests, with and without the sanitizers, on every
+push and pull request; see `.github/workflows/build.yml`.
 
 Running
 -------
@@ -184,25 +186,3 @@ Known limitations
 - The terminal shows the program's output and error output as they
   arrive, so their order can differ slightly from the order they were
   written in.
-
-Docker Container
-----------------
-
-*This section describes the old CI setup, which is being updated.*
-
-If the CI/CD system is working, it is creating the `spk121/guidance`
-Docker container.  You can pull down the Docker container with
-
-    docker pull spk121/guidance
-
-or
-
-    podman pull docker.io/spk121/guidance
-
-In the container, the executable is at `/app/bin/guidance`.
-
-Running a Docker container that contains a GUI requires an invocation
-like the following:
-
-    docker run -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -e DISPLAY=$DISPLAY -h $HOSTNAME spk121/guidance /app/bin/guidance

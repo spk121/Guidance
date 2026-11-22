@@ -191,18 +191,18 @@ Phase 3 notes:
 - `_pk_` logs to the Peek page with the caller's location and returns
   its last argument, like `pk`.
 - The README keeps the Philosophy section; the rest describes what
-  Guidance does now.  Its Docker section is marked as out of date
-  until Phase 4.
+  Guidance does now.
 - Guidance's own modules count as library code: their frames are
   hidden from backtraces and skipped by stepping, also when they are
   loaded from files, as in the tests.
 
 ### Phase 4: Packaging
 
-Dropped: Guidance is built from source with Meson.  The old CI
-workflow and its packaging manifests were removed, so there is no CI.
+Packaging is dropped: Guidance is built from source with Meson.  The
+old CI workflow, its packaging manifests, and the Dockerfile were
+removed.
 
-- [ ] Optionally, a GitHub Actions workflow that builds Guidance and
-      runs `meson test`.
-- [ ] The Dockerfile and the README's Docker section: decide whether
-      to keep them.
+- [x] A GitHub Actions workflow, `.github/workflows/build.yml`, that
+      builds Guidance on Ubuntu 24.04 and runs `meson test`, in one job
+      as is and in another with ASan and UBSan.  On failure, it keeps
+      the test log as an artifact.
