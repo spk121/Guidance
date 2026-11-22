@@ -48,6 +48,7 @@
   #:use-module (system vm frame)
   #:use-module (system vm program)
   #:use-module (system vm traps)
+  #:use-module ((ice-9 threads) #:select (current-thread))
   #:use-module (system vm vm)
   #:use-module ((system vm debug)
                 #:select (find-program-sources source-post-pc))
@@ -527,6 +528,60 @@ aborting to the stop prompt."
      (print-exception-message (current-error-port) key args)))
   (values))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; THREADS
+;;
+;; Guidance debugs one thread: the one that runs the program, the REPL
+;; thread.  Traps and error mode belong to it.  For other threads that
+;; the program starts, Guidance at least reports what it cannot do,
+;; rather than leaving Guile's own messages, or nothing.
+
+;; While a program runs, the thread that runs it; otherwise #f.
+(define *program-thread* #f)
+
+;; call-with-new-thread from (ice-9 threads), as Guile defines it.
+(define %call-with-new-thread
+  (module-ref (resolve-interface '(ice-9 threads)) 'call-with-new-thread))
+
+(define (report-thread-error key args)
+  (let ((port (current-error-port)))
+    (format port "~&An error in a thread of the program ended the thread:~%")
+    (print-exception-message port key args)
+    (format port "Guidance can pause and inspect only the program's \
+main thread.~%")))
+
+(define* (debugger-call-with-new-thread thunk #:optional handler)
+  "call-with-new-thread, as used while Guidance runs a program.  If the
+thread raises an error that it does not handle, the error is reported
+in a few lines, and the thread ends."
+  (if handler
+      (%call-with-new-thread thunk handler)
+      (%call-with-new-thread
+       (lambda ()
+         (catch #t
+           thunk
+           (lambda (key . args)
+             (unless (eq? key 'quit)
+               (report-thread-error key args))
+             #f))))))
+
+(define (call-with-thread-reports thunk)
+  "Calls THUNK with call-with-new-thread replaced by
+debugger-call-with-new-thread, for the program, and the REPL thread
+marked as the program's.  Code that refers to call-with-new-thread,
+including the expansion of begin-thread, uses the variable of (ice-9
+threads), so it sees the replacement."
+  (let ((variable (module-variable (resolve-module '(ice-9 threads))
+                                   'call-with-new-thread)))
+    (dynamic-wind
+      (lambda ()
+        (set! *program-thread* (current-thread))
+        (variable-set! variable debugger-call-with-new-thread))
+      thunk
+      (lambda ()
+        (variable-set! variable %call-with-new-thread)
+        (set! *program-thread* #f)))))
+
 (define (run-under-debugger thunk)
   "Runs THUNK in Run mode, with Guidance's error and trap handlers.
 Returns THUNK's values, or no values if it was stopped or raised an
@@ -547,9 +602,11 @@ exception."
                   (catch #t
                     (lambda ()
                       (enable-trap-hooks!)
-                      (call-with-prompt %stack-tag
-                        thunk
-                        (lambda (k . vals) (apply values vals))))
+                      (call-with-thread-reports
+                       (lambda ()
+                         (call-with-prompt %stack-tag
+                           thunk
+                           (lambda (k . vals) (apply values vals))))))
                     exception-handler-unwind
                     exception-handler-pre-unwind))
                 (lambda ()
@@ -1034,7 +1091,16 @@ with where it was called from, and returns the last of them."
 
 (define (_break_)
   "Pauses the program in trap mode at the caller of _break_, when the
-program is run by Guidance.  Otherwise, does nothing."
+program is run by Guidance.  Otherwise, does nothing.
+
+Guidance pauses in a trap on _break_, set for the program's thread, so
+this procedure's body runs only after that, or in another thread.  In
+another thread, it says that it cannot pause there."
+  (when (and *program-thread*
+             (not (eq? (current-thread) *program-thread*)))
+    (format (current-error-port) "~&_break_ was called in a thread other \
+than the program's main thread, and ignored: Guidance can pause only \
+that one.~%"))
   *unspecified*)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

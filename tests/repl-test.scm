@@ -386,6 +386,27 @@ in the REPL thread, as the GUI does while a program runs."
          (output-contains? "The program exited with status 3."))
   (check "the REPL keeps working" (output-contains? "→ 4")))
 
+(define-test "run: errors and _break_ in other threads are reported"
+  (let ((original (@ (ice-9 threads) call-with-new-thread)))
+    (run-repl (list '(run #f) '(quit 0)) (program "threads.scm"))
+    (check "an error in a thread is reported in a few lines"
+           (output-order? "An error in a thread of the program ended the thread"
+                          "In procedure car"
+                          "Guidance can pause and inspect only"
+                          "joined the failed thread"))
+    (check "without Guile's backtrace"
+           (not (output-contains? "Backtrace:")))
+    (check "_break_ in another thread is reported, and ignored"
+           (output-order? "_break_ was called in a thread other"
+                          "after _break_ in a thread"))
+    (check "a thread's own handler is kept"
+           (output-contains? "(handled oops)"))
+    (check "the main thread is not paused"
+           (not (or (memq 'trap (modes)) (memq 'error (modes)))))
+    (check "the program finishes" (output-contains? "end"))
+    (check "call-with-new-thread is Guile's again after the run"
+           (eq? original (@ (ice-9 threads) call-with-new-thread)))))
+
 (define-test "run: no program given"
   (run-repl (list '(run #f) '(quit 0)))
   (check "says so" (output-contains? "No program was given")))

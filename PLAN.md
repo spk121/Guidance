@@ -487,13 +487,22 @@ The open one is last in this list.
 
 #### Should fix
 
-- [ ] **Other threads are outside the debugger.**  `_break_` in a
-      thread made with `call-with-new-thread` is ignored without a
-      word.  An error there prints Guile's own backtrace to the
-      Terminal and the thread dies; the debugger only notices the
-      knock-on error in the main thread.  Traps and the error handler
-      are installed for the REPL thread alone.  For an alpha, at
-      least report such errors cleanly and document the limit.
+- [x] **Other threads are outside the debugger.**  `_break_` in a
+      thread made with `call-with-new-thread` was ignored without a
+      word, and an error there printed Guile's own backtrace.  Fixed
+      as far as an alpha needs: while a program runs, Guidance
+      replaces `call-with-new-thread` in `(ice-9 threads)`, which the
+      program's code and `begin-thread` refer to, and restores it
+      afterwards.  An error that a thread does not handle is then
+      reported in three lines, saying that the thread ended and that
+      Guidance can pause only the main thread; a thread given a
+      handler of its own keeps it.  `_break_` in another thread says
+      that it was ignored.  The README lists the limit.  Test: one in
+      `tests/repl-test.scm`, with `tests/programs/threads.scm`.
+
+      Still open: debugging other threads; threads started through
+      `make-thread`, futures, or `par-map`, which Guile's own code
+      starts, keep Guile's messages.
 - [ ] **Runaway recursion never ends.**  `(define (deep n) (+ 1 (deep
       (+ n 1))))` reaches "stack overflow" in 13 s in plain Guile.
       Under Guidance it was still running after 150 s.  Stop and Pause
