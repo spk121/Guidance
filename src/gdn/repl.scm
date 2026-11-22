@@ -516,6 +516,14 @@ again.  Otherwise it is Guile's trap, for PROC itself."
 take effect if some is.~%" (basename file) line))
     idx))
 
+(define (show-program-source!)
+  "Shows the program that Run runs on the Source page, from its top and
+with no line marked, so that breakpoints can be set before it has run."
+  (let ((script (option 'script)))
+    (when (and script (file-exists? script))
+      (gdn-source-view-show-location *gdn-source-view*
+                                     (canonicalize-path script) 0 0))))
+
 (define (set-program! file)
   "Makes FILE the program that Run runs, in place of the one given on
 the command line, and without arguments.  The other options, such as
@@ -528,6 +536,7 @@ the load path, stay as they are."
              ((arguments) (cons 'arguments '()))
              (else entry)))
          *options*))
+  (show-program-source!)
   (say "~&Press Run (F5) to run ~a.~%" (program-name)))
 
 (define (process-request request)
@@ -1691,6 +1700,7 @@ out to be a note: until its newline, if it begins with \";;; \"."
   (current-warning-port *terminal-warn*)
   (compile-for-debugging!)
   (apply-command-line! (cdr (command-line)))
+  (show-program-source!)
   (repl-welcome)
   (let ((status (call-with-interruptible-input repl-loop)))
     (say "The REPL has ended with a return status of ~a.~%" status)

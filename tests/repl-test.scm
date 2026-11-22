@@ -960,6 +960,28 @@ programs, to debug them"))
 
 ;; Open Program, in the menu, changes the program that Run runs.
 
+(define (sources-shown)
+  "The files that the REPL has put on the Source page, with the line
+marked in each, 0 for none, oldest first."
+  (filter-map (lambda (e) (and (eq? (car e) 'source) (cdr e))) *events*))
+
+(define-test "source: the program is on the Source page before it has run"
+  (run-repl (list '(quit 0)) (program "break.scm"))
+  (check "the program from the command line is shown, with no line marked"
+         (equal? (sources-shown) (list (list (program "break.scm") 0))))
+  (run-repl (list (lambda ()
+                    (push-request! `(set-program ,(program "greet.scm")))
+                    '(wake #f))
+                  '(quit 0))
+            (program "break.scm"))
+  (check "and so is a program chosen from the menu"
+         (equal? (sources-shown)
+                 (list (list (program "break.scm") 0)
+                       (list (program "greet.scm") 0))))
+  (run-repl (list '(quit 0)))
+  (check "nothing is shown when there is no program"
+         (null? (sources-shown))))
+
 (define-test "open: a program chosen from the menu replaces the one given"
   (run-repl
    (list '(run #f)

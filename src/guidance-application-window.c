@@ -689,9 +689,9 @@ open_program_finish (GObject *source, GAsyncResult *result, gpointer user_data)
   /* The dialog was open for a while: the mode may have changed. */
   if (path != NULL && input_mode (self) == GDN_INPUT_MODE_REPL)
     {
+      /* The REPL shows it on the Source page, so that breakpoints
+       * can be set before it runs. */
       gdn_lisp_request_set_program (self->lisp, path);
-      /* Show it, so that breakpoints can be set before it runs. */
-      gdn_source_view_show_location (self->source_view, path, 1, 0);
     }
   g_free (path);
   g_clear_object (&file);

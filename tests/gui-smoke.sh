@@ -548,20 +548,24 @@ wait_for "error-of-a-pipe"
 wait_for "(read piped)"
 stop_app
 
-################################################################
-# Known failures: faults found by the review recorded in PLAN.md as
-# Phase 6, and not yet fixed.  See known_failure.
-
 # The program named on the command line is on the Source page from the
-# start, so that a breakpoint can be set before the first run.
-source_at_startup () {
-    start "$PROGRAMS/break.scm"
-    key F9
-    wait_for "Breakpoint at break.scm:"
-    stop_app
-}
-known_failure "Phase 6, The Source page is empty until the program first pauses" \
-              source_at_startup
+# start, so that a breakpoint can be set before the first run.  The
+# cursor is on its first line, where break.scm defines `numbers'; its
+# code runs when that is called.
+start "$PROGRAMS/break.scm"
+key F9
+wait_for "Breakpoint at break.scm:1"
+key F5
+wait_for "Breakpoint at break.scm:1, at break.scm:1"
+wait_for "[prompt trap"
+key shift+F5
+wait_for "Stopped."
+stop_app
+
+################################################################
+# Known failures: faults that are recorded in PLAN.md and not yet
+# fixed.  Each is a function, run with known_failure, which see.  There
+# are none at present.
 
 # Quit, from the menu or with Ctrl+Q, ends Guidance cleanly, also while
 # a program is running.

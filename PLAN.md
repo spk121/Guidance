@@ -1088,13 +1088,22 @@ these" at the end of this phase.
       subprocess started some other way than these two primitives, with
       the current error port as its error stream, is not covered.
 
-- [ ] **The Source page is empty until the program first pauses.**  A
+- [x] **The Source page is empty until the program first pauses.**  A
       program named on the command line, the main way to start, is
       not shown, so no line breakpoint can be set before the first
       run without `_break_` or the Modules page (see the first
       blocker).  Open Program does load its file, and from there a
       breakpoint set before Run works.  Load the command-line program
       at startup the same way.
+
+      Fixed: the REPL shows the program on the Source page when it
+      starts, and when one is chosen with Open Program, from its top and
+      with no line marked, which also settles the note below about line
+      1.  The cursor is on the first line, so F9 at once sets a
+      breakpoint there.  The GUI test, now an ordinary test, sets a
+      breakpoint with F9 before the first run and checks that Run stops
+      at it; a REPL test checks what is shown.
+
 - [ ] **Stop and a second Run leave the program's threads running.**
       Noted in Phase 5 under "Other concerns".  With two worker
       threads, Stop left both printing into the Terminal, and running
