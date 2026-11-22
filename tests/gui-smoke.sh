@@ -179,6 +179,39 @@ refute "boot-9.scm"
 refute "anonymous procedure"
 stop_app
 
+# Stop ends an endless expression entered while the program is paused,
+# and leaves the program paused.
+start "$PROGRAMS/break.scm"
+key F5
+wait_for "[prompt break>]"
+type_line "(let loop () (loop))"
+sleep 0.5
+key shift+F5
+wait_for "The expression was stopped."
+type_line "(+ 40 2)"
+wait_for "→ 42"
+key F5
+wait_for "four"
+wait_for "[prompt repl>]" 2
+refute "Stopped."
+stop_app
+
+# A program waiting for input can be paused, continued, and stopped.
+start "$PROGRAMS/input.scm"
+key F5
+wait_for "What is your name?"
+key F6
+wait_for "Paused at input.scm:6"
+key F5
+sleep 0.5
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+type_line "(+ 40 2)"
+wait_for "→ 42"
+refute "Hello"
+stop_app
+
 # Pause a running program, evaluate an expression, then stop.
 start "$PROGRAMS/loop.scm"
 key F5

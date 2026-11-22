@@ -233,17 +233,40 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
       them on every way out (`cancel-pending-steps!`).  Three tests
       in `tests/repl-test.scm` cover the error, Stop, and
       end-of-program cases.
-- [ ] **An expression that does not finish, evaluated while paused,
+- [x] **An expression that does not finish, evaluated while paused,
       hangs Guidance for good.**  At `break>` or `error>`, enter
-      `(let loop () (loop))`.  Stop and Pause do nothing, nor does any
-      later input; the window must be closed.  In those modes Stop is
-      queued for the REPL thread, which is busy, instead of being
-      delivered asynchronously as it is in Run mode.
-- [ ] **Stop and Pause do nothing while the program waits for
-      input.**  With a program blocked in `read-line`, neither takes
-      effect (waited 20 s) until a line is entered.  The blocking read
-      on the pseudoterminal does not notice asyncs.  The input port
-      needs an interruptible wait.
+      `(let loop () (loop))`.  Stop and Pause did nothing, nor did any
+      later input; the window had to be closed.  In those modes Stop
+      was queued for the REPL thread, which was busy.  Fixed: Stop
+      now always interrupts the REPL thread, and in those modes wakes
+      it too, in case it is waiting for the operator.  An expression
+      entered while paused runs inside its own prompt, and Stop
+      aborts to that: "The expression was stopped." is printed, and
+      the program stays paused where it was.  A second Stop stops
+      the program.  Tests: two in `tests/repl-test.scm`, one in
+      `tests/gui-smoke.sh`.
+- [x] **Stop and Pause do nothing while the program waits for
+      input.**  With a program blocked in `read-line`, neither took
+      effect until a line was entered: a thread blocked in a read
+      does not run asyncs.  Fixed with Guile's suspendable ports:
+      `(gdn repl)` calls `install-suspendable-ports!`, makes the
+      program's standard input non-blocking, and sets a
+      `current-read-waiter` that waits for it a tenth of a second at
+      a time, in Scheme, where asyncs run.  Other ports keep the
+      waiter they had.  `read-line`, `read`, `read-char`, `get-line`
+      and the other port procedures that suspendable ports cover can
+      all be interrupted.  Output speed is unchanged.  Tests: two in
+      `tests/repl-test.scm`, whose stub for standard input is now a
+      pipe, and one in `tests/gui-smoke.sh`.
+
+      Still open:
+      - An expression entered while paused cannot be given input: the
+        entry is the program's standard input only in Run mode.
+        `(read-line)` at `break>` waits until Stop.
+      - Stop does not end the program's other threads.  One left
+        waiting for input takes some of what is typed for the next
+        run.  This belongs with "Other threads are outside the
+        debugger" below.
 - [ ] **Actions pressed in the wrong mode are queued and replayed.**
       The shortcuts and toolbar actions are not tied to the mode: only
       the buttons' sensitivity is.  Pressing F5 twice runs the program

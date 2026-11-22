@@ -630,12 +630,14 @@ handle_process_stop (G_GNUC_UNUSED GSimpleAction *simple,
 {
   GdnApplicationWindow *self = user_data;
 
-  /* A running program isn't waiting for input, so it is interrupted.
-   * In error and trap mode, the REPL is waiting for this command. */
-  if (is_running (self))
-    gdn_lisp_stop_async (self->lisp);
-  else
-    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_STOP, NULL);
+  /* The REPL thread is interrupted, whatever it is doing: running the
+   * program, or, in error and trap mode, evaluating an expression of
+   * the operator's that may never finish.  In those modes it may
+   * instead be waiting for the operator, where an interrupt alone
+   * would not be noticed, so it is woken as well. */
+  gdn_lisp_stop_async (self->lisp);
+  if (!is_running (self))
+    gdn_lisp_set_user_response (self->lisp, GDN_LISP_COMMAND_WAKE, NULL);
 }
 
 ////////////////////////////////////////////////////////////////

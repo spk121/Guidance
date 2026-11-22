@@ -636,6 +636,68 @@ INPUT."
   (check "the expression after Stop is evaluated" (output-contains? "→ 42"))
   (check "no internal error" (not (output-contains? "make-stack"))))
 
+;; The operator must always be able to stop: an expression of their own
+;; that does not finish, and a program that waits for input.
+
+(define-test "stop: Stop ends an endless expression, not the paused program"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (after-delay 0.3 request-stop!)
+           '(eval "(let loop () (loop))"))
+         (checkpoint "the program is still paused at its break (line 6)"
+                     (lambda () (equal? (top-frame-line) 6))
+                     '(eval "(+ 40 2)"))
+         '(continue #f)
+         '(quit 0))
+   (program "break.scm"))
+  (check "the expression is stopped, later ones work, the program goes on"
+         (output-order? "Break at break.scm:6" "The expression was stopped."
+                        "→ 42" "three" "four"))
+  (check "the program is not stopped" (not (output-contains? "Stopped."))))
+
+(define-test "stop: Stop ends an endless expression in error mode"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (after-delay 0.3 request-stop!)
+           '(eval "(let loop () (loop))"))
+         '(eval "(+ 40 2)")
+         '(stop #f)
+         '(quit 0))
+   (program "error.scm"))
+  (check "the expression is stopped, then the program"
+         (output-order? "Entering error mode" "The expression was stopped."
+                        "→ 42" "Stopped.")))
+
+(define-test "stop: Stop while the program waits for input"
+  (run-repl
+   (list (lambda ()
+           (after-delay 0.5 request-stop!)
+           '(run #f))
+         '(eval "(+ 40 2)")
+         '(quit 0))
+   (program "input.scm"))
+  (check "the program is stopped while it waits"
+         (output-order? "What is your name?" "Stopped." "→ 42"))
+  (check "it read nothing" (not (output-contains? "Hello"))))
+
+(define-test "stop: Pause while the program waits for input, then input"
+  (run-repl
+   (list (lambda ()
+           (after-delay 0.5 request-pause!)
+           '(run #f))
+         (lambda ()
+           ;; Paused.  Once it continues, give it its input.
+           (after-delay 0.3 (lambda () (send-input "Ünïcode\n")))
+           '(continue #f))
+         '(quit 0))
+   (program "input.scm"))
+  (check "pauses where it waits, then reads the input"
+         (output-order? "What is your name?" "Paused at input.scm:6"
+                        "Hello, Ünïcode!"))
+  (check "pauses once" (equal? (count-pauses) 1)))
+
 ;; Stepping pauses only in the program.  When a step would take it into
 ;; the code that runs the program, the program runs on instead.
 

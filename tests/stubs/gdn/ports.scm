@@ -13,9 +13,19 @@
             %gdn-output-port
             %gdn-error-port
             %gdn-prompt-port
-            prompts))
+            prompts
+            send-input))
 
-(define %gdn-input-port (current-input-port))
+;; The program's standard input is a pipe, so that it has nothing to
+;; read until a test sends it something.
+(define %input-pipe (pipe))
+(define %gdn-input-port (car %input-pipe))
+
+(define (send-input str)
+  "Sends STR to the program's standard input."
+  (display str (cdr %input-pipe))
+  (force-output (cdr %input-pipe)))
+
 (define %gdn-output-port (current-output-port))
 (define %gdn-error-port (current-error-port))
 

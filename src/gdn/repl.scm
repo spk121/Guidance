@@ -42,6 +42,7 @@
   #:use-module (gdn ports)
   #:use-module (gdn widgets)
   #:use-module (ice-9 format)
+  #:use-module (ice-9 suspendable-ports)
   #:use-module (srfi srfi-1)
   #:use-module (system base compile)
   #:use-module (system vm frame)
@@ -67,6 +68,13 @@
 ;; This prompt is installed directly around the program being run, so
 ;; that backtraces can be cut to show only the program's own frames.
 (define %stack-tag (make-prompt-tag "gdn-stack"))
+
+;; Aborting to this prompt stops an expression that the operator
+;; entered while the program is paused, and returns to that pause.
+(define %eval-tag (make-prompt-tag "gdn-eval"))
+
+;; True while such an expression is being evaluated.
+(define *in-eval* (make-parameter #f))
 
 ;; True while a program is running under the debugger.
 (define *in-run* (make-parameter #f))
@@ -208,11 +216,18 @@ scope.  Errors are reported, but do not change the mode."
          (frame (and (< *selected-frame* (length frames))
                      (list-ref frames *selected-frame*)))
          (top? (and (*pause-top-frame?*) (zero? *selected-frame*))))
-    (call-with-values
-        (lambda ()
-          (print-error-on-exception
-           (lambda () (eval-in-frame str frame top?))))
-      print-return-values)))
+    ;; The expression may not finish.  Stop then aborts to this prompt,
+    ;; from gdn-async-poll, leaving the program paused as it was.
+    (call-with-prompt %eval-tag
+      (lambda ()
+        (parameterize ((*in-eval* #t))
+          (call-with-values
+              (lambda ()
+                (print-error-on-exception
+                 (lambda () (eval-in-frame str frame top?))))
+            print-return-values)))
+      (lambda (k)
+        (format #t "~&The expression was stopped.~%")))))
 
 (define (refresh-modules!)
   "Sends the module list to the GUI, if it has changed."
@@ -356,25 +371,72 @@ arrive in the meantime.  Returns a list (ACTION DATA)."
     (process-requests!)
     (let ((input (gdn-get-user-input *gdn-lisp*)))
       (process-requests!)
-      (if (eq? (car input) 'wake)
-          (loop)
-          input))))
+      (cond
+       ((eq? (car input) 'wake)
+        ;; The GUI also wakes the REPL when the operator presses Stop
+        ;; while the program is paused.  The async it sent with that
+        ;; may not have run yet, so look now.
+        (gdn-async-poll)
+        (loop))
+       (else input)))))
 
 (define (gdn-async-poll)
-  "The GUI runs this asynchronously in the REPL thread while a program
-is running.  It handles queued requests, and stops or pauses the
-program if the operator asked for that."
+  "The GUI runs this asynchronously in the REPL thread, while a program
+is running or paused.  It handles queued requests, and stops or pauses
+the program if the operator asked for that.  If the operator's own
+expression is being evaluated, while the program is paused, Stop stops
+that instead."
   ;; Asyncs are blocked while handling requests, so that further polls
   ;; wait their turn instead of running inside this one.
   (call-with-blocked-asyncs process-requests!)
   (case (gdn-take-interrupt-request! *gdn-lisp*)
     ((stop)
-     (when (*in-run*)
-       (abort-to-prompt %stop-tag)))
+     (cond
+      ((*in-eval*) (abort-to-prompt %eval-tag))
+      ((*in-run*) (abort-to-prompt %stop-tag))))
     ((pause)
      (when (and (*in-run*) (not (*paused*)))
        (pause-here)))
     (else #t)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; STANDARD INPUT
+
+;; A thread that is blocked reading a file descriptor does not run
+;; asyncs, which is how Guidance stops and pauses a program.  So a
+;; program waiting for input could be neither stopped nor paused.
+;;
+;; Guile's suspendable ports are the way around that.  With them, a
+;; read from a non-blocking port that has nothing to read calls the
+;; `current-read-waiter'.  Guidance's waiter waits for the program's
+;; standard input a little at a time, in Scheme, where asyncs do run.
+
+;; How long to wait at a time, in microseconds.
+(define %input-wait-microseconds 100000)
+
+(define (make-input-waiter fallback)
+  "Returns a read waiter that waits for the program's standard input so
+that asyncs can run meanwhile, and calls FALLBACK, the waiter that it
+replaces, for any other port."
+  (lambda (port)
+    (if (eq? port %gdn-input-port)
+        (catch 'system-error
+          (lambda ()
+            (select (list (fileno port)) '() '() 0 %input-wait-microseconds))
+          ;; Interrupted by a signal.  The read is tried again, and
+          ;; comes back here if there is still nothing.
+          (lambda args #f))
+        (fallback port))))
+
+(define (call-with-interruptible-input thunk)
+  "Calls THUNK with the program's standard input set up as above."
+  (install-suspendable-ports!)
+  (fcntl %gdn-input-port F_SETFL
+         (logior O_NONBLOCK (fcntl %gdn-input-port F_GETFL)))
+  (set-current-input-port %gdn-input-port)
+  (parameterize ((current-read-waiter
+                  (make-input-waiter (current-read-waiter))))
+    (thunk)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; RUN MODE
@@ -827,6 +889,6 @@ command arrives.  Returns the exit status."
   (module-use! (current-module) (resolve-interface '(system vm trap-state)))
   (apply-command-line! (cdr (command-line)))
   (repl-welcome)
-  (let ((status (repl-loop)))
+  (let ((status (call-with-interruptible-input repl-loop)))
     (format #t "The REPL has ended with a return status of ~a.~%" status)
     status))
