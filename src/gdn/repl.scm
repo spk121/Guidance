@@ -563,11 +563,12 @@ program until they press Stop."
       (error-mode-interact key args frames))))
 
 (define (error-mode-interact key args frames)
+  ;; The mode comes first, as in pause-interact.
+  (gdn-set-input-mode! *gdn-application-window* 'error)
   (print-exception-message (current-error-port) key args)
   (gdn-update-backtrace! *gdn-backtrace-view* frames)
   (format #t "~&Entering error mode.  The Backtrace page shows the stack.~%")
   (format #t "When ready, press the Stop button to return to the REPL.~%")
-  (gdn-set-input-mode! *gdn-application-window* 'error)
   (let loop ()
     (refresh-views!)
     (display "error>" %gdn-prompt-port)
@@ -737,9 +738,11 @@ frames of the code that runs the program."
 
 (define (pause-interact frame frames message prompt)
   (begin
+    ;; The mode comes first: the GUI accepts the operator's actions
+    ;; by the mode, and they may act as soon as they see the message.
+    (gdn-set-input-mode! *gdn-application-window* 'trap)
     (format #t "~&~a~%" message)
     (gdn-update-backtrace! *gdn-backtrace-view* frames (*pause-top-frame?*))
-    (gdn-set-input-mode! *gdn-application-window* 'trap)
     (let loop ()
       (refresh-views!)
       (display prompt %gdn-prompt-port)

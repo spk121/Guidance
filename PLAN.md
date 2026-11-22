@@ -267,14 +267,28 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
         waiting for input takes some of what is typed for the next
         run.  This belongs with "Other threads are outside the
         debugger" below.
-- [ ] **Actions pressed in the wrong mode are queued and replayed.**
-      The shortcuts and toolbar actions are not tied to the mode: only
-      the buttons' sensitivity is.  Pressing F5 twice runs the program
-      a second time as soon as the first run ends, including straight
-      after Stop.  F5 or F10 pressed while the program runs is used up
-      by its next pause, which then continues by itself.  Enable the
-      actions per mode, and have the REPL thread discard actions that
-      were queued in an earlier mode.
+- [x] **Actions pressed in the wrong mode are queued and replayed.**
+      The shortcuts and toolbar actions were not tied to the mode:
+      only the buttons' sensitivity was.  Pressing F5 twice ran the
+      program a second time as soon as the first run ended, including
+      straight after Stop.  F5 or F10 pressed while the program ran
+      was used up by its next pause, which then continued by itself.
+      Fixed, in three parts:
+      - The actions are enabled by mode (`set_actions_for_mode`), and
+        the buttons and shortcuts both follow them.
+      - Each handler also checks the mode the REPL thread last
+        reported, since the actions only catch up when the GTK thread
+        is next idle.
+      - When a run ends, actions still queued for the REPL thread are
+        dropped (`gdn_lisp_discard_actions`).  This covers Run pressed
+        twice before the REPL thread takes up the first.  Expressions
+        the operator entered are kept.
+
+      So that a key pressed the moment a pause is announced is not
+      lost, the REPL now reports the new mode before it prints the
+      message, and the GTK thread applies it ahead of terminal output
+      and key presses.  Tests: two cases in `tests/gui-smoke.sh`,
+      with `tests/programs/late-break.scm`.
 - [ ] **The Terminal loses output.**  `xread` in
       `guidance-terminal-view.c` keeps at most 10 KiB per read, drops
       the rest, inserts "■", and logs a CRITICAL.  A program printing

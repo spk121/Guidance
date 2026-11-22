@@ -106,6 +106,13 @@ refute () {
     echo "ok: no $1"
 }
 
+# expect_count TEXT COUNT: fails unless TEXT has appeared COUNT times.
+expect_count () {
+    n=$(grep -cF -- "$1" "$TRANSCRIPT")
+    [ "$n" -eq "$2" ] || fail "'$1' appeared $n times, not $2"
+    echo "ok: $1 ($2 times)"
+}
+
 key () {
     xdotool key "$@"
 }
@@ -177,6 +184,47 @@ type_line "(+ 40 2)"
 wait_for "→ 42"
 refute "boot-9.scm"
 refute "anonymous procedure"
+stop_app
+
+# Keys pressed in the wrong mode are not saved up for later.  Run
+# pressed twice runs the program once, even after Stop.
+start "$PROGRAMS/loop.scm"
+xdotool key F5 F5 F5 F10
+wait_for "spinning"
+sleep 0.5
+key F5
+key F10
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+sleep 1
+expect_count "Running" 1
+expect_count "spinning" 1
+refute "[prompt step>]"
+stop_app
+
+# Run and Step pressed while the program runs do not carry it past its
+# next break.
+start "$PROGRAMS/late-break.scm"
+key F5
+wait_for "started"
+key F5
+key F10
+key F11
+wait_for "[prompt break>]"
+sleep 1
+refute "after the break"
+refute "[prompt step>]"
+key F5
+wait_for "after the break"
+wait_for "[prompt repl>]" 2
+# Steps and Stop do nothing at the REPL prompt, and Run still works.
+key F10
+key shift+F5
+key F5
+wait_for "started" 2
+key shift+F5
+wait_for "Stopped."
 stop_app
 
 # Stop ends an endless expression entered while the program is paused,

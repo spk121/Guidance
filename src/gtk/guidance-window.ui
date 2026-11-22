@@ -64,7 +64,6 @@
                     <child>
                       <object class="GtkButton" id="run_button">
                         <property name="action-name">win.process-run</property>
-                        <property name="sensitive">True</property>
                         <child>
                           <object class="GtkImage">
                             <property name="icon-name">debug-run</property>
@@ -76,7 +75,6 @@
                     <child>
                       <object class="GtkButton" id="pause_button">
                         <property name="action-name">win.process-pause</property>
-                        <property name="sensitive">False</property>
                         <property name="tooltip-text">Pause (F6)</property>
                         <child>
                           <object class="GtkImage">

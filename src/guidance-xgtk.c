@@ -20,13 +20,6 @@
 #include <stdio.h>
 
 void
-xgtk_button_set_sensitive (GtkButton *button, gboolean flag)
-{
-  g_assert (GTK_IS_BUTTON (button));
-  gtk_widget_set_sensitive (GTK_WIDGET (button), flag);
-}
-
-void
 xgtk_invoke_on_main (GSourceFunc func, gpointer data, GDestroyNotify notify)
 {
   /* Idle sources of equal priority are dispatched in the order they

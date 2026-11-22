@@ -21,7 +21,6 @@
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
-void xgtk_button_set_sensitive (GtkButton *button, gboolean flag);
 
 /* Schedules FUNC (DATA) to run once on the GTK main thread.  NOTIFY,
  * if not NULL, is called on DATA afterwards.  Safe to call from any

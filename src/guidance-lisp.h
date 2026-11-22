@@ -77,6 +77,7 @@ void gdn_lisp_set_user_response (GdnLisp *      self,
 /* GUILE THREAD: Tells the interpreter whether a program is running,
  * which decides how requests are delivered: asynchronously while a
  * program runs, or while the REPL waits for input otherwise. */
+void     gdn_lisp_discard_actions (GdnLisp *self);
 void gdn_lisp_set_running (GdnLisp *self, gboolean running);
 gboolean gdn_lisp_is_running (GdnLisp *self);
 

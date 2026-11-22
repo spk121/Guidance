@@ -311,6 +311,32 @@ gdn_lisp_set_user_response (GdnLisp *self, GdnLispCommand cmd, const void *data)
   g_async_queue_push (self->user_input_queue, input);
 }
 
+/* Removes the operator's actions (run, continue, stop, and the steps)
+ * that are waiting for the REPL thread.  Expressions that the operator
+ * entered are kept, and so are wake-ups, which stand for requests. */
+void
+gdn_lisp_discard_actions (GdnLisp *self)
+{
+  g_assert (GDN_IS_LISP (self));
+
+  GQueue            kept = G_QUEUE_INIT;
+  GdnLispUserInput *input;
+
+  g_async_queue_lock (self->user_input_queue);
+  while ((input = g_async_queue_try_pop_unlocked (self->user_input_queue))
+         != NULL)
+    {
+      if (input->cmd == GDN_LISP_COMMAND_EVAL
+          || input->cmd == GDN_LISP_COMMAND_WAKE)
+        g_queue_push_tail (&kept, input);
+      else
+        g_free (input);
+    }
+  while ((input = g_queue_pop_head (&kept)) != NULL)
+    g_async_queue_push_unlocked (self->user_input_queue, input);
+  g_async_queue_unlock (self->user_input_queue);
+}
+
 void
 gdn_lisp_set_running (GdnLisp *self, gboolean running)
 {
