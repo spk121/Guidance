@@ -195,6 +195,10 @@ wait_for "[prompt break>]"
 sleep 0.5
 key F9
 wait_for "Breakpoint at break.scm:6"
+# The line is in `numbers', which is loaded, so there is nothing to
+# warn about.  The warning used to appear when the program's procedures
+# were kept in a module that the search for loaded code leaves out.
+refute "No code is loaded"
 key F5
 wait_for "[prompt repl>]" 2
 key F5

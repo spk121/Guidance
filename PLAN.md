@@ -1138,9 +1138,14 @@ Each item has a test: see "Tests for these" at the end of this phase.
   macro's expansion is part of the program's procedure but carries the
   library's file and line. Steps should pass over positions in Guile's
   own files.
-- "No code is loaded at spin.scm:3 yet" is printed for a breakpoint
-  set, while paused, on a line of a procedure that is loaded, and
-  that then fires at once.
+- Fixed: this was a consequence of the first blocker.  The search for
+  loaded code leaves out Guidance's own modules, and the program's
+  procedures were in one of them.  With the program back in
+  `(guile-user)` the warning no longer appears; the GUI test that sets
+  a breakpoint while paused now checks that.  It was: "No code is
+  loaded at spin.scm:3 yet" is printed for a breakpoint set, while
+  paused, on a line of a procedure that is loaded, and that then fires
+  at once.
 - Up recalls lines, not entries: after an expression entered over
   two lines, Up gives its second line alone, which is a read error.
 - A mistyped name at `repl>` enters Error mode, which then needs
