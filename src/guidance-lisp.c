@@ -164,10 +164,28 @@ gdn_lisp_class_init (GdnLispClass *klass)
   scm_c_define_module ("gdn gui", gdn_gui_guile_init, NULL);
 }
 
+/* The interpreter whose ports (gdn ports) describes. */
+static GdnLisp *ports_lisp = NULL;
+
+static SCM marked_port_from_unix_input_fd (int master_fd);
+
+/* (gdn-open-error-port): a new port that writes error text to the
+ * Terminal, like %gdn-error-port.  The REPL gives the program one of
+ * its own, so that a program that closes its error port does not
+ * close Guidance's. */
+static SCM
+scm_open_error_port (void)
+{
+  return marked_port_from_unix_input_fd (ports_lisp->input_fd);
+}
+
 static void
 gdn_ports_guile_init (void *user_data)
 {
   GdnLisp *self = user_data;
+  ports_lisp = self;
+  scm_c_define_gsubr ("gdn-open-error-port", 0, 0, 0, scm_open_error_port);
+  scm_c_export ("gdn-open-error-port", NULL);
   self->input_port_var = scm_c_define ("%gdn-input-port", self->input_port);
   self->output_port_var = scm_c_define ("%gdn-output-port", self->output_port);
   self->error_port_var = scm_c_define ("%gdn-error-port", self->error_port);
@@ -509,7 +527,11 @@ after_sweep_handler (G_GNUC_UNUSED void *hook_data,
 /* Compiles the source file SRC to GO, unless GO exists, with ROOT at
  * the front of the load path, so that the file names recorded in the
  * compiled code are relative to ROOT; then loads GO.  Returns #f if
- * any of that fails. */
+ * any of that fails.
+ *
+ * Loading a compiled module leaves that module as the current one.
+ * It is put back: threads started later inherit the current module,
+ * and the REPL thread must not start out inside Guidance's own. */
 static const char compile_and_load_code[] =
     "(lambda (root src go)\n"
     "  (catch #t\n"
@@ -522,7 +544,7 @@ static const char compile_and_load_code[] =
     "              ((@ (system base compile) compile-file) src\n"
     "               #:output-file go))\n"
     "            (lambda () (set! %load-path old-path)))))\n"
-    "      (load-compiled go)\n"
+    "      (save-module-excursion (lambda () (load-compiled go)))\n"
     "      #t)\n"
     "    (lambda args #f)))";
 
@@ -621,10 +643,14 @@ static SCM
 spawn_top_repl (G_GNUC_UNUSED void *data)
 {
   /* Programs and expressions are evaluated in (guile-user), as in
-   * Guile's own REPL. */
-  scm_c_eval_string ("(set-current-module (resolve-module '(guile-user)))");
+   * Guile's own REPL, never in a module of Guidance's: a program's
+   * definitions would replace Guidance's own of the same names.
+   *
+   * The module is set here in C.  Set from a string given to
+   * scm_c_eval_string, it would be put back as soon as that returned. */
+  scm_set_current_module (scm_c_resolve_module ("guile-user"));
   scm_c_eval_string ("(use-modules (gdn lib) (gdn repl))");
-  return scm_c_eval_string ("(gdn-top-repl)");
+  return scm_call_0 (scm_c_public_ref ("gdn repl", "gdn-top-repl"));
 }
 
 static SCM

@@ -30,6 +30,7 @@
             gdn-update-environments!
             gdn-update-traps!
             gdn-set-source-breakpoints!
+            gdn-source-view-show-location
             gdn-update-threads!
             gdn-update-modules!
             gdn-set-module-procedures!
@@ -151,6 +152,11 @@
 
 (define (gdn-update-traps! view traps)
   (log! 'traps (length traps)))
+
+(define (gdn-source-view-show-location view file line column)
+  (unless (and (string? file) (integer? line) (integer? column))
+    (error "Malformed source location" file line column))
+  (log! 'source file line))
 
 (define (gdn-set-source-breakpoints! view breakpoints)
   (for-each (lambda (bp)

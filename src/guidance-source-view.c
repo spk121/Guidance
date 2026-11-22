@@ -692,5 +692,6 @@ gdn_source_view_guile_init (void)
                       scm_source_view_show_location);
   scm_c_define_gsubr ("gdn-set-source-breakpoints!", 2, 0, 0,
                       scm_set_source_breakpoints_x);
-  scm_c_export ("gdn-set-source-breakpoints!", NULL);
+  scm_c_export ("gdn-set-source-breakpoints!",
+                "gdn-source-view-show-location", NULL);
 }

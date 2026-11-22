@@ -77,6 +77,8 @@ stop_app () {
 finish () {
     kill "$APP" 2>/dev/null
     wait "$APP" 2>/dev/null
+    # In a known failure, which runs in a subshell: see known_failure.
+    [ -n "${KNOWN_FAILURE:-}" ] && exit "$1"
     echo "--- transcript ---"; cat "$TRANSCRIPT"
     echo "--- log ---"; cat "$LOG"
     rm -rf "$WORK"
@@ -88,6 +90,24 @@ fail () {
     finish 1
 }
 
+# How long wait_for waits, in tenths of a second.
+WAIT_TICKS=300
+
+# known_failure PLAN-ITEM SCENARIO: runs the function SCENARIO, which
+# tests a fault that is known and not yet fixed, described by PLAN-ITEM
+# of PLAN.md.  That it fails is expected.  If it passes, the fault has
+# been fixed, and the scenario should join the tests proper; that
+# fails the run, so that it is noticed.  The scenario runs in a
+# subshell, and waits less long for what it expects.
+known_failure () {
+    if (KNOWN_FAILURE=1; WAIT_TICKS=100; "$2") > "$WORK/known" 2>&1; then
+        cat "$WORK/known"
+        fail "known failure '$2' ($1) now passes: make it a test proper"
+    fi
+    grep -E "^(===|FAIL)" "$WORK/known"
+    echo "xfail: $2 (PLAN.md: $1)"
+}
+
 # wait_for TEXT [COUNT]: waits until TEXT appears COUNT times.
 wait_for () {
     count=${2:-1}
@@ -95,7 +115,7 @@ wait_for () {
     while [ "$(grep -cF -- "$1" "$TRANSCRIPT")" -lt "$count" ]; do
         kill -0 "$APP" 2>/dev/null || fail "Guidance exited while waiting for '$1'"
         i=$((i + 1))
-        [ $i -gt 300 ] && fail "timed out waiting for '$1'"
+        [ $i -gt "$WAIT_TICKS" ] && fail "timed out waiting for '$1'"
         sleep 0.1
     done
     echo "ok: $1"
@@ -447,6 +467,112 @@ wait_for "[prompt repl>]" 2
 type_line "(+ 1 1)"
 wait_for "→ 2"
 stop_app
+
+# The operator's expressions, and the program, are in (guile-user),
+# not in a module of Guidance's.
+start
+type_line "(module-name (current-module))"
+wait_for "→ (guile-user)"
+stop_app
+
+# So a program may use any names, also ones that Guidance uses inside.
+start "$PROGRAMS/clash.scm"
+key F5
+wait_for "clash program done"
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "clash program done" 2
+wait_for "[prompt repl>]" 3
+refute "Guile has exited"
+type_line "(+ 40 2)"
+wait_for "→ 42"
+stop_app
+
+# A program that closes its output port does not close Guidance's: the
+# error is shown, the REPL goes on, and the next run has a port again.
+start "$PROGRAMS/close-port.scm"
+key F5
+wait_for "closing"
+wait_for "[prompt error>]"
+type_line "(+ 40 2)"
+wait_for "→ 42"
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "closing" 2
+wait_for "[prompt error>]" 2
+key shift+F5
+wait_for "Stopped." 2
+refute "Guile has exited"
+stop_app
+
+# The values that reenter.scm displays: lines that are a number, or
+# an unspecified value where one should be.
+displayed_values () {
+    tr -d '\r' < "$TRANSCRIPT" | grep -E '^([0-9]+|#<.*)$' | tr '\n' ' '
+}
+
+# step_to_end KEY TEXT: presses KEY at each pause until TEXT appears.
+step_to_end () {
+    i=0
+    until grep -qF -- "$2" "$TRANSCRIPT"; do
+        kill -0 "$APP" 2>/dev/null || fail "Guidance exited while stepping"
+        i=$((i + 1))
+        [ $i -gt 100 ] && fail "stepping did not reach '$2'"
+        key "$1"
+        sleep 0.2
+    done
+}
+
+# Stepping through a line that calls a continuation again does not
+# change the value it passes.
+for step_key in F10 F11; do
+    start "$PROGRAMS/reenter.scm"
+    key F5
+    wait_for "[prompt break>]"
+    step_to_end $step_key "done"
+    values=$(displayed_values)
+    [ "$values" = "1 10 20 " ] || fail "displayed $values, not 1 10 20"
+    echo "ok: 1 10 20 with $step_key"
+    stop_app
+done
+
+# Error output of subprocesses started without a shell, and on pipes,
+# is shown.
+start "$PROGRAMS/subprocess-error.scm"
+key F5
+wait_for "subprocess finished"
+wait_for "from-the-error-stream"
+wait_for "error-of-a-pipe"
+wait_for "(read piped)"
+wait_for "[prompt repl>]" 2
+# Guile starts a thread of its own for system*, which is not the
+# program's, and must not be ended with it.
+refute "that the program had started"
+# Signals are still delivered afterwards, which that thread does.
+type_line "(begin (sigaction SIGUSR1 (lambda (s) (display \"signalled\") (newline))) (kill (getpid) SIGUSR1) (sleep 1))"
+wait_for "signalled"
+stop_app
+
+# The program named on the command line is on the Source page from the
+# start, so that a breakpoint can be set before the first run.  The
+# cursor is on its first line, where break.scm defines `numbers'; its
+# code runs when that is called.
+start "$PROGRAMS/break.scm"
+key F9
+wait_for "Breakpoint at break.scm:1"
+key F5
+wait_for "Breakpoint at break.scm:1, at break.scm:1"
+wait_for "[prompt trap"
+key shift+F5
+wait_for "Stopped."
+stop_app
+
+################################################################
+# Known failures: faults that are recorded in PLAN.md and not yet
+# fixed.  Each is a function, run with known_failure, which see.  There
+# are none at present.
 
 # Quit, from the menu or with Ctrl+Q, ends Guidance cleanly, also while
 # a program is running.
