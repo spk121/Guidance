@@ -17,6 +17,7 @@
  */
 
 #include "guidance-terminal-view.h"
+#include "guidance-xgtk.h"
 #include <glib-unix.h>
 
 struct _GdnTerminalView
@@ -136,6 +137,12 @@ gdn_terminal_view_disconnect_lisp_ports (GdnTerminalView *self)
 }
 
 void
+gdn_terminal_view_focus_entry (GdnTerminalView *self)
+{
+  gtk_widget_grab_focus (GTK_WIDGET (self->input_entry));
+}
+
+void
 gdn_terminal_view_set_port_mode (GdnTerminalView *self, gboolean flag)
 {
   self->port_mode = flag;
@@ -197,6 +204,8 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
       // (prompt));
       gtk_text_buffer_insert_at_cursor (text_buffer, text, strlen (text));
       gtk_text_buffer_insert_at_cursor (text_buffer, "\n", 1);
+      xgtk_transcribe (text);
+      xgtk_transcribe ("\n");
 
       /* Change the presentation for the prompt and entry text */
       gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
@@ -237,6 +246,7 @@ poll_terminal_text (gint                       fd,
   /* Copy it over to the GtkTextView output widget. */
   if (len > 0)
     gtk_text_buffer_insert_at_cursor (text_buffer, buf, len);
+  xgtk_transcribe (buf);
   gtk_text_view_scroll_mark_onscreen (view,
                                       gtk_text_buffer_get_insert (text_buffer));
   g_free (buf);
@@ -268,6 +278,7 @@ poll_terminal_error (gint                       fd,
   gtk_text_buffer_insert_at_cursor (text_buffer, buf, len);
   gtk_text_view_scroll_mark_onscreen (view,
                                       gtk_text_buffer_get_insert (text_buffer));
+  xgtk_transcribe (buf);
 
   /* Change the presentation for the error text */
   gtk_text_buffer_get_iter_at_mark (text_buffer, &iter_start, mark_start);
@@ -310,6 +321,14 @@ poll_terminal_prompt (gint                       fd,
   else if (u8_len > 0)
     gtk_label_set_text (self->prompt_label, buf);
 
+  if (u8_len > 0)
+    {
+      /* Prompts are shown in a label, not the text view, so mark them
+       * in the transcript. */
+      char *line = g_strdup_printf ("[prompt %s]\n", buf);
+      xgtk_transcribe (line);
+      g_free (line);
+    }
   g_free (buf);
 
   return TRUE;

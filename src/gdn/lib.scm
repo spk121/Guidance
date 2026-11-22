@@ -20,10 +20,431 @@
 (define-module (gdn lib)
   #:use-module (ice-9 i18n)
   #:use-module (ice-9 format)
+  #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-43)
+  #:use-module (system vm debug)
   #:use-module (system vm frame)
   #:use-module (system vm program)
-  #:export (gdn-get-backtrace
+  #:use-module (system vm traps)
+  #:use-module (system vm vm)
+  #:export (gdn-error-frames
+            gdn-frame-frames
+            guile-internal-frame?
+            gdn-loaded-modules
+            gdn-module-list
+            gdn-module-procedures
+            gdn-trap-at-line
+            gdn-loaded-code-at-line?
+            gdn-parse-command-line
+            gdn-get-backtrace
             gdn-get-environment))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; COMMAND LINE
+
+;; Guidance takes a subset of Guile's command-line options, so that it
+;; can be called the way Guile would be.  main.c handles --help and
+;; --version itself, before starting the GUI, using the same rules
+;; for where the options end, and has the usage message.
+
+(define (gdn-parse-command-line args)
+  "Parses Guidance's command-line arguments, ARGS, not including the
+program name.  Returns an alist with these keys:
+
+  load-path       directories from -L, in order
+  compiled-path   directories from -C, in order
+  load-files      files from -l, in order
+  script          the program FILE, or #f
+  expression      the program EXPR from -c, or #f
+  entry           the FUNCTION from -e, as a symbol, or #f
+  arguments       the program's ARGs
+  errors          a list of messages about bad arguments"
+  (let loop ((args args)
+             (load-path '()) (compiled-path '()) (load-files '())
+             (entry #f) (errors '()))
+    (define (finish script expression arguments errors)
+      `((load-path . ,(reverse load-path))
+        (compiled-path . ,(reverse compiled-path))
+        (load-files . ,(reverse load-files))
+        (script . ,script)
+        (expression . ,expression)
+        (entry . ,entry)
+        (arguments . ,arguments)
+        (errors . ,(reverse errors))))
+    (define (missing option)
+      (finish #f #f '()
+              (cons (format #f "option ~a requires an argument" option)
+                    errors)))
+    (if (null? args)
+        (finish #f #f '() errors)
+        (let ((arg (car args))
+              (rest (cdr args)))
+          (cond
+           ((member arg '("-L" "-C" "-l" "-e" "-s" "-c"))
+            (if (null? rest)
+                (missing arg)
+                (let ((value (car rest)))
+                  (cond
+                   ((string=? arg "-L")
+                    (loop (cdr rest) (cons value load-path) compiled-path
+                          load-files entry errors))
+                   ((string=? arg "-C")
+                    (loop (cdr rest) load-path (cons value compiled-path)
+                          load-files entry errors))
+                   ((string=? arg "-l")
+                    (loop (cdr rest) load-path compiled-path
+                          (cons value load-files) entry errors))
+                   ((string=? arg "-e")
+                    (loop (cdr rest) load-path compiled-path load-files
+                          (string->symbol value) errors))
+                   ((string=? arg "-s")
+                    (finish value #f (cdr rest) errors))
+                   (else              ; -c
+                    (finish #f value (cdr rest) errors))))))
+           ((string=? arg "--")
+            (if (null? rest)
+                (finish #f #f '() errors)
+                (finish (car rest) #f (cdr rest) errors)))
+           ((and (> (string-length arg) 1) (char=? (string-ref arg 0) #\-))
+            (loop rest load-path compiled-path load-files entry
+                  (cons (format #f "unrecognized option ~a" arg) errors)))
+           (else
+            (finish arg #f rest errors)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; STACKS
+
+;; Guile's own source files are recorded with paths relative to the
+;; load path, e.g. "ice-9/boot-9.scm".  Guidance's own modules are
+;; included too, for when they are loaded from files rather than from
+;; Guidance's resources, as in the tests.
+(define %guile-source-prefixes
+  '("ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
+    "web/" "sxml/" "texinfo/" "gdn/"))
+
+(define (guile-internal-frame? frame)
+  "True if FRAME is running code from Guile's own libraries, or from
+Guidance's."
+  (let* ((source (frame-source frame))
+         (file (and source (source:file source))))
+    (and (string? file)
+         (any (lambda (prefix) (string-prefix? prefix file))
+              %guile-source-prefixes))))
+
+;; Backtraces show at most this many frames, innermost first, so that
+;; deep recursion doesn't make them enormous.
+(define %max-backtrace-frames 500)
+
+(define (stack->frame-list stack)
+  (let loop ((i (1- (min (stack-length stack) %max-backtrace-frames)))
+             (frames '()))
+    (if (< i 0)
+        frames
+        (loop (1- i) (cons (stack-ref stack i) frames)))))
+
+(define (drop-through-last pred frames)
+  "Drops FRAMES up to and including the last frame satisfying PRED.
+Returns FRAMES unchanged if no frame does."
+  (let loop ((rest frames) (result frames))
+    (cond
+     ((null? rest) result)
+     ((pred (car rest)) (loop (cdr rest) (cdr rest)))
+     (else (loop (cdr rest) result)))))
+
+(define (frame-has-source-file? frame)
+  (let ((source (frame-source frame)))
+    (and source (string? (source:file source)))))
+
+(define (trim-outer-internal-frames frames)
+  "Drops the outermost frames that belong to Guile's libraries or have
+no source file, such as the machinery of `load'.  Never drops every
+frame."
+  (let ((trimmed (reverse (drop-while
+                           (lambda (f)
+                             (or (guile-internal-frame? f)
+                                 (not (frame-has-source-file? f))))
+                           (reverse frames)))))
+    (if (null? trimmed) frames trimmed)))
+
+(define (gdn-error-frames stack-tag)
+  "Call from within a pre-unwind exception handler.  Returns the list
+of frames, innermost first, between the point where the exception was
+raised and the prompt STACK-TAG, without the frames of Guile's exception
+machinery or of the handler itself."
+  (let* ((frames (stack->frame-list (make-stack #t 0 stack-tag)))
+         ;; Everything up to the raise is the handler and its callers.
+         (frames (drop-through-last
+                  (lambda (f) (eq? (frame-procedure-name f) 'raise-exception))
+                  frames))
+         ;; Then drop helpers like `error' and `throw' so the
+         ;; innermost frame is the code that raised the exception.
+         (user (drop-while guile-internal-frame? frames)))
+    (trim-outer-internal-frames (if (null? user) frames user))))
+
+(define (gdn-frame-frames frame stack-tag)
+  "Returns the list of frames, innermost first, from FRAME out to the
+prompt STACK-TAG.  FRAME is kept even if it is in Guile's libraries,
+since it may be the subject of a trap."
+  (let ((frames (stack->frame-list (make-stack frame 0 stack-tag))))
+    (if (null? frames)
+        frames
+        (let ((outer (trim-outer-internal-frames (cdr frames))))
+          (cons (car frames)
+                ;; If every outer frame is internal, the trim keeps
+                ;; them all; drop them all instead.
+                (if (every (lambda (f)
+                             (or (guile-internal-frame? f)
+                                 (not (frame-has-source-file? f))))
+                           outer)
+                    '()
+                    outer))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; MODULES AND PROCEDURES
+
+(define (absolute-source-file file)
+  "Guile records the source files of its own libraries relative to the
+load path.  Returns FILE as an absolute path if it can be found, or
+else FILE itself."
+  (cond
+   ((not (string? file)) #f)
+   ((absolute-file-name? file) file)
+   ((%search-load-path file) => identity)
+   (else file)))
+
+(define (gdn-loaded-modules)
+  "Returns the loaded modules, except Guidance's own, sorted by name."
+  ;; Guile has no documented way to list the loaded modules.  Walking
+  ;; the module tree from the root with `module-submodules' is how
+  ;; Guile's own (system xref) finds them.
+  (let ((seen (make-hash-table)))
+    (let loop ((pending (list (resolve-module '() #f)))
+               (modules '()))
+      (if (null? pending)
+          (sort modules
+                (lambda (a b)
+                  (string<? (object->string (module-name a))
+                            (object->string (module-name b)))))
+          (let* ((m (car pending))
+                 (subs (filter (lambda (sub)
+                                 (and (not (hashq-ref seen sub))
+                                      (hashq-set! seen sub #t)))
+                               (hash-map->list (lambda (k v) v)
+                                               (module-submodules m)))))
+            (loop (append subs (cdr pending))
+                  (if (and (eq? (module-kind m) 'directory)
+                           (pair? (module-name m))
+                           (not (eq? (car (module-name m)) 'gdn)))
+                      (cons m modules)
+                      modules)))))))
+
+(define (gdn-module-list)
+  "Returns a vector with an entry #(NAME FILE) for each loaded module.
+NAME is the module name as a string, like \"(ice-9 format)\".  FILE is
+the absolute path of its source, or \"\" if it is not known."
+  (list->vector
+   (map (lambda (m)
+          (vector (object->string (module-name m))
+                  (or (absolute-source-file (module-filename m)) "")))
+        (gdn-loaded-modules))))
+
+(define (procedure-location proc)
+  "Returns two values: the absolute source file of PROC and its 1-based
+line, or #f and 0 if they are unknown."
+  (let ((sources (if (program? proc) (program-sources proc) '())))
+    (if (pair? sources)
+        (let ((source (car sources)))     ; (ip file line . column)
+          (values (absolute-source-file (cadr source))
+                  (1+ (caddr source))))
+        (values #f 0))))
+
+(define (gdn-module-procedures module-name-string)
+  "Returns a vector with an entry #(NAME FILE LINE TRAPPABLE?) for each
+procedure defined in the module named by MODULE-NAME-STRING, sorted by
+name.  FILE is an absolute path, or \"\" if it is unknown, in which case
+LINE is 0.  Only compiled procedures are TRAPPABLE?."
+  (let* ((name (false-if-exception
+                (call-with-input-string module-name-string read)))
+         (module (and (list? name)
+                      (resolve-module name #f #f #:ensure #f)))
+         (entries '()))
+    (when module
+      (module-for-each
+       (lambda (sym var)
+         (when (variable-bound? var)
+           (let ((value (variable-ref var)))
+             (when (procedure? value)
+               (call-with-values (lambda () (procedure-location value))
+                 (lambda (file line)
+                   (set! entries
+                     (cons (vector (symbol->string sym)
+                                   (or file "")
+                                   line
+                                   (program? value))
+                           entries))))))))
+       module))
+    (list->vector
+     (sort entries (lambda (a b) (string<? (vector-ref a 0)
+                                           (vector-ref b 0)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; BREAKPOINTS AT SOURCE LINES
+
+;; Guile's add-trap-at-source-location! finds procedures through
+;; (system xref), whose index is not updated for top-level definitions
+;; made by `load', and it only covers code loaded when the trap is
+;; made.  Guidance's line traps instead attach themselves to each
+;; procedure with code at the line: to those already loaded when the
+;; trap is made, and to any other when it is first called.  So a
+;; breakpoint can be set before its code is loaded, and survives the
+;; program being loaded again.
+
+(define (same-source-file? recorded file)
+  (and (string? recorded)
+       (or (string=? recorded file)
+           (equal? (absolute-source-file recorded) file))))
+
+(define (code-extent code)
+  "Returns the start and end addresses of the procedure whose code
+includes the address CODE, or #f and #f."
+  (let ((info (find-program-debug-info code)))
+    (if info
+        (values (program-debug-info-addr info)
+                (+ (program-debug-info-addr info)
+                   (program-debug-info-size info)))
+        (values #f #f))))
+
+(define (code-line-ranges code file line)
+  "Returns the instruction ranges, as a list of absolute (START . END)
+pairs, of the code at LINE of FILE in the procedure whose code begins
+at CODE.  LINE is 0-based.  Returns '() if the procedure has no code
+at LINE.  (Lines with no code are not moved to the next line with
+code: procedures nest, so the next line may belong to another.)"
+  (call-with-values (lambda () (code-extent code))
+    (lambda (start end)
+      (let* ((sources (if start (find-program-sources start) '()))
+             ;; Each entry is (LINE START . END), for the sources in FILE.
+             (entries
+              (let loop ((sources sources) (acc '()))
+                (if (null? sources)
+                    acc
+                    (let* ((source (car sources))
+                           (next (if (pair? (cdr sources))
+                                     (source-post-pc (cadr sources))
+                                     end)))
+                      (loop (cdr sources)
+                            (if (same-source-file? (source-file source) file)
+                                (cons (cons* (source-line source)
+                                             (source-post-pc source)
+                                             next)
+                                      acc)
+                                acc)))))))
+        (map cdr (filter (lambda (e) (= (car e) line)) entries))))))
+
+(define (procedures-at-line file line)
+  "Returns a list of (CODE . RANGES) for the compiled procedures in the
+loaded modules that have code at LINE (0-based) of FILE, where CODE is
+the address of the procedure's code."
+  (let ((seen (make-hash-table)))
+    (append-map
+     (lambda (module)
+       (let ((found '()))
+         (module-for-each
+          (lambda (sym var)
+            (when (variable-bound? var)
+              (let ((value (variable-ref var)))
+                (when (and (program? value)
+                           (not (hashv-ref seen (program-code value))))
+                  (let* ((code (program-code value))
+                         (ranges (code-line-ranges code file line)))
+                    (hashv-set! seen code #t)
+                    (when (pair? ranges)
+                      (set! found (cons (cons code ranges) found))))))))
+          module)
+         found))
+     (gdn-loaded-modules))))
+
+(define (gdn-loaded-code-at-line? file user-line)
+  "True if a loaded procedure has code at USER-LINE (1-based) of FILE."
+  (pair? (procedures-at-line file (1- user-line))))
+
+(define (ip-in-ranges? ip ranges)
+  (any (lambda (range) (and (<= (car range) ip) (< ip (cdr range))))
+       ranges))
+
+(define (code-range-trap code ranges handler current-frame)
+  "An enabled low-level trap calling HANDLER when execution enters
+RANGES in the procedure whose code begins at CODE."
+  (call-with-values (lambda () (code-extent code))
+    (lambda (start end)
+      (trap-at-procedure-ip-in-range
+       ;; The procedure itself is only needed to recognize its frames,
+       ;; which OUR-FRAME? does from the code's addresses instead.
+       identity ranges handler
+       #:current-frame current-frame
+       #:our-frame? (lambda (frame)
+                      (let ((ip (frame-instruction-pointer frame)))
+                        (and (<= start ip) (< ip end))))))))
+
+(define* (gdn-trap-at-line file user-line handler #:optional (current-frames '()))
+  "Creates an enabled low-level trap that calls HANDLER with the frame
+whenever execution reaches USER-LINE (1-based) of FILE, an absolute
+path.
+
+CURRENT-FRAMES are the frames of a paused program.  Those already at
+the line will return into it when the program resumes; that is not
+reaching the line, so their first hit is ignored."
+  (define line (1- user-line))
+  (define (enable current-frames)
+    (let ((subtraps '())
+          (covered (make-hash-table))    ; code address -> #t
+          (seen (make-hash-table))       ; entry address -> #t
+          (already-there #f))
+      (define (line-handler frame)
+        (let ((address (frame-address frame)))
+          (if (memv address already-there)
+              (set! already-there (delv address already-there))
+              (handler frame))))
+      (define (attach! code ranges current-frame)
+        (hashv-set! covered code #t)
+        (set! subtraps
+          (cons (code-range-trap code ranges line-handler current-frame)
+                subtraps)))
+      ;; Attach to procedures as they are called.
+      (define (apply-hook frame)
+        (let ((ip (frame-instruction-pointer frame)))
+          (unless (hashv-ref seen ip)
+            (hashv-set! seen ip #t)
+            (call-with-values (lambda () (code-extent ip))
+              (lambda (start end)
+                (when (and start (not (hashv-ref covered start)))
+                  (let ((ranges (code-line-ranges start file line)))
+                    (if (pair? ranges)
+                        (attach! start ranges frame)
+                        (hashv-set! covered start #t)))))))))
+      ;; Attach to the procedures already loaded.
+      (let ((loaded (procedures-at-line file line)))
+        (set! already-there
+          (filter-map (lambda (frame)
+                        (and (ip-in-ranges? (frame-instruction-pointer frame)
+                                            (append-map cdr loaded))
+                             (frame-address frame)))
+                      current-frames))
+        (for-each (lambda (match) (attach! (car match) (cdr match) #f))
+                  loaded))
+      (vm-add-apply-hook! apply-hook)
+      ;; The trap interface: calling it disables the trap and returns
+      ;; a procedure that enables it again.
+      (lambda* (#:optional frame)
+        ;; Guile's procedure traps need a frame when disabled inside
+        ;; their procedure, which is the case if the program was
+        ;; stopped there; trap-state doesn't pass one.
+        (let ((frame (or frame (stack-ref (make-stack #t) 0))))
+          (vm-remove-apply-hook! apply-hook)
+          (for-each (lambda (trap) (trap frame)) subtraps))
+        (lambda* (#:optional frame)
+          (enable '())))))
+  (enable current-frames))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; BACKTRACE
@@ -43,37 +464,50 @@
 ;; - representation (string)
 ;; - value (string)
 ;; - extra (string)
-;;
-;; It does the trick where it builds it upside-down then reverses at
-;; the end.
-(define (gdn-get-backtrace frame)
-  (let loop ((frame frame)
-             (backtrace '()))
-    (cond
-     ((and frame
-           (not (eqv? (frame-procedure-name frame) '%start-stack))
-           (not (eqv? (frame-procedure-name frame) 'save-module-excursion)))
-      ;; Were still in the program's stack.
-      ;; Assemble this frame's data then step up the stack.
-      (let* ((source (frame-source frame))
-             (file (if source (or (source:file source) "") ""))
-             (line (if source (source:line-for-user source) 0))
-             (col (if source (source:column source) 0)))
-        (loop (frame-previous frame)
-              (cons (vector
-                     (format-frame-arguments frame)
-                     file
-                     line
-                     col
-                     (length (frame-arguments frame))
-                     (list->vector (map (lambda (binding)
-                                          (unpack-binding (length (frame-arguments frame)) binding))
-                                        (frame-bindings frame))))
-                    backtrace))))
-     (else
-      ;; We've reached the top of the program's frames. Above here
-      ;; is Guile's own frames.
-      (list->vector (reverse backtrace))))))
+(define (frame->backtrace-entry frame top-frame?)
+  ;; A frame may be inspected at any instruction, where some of its
+  ;; information may not be available, so each part falls back to a
+  ;; default rather than failing.  TOP-FRAME? tells Guile that FRAME
+  ;; is the innermost frame, so arguments not yet copied into local
+  ;; variables can still be read, e.g. at a procedure-call trap.
+  (let* ((source (false-if-exception (frame-source frame)))
+         (file (if source (or (source:file source) "") ""))
+         (line (if source (source:line-for-user source) 0))
+         (col (if source (source:column source) 0))
+         (call (false-if-exception
+                (frame-call-representation frame #:top-frame? top-frame?)))
+         (nargs (if (pair? call) (length (cdr call)) 0))
+         (bindings (or (false-if-exception
+                        (frame-bindings frame top-frame?))
+                       '())))
+    (vector
+     (or (and (pair? call) (format-call call))
+         (format #f "(~a)" (or (false-if-exception
+                                (frame-procedure-name frame))
+                               "λ")))
+     file
+     line
+     col
+     nargs
+     (list->vector
+      (filter-map (lambda (binding)
+                    ;; Unnamed bindings are compiler temporaries.
+                    (and (binding-name binding)
+                         (false-if-exception (unpack-binding nargs binding))))
+                  bindings)))))
+
+(define* (gdn-get-backtrace frames #:optional top-frame?)
+  "FRAMES is a list of frames, innermost first, as returned by
+gdn-error-frames or gdn-frame-frames, or #f for an empty backtrace.
+TOP-FRAME? should be true if the first frame is the one executing, as
+when the program is paused by a trap.  Returns a vector of backtrace
+entries, as described above."
+  (if (and frames (pair? frames))
+      (list->vector
+       (cons (frame->backtrace-entry (car frames) top-frame?)
+             (map (lambda (f) (frame->backtrace-entry f #f))
+                  (cdr frames))))
+      (vector)))
 
 (define (object->extra-info x)
   (cond
@@ -88,17 +522,19 @@
    (else
     "")))
 
-(define (format-frame-arguments frame)
+(define (format-call call)
+  "Formats a call representation (PROCEDURE-NAME ARG ...), with each
+argument on its own line."
   (with-output-to-string
     (lambda ()
       (display "(")
-      (display (or (frame-procedure-name frame) 'λ))
+      (display (or (car call) 'λ))
       (for-each
        (lambda (arg)
          (newline)
          (display "  ")
          (display arg))
-       (frame-arguments frame))
+       (cdr call))
       (display ")"))))
 
 (define (unpack-binding n_args binding)
@@ -166,6 +602,13 @@
      (vector "Host Name" (gethostname))
      )))
 
+;; Lookups that can fail, e.g. in a container with no login session
+;; or when the UID has no passwd entry.  They return #f on failure.
+(define (safe-passwd id) (false-if-exception (getpw id)))
+(define (safe-group id) (false-if-exception (getgr id)))
+(define (passwd-field accessor pw) (if pw (accessor pw) #f))
+(define (group-field accessor gr) (if gr (accessor gr) #f))
+
 (define (get-process-information)
   (vector
    (vector "CWD" (getcwd))
@@ -174,13 +617,13 @@
    (vector "Groups" (format #f "~S" (getgroups)))
    (vector "PPID" (number->string (getppid)))
    (vector "UID" (number->string (getuid)))
-   (vector "UID Name" (passwd:name (getpwuid (getuid))))
+   (vector "UID Name" (passwd-field passwd:name (safe-passwd (getuid))))
    (vector "GID" (number->string (getgid)))
-   (vector "GID Name" (group:name (getgrgid (getgid))))
+   (vector "GID Name" (group-field group:name (safe-group (getgid))))
    (vector "EUID" (number->string (geteuid)))
-   (vector "EUID Name" (passwd:name (getpwuid (geteuid))))
+   (vector "EUID Name" (passwd-field passwd:name (safe-passwd (geteuid))))
    (vector "EGID" (number->string (getegid)))
-   (vector "EGID Name" (group:name (getgrgid (getegid))))
+   (vector "EGID Name" (group-field group:name (safe-group (getegid))))
    (vector "PGRP" (number->string (getpgrp)))
    (vector "Processor Count" (number->string (or (false-if-exception (total-processor-count)) 0)))
    (vector "Processors Used" (number->string (or (false-if-exception (current-processor-count)) 0)))
@@ -228,33 +671,32 @@
                                                   (exact->inexact internal-time-units-per-second)))))))
 
 (define (get-user-information-entries)
-  (let ((uid (getuid))
-        (euid (geteuid))
-        (gid (getgid))
-        (egid (getegid))
-        (login (getlogin)))
-    (let ((uid-pw (getpw uid))
-          (euid-pw (getpw euid))
-          (gid-gr (getgr gid))
-          (egid-gr (getgr egid)))
-      (vector
-       (vector "Login Name" login)
-       (vector "User Name" (passwd:name uid-pw))
-       (vector "User ID" (number->string (passwd:uid uid-pw)))
-       (vector "User Group ID" (number->string (passwd:gid uid-pw)))
-       (vector "User Full Name" (passwd:gecos uid-pw))
-       (vector "User Shell" (passwd:shell uid-pw))
-       (vector "User Home" (passwd:dir uid-pw))
-       (vector "Group Name" (group:name gid-gr))
-       (vector "Group ID" (number->string (group:gid gid-gr)))
-       (vector "Effective User Name" (passwd:name uid-pw))
-       (vector "Effective User ID" (number->string (passwd:uid uid-pw)))
-       (vector "Effective User Group ID" (number->string (passwd:gid uid-pw)))
-       (vector "Effective User Full Name" (passwd:gecos uid-pw))
-       (vector "Effective User Shell" (passwd:shell uid-pw))
-       (vector "Effective User Home" (passwd:dir uid-pw))
-       (vector "Effective Group Name" (group:name egid-gr))
-       (vector "Effective Group ID" (number->string (group:gid egid-gr)))))))
+  (let ((uid-pw (safe-passwd (getuid)))
+        (euid-pw (safe-passwd (geteuid)))
+        (gid-gr (safe-group (getgid)))
+        (egid-gr (safe-group (getegid))))
+    (define (pw-num accessor pw)
+      (and pw (number->string (accessor pw))))
+    (define (gr-num accessor gr)
+      (and gr (number->string (accessor gr))))
+    (vector
+     (vector "Login Name" (false-if-exception (getlogin)))
+     (vector "User Name" (passwd-field passwd:name uid-pw))
+     (vector "User ID" (number->string (getuid)))
+     (vector "User Group ID" (pw-num passwd:gid uid-pw))
+     (vector "User Full Name" (passwd-field passwd:gecos uid-pw))
+     (vector "User Shell" (passwd-field passwd:shell uid-pw))
+     (vector "User Home" (passwd-field passwd:dir uid-pw))
+     (vector "Group Name" (group-field group:name gid-gr))
+     (vector "Group ID" (number->string (getgid)))
+     (vector "Effective User Name" (passwd-field passwd:name euid-pw))
+     (vector "Effective User ID" (number->string (geteuid)))
+     (vector "Effective User Group ID" (pw-num passwd:gid euid-pw))
+     (vector "Effective User Full Name" (passwd-field passwd:gecos euid-pw))
+     (vector "Effective User Shell" (passwd-field passwd:shell euid-pw))
+     (vector "Effective User Home" (passwd-field passwd:dir euid-pw))
+     (vector "Effective Group Name" (group-field group:name egid-gr))
+     (vector "Effective Group ID" (number->string (getegid))))))
 
 (define (get-gc-stats)
   (let ((x (gc-stats)))
@@ -275,17 +717,42 @@
 ;; - entries is a vector. Each entry is a 2-element vector that is #(key val)
 ;;   - key is a string
 ;;   - val is a string
+;;
+;; Every key and value is guaranteed to be a string, since the C side
+;; converts them with scm_to_utf8_string.  Unknown values become "".
+(define (->display-string x)
+  (cond
+   ((string? x) x)
+   ((not x) "")
+   (else (object->string x))))
+
+(define (sanitize-entries entries)
+  (vector-map (lambda (i entry)
+                (vector (->display-string (vector-ref entry 0))
+                        (->display-string (vector-ref entry 1))))
+              entries))
+
+(define (category name thunk)
+  "Builds one environment category. If THUNK throws, the category is
+shown with a single row describing the error."
+  (vector name
+          ""
+          (sanitize-entries
+           (catch #t
+             thunk
+             (lambda (key . args)
+               (vector (vector "error" (format #f "~a ~s" key args))))))))
+
 (define (gdn-get-environment)
   "Lots of info about the current running environment."
   (vector
-   (vector "system" "" (get-system-information))
-   (vector "memory" "" (get-gc-stats))
-   (vector "environment" "" (get-environment-variables))
-   (vector "locale" "" (get-locale-information))
-   (vector "process" "" (get-process-information))
-   (vector "time" "" (get-time-entries))
-   (vector "user" "" (get-user-information-entries))
-   ))
+   (category "system" get-system-information)
+   (category "memory" get-gc-stats)
+   (category "environment" get-environment-variables)
+   (category "locale" get-locale-information)
+   (category "process" get-process-information)
+   (category "time" get-time-entries)
+   (category "user" get-user-information-entries)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 

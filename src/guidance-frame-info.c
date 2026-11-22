@@ -18,6 +18,7 @@
 
 #define G_LOG_USE_STRUCTURED
 #include "guidance-frame-info.h"
+#include "guidance-binding-info.h"
 
 struct _GdnFrameInfo
 {
@@ -28,7 +29,7 @@ struct _GdnFrameInfo
   int     line;     /**< For a frame, the source location if known */
   int     column;   /**< For a frame, the source location if known */
   int     n_args;
-  guint64 bindings;
+  GPtrArray *bindings; /**< GdnBindingInfo for arguments and locals */
 };
 
 G_DEFINE_TYPE (GdnFrameInfo, gdn_frame_info, G_TYPE_OBJECT)
@@ -41,7 +42,6 @@ enum
   PROP_LINE,
   PROP_COLUMN,
   PROP_N_ARGS,
-  PROP_BINDINGS,
   N_PROPS
 };
 static GParamSpec *properties[N_PROPS] = {
@@ -73,9 +73,6 @@ gdn_frame_info_get_property (GObject *    object,
     case PROP_N_ARGS:
       g_value_set_int (value, self->n_args);
       break;
-    case PROP_BINDINGS:
-      g_value_set_uint64 (value, self->bindings);
-      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
     }
@@ -97,7 +94,7 @@ gdn_frame_info_finalize (GObject *object)
   self->line = 0;
   self->column = 0;
   self->n_args = 0;
-  self->bindings = SCM_UNPACK (SCM_BOOL_F);
+  g_clear_pointer (&self->bindings, g_ptr_array_unref);
 
   /* Don't forget to chain up. */
   G_OBJECT_CLASS (gdn_frame_info_parent_class)->finalize (object);
@@ -121,8 +118,6 @@ gdn_frame_info_class_init (GdnFrameInfoClass *klass)
                                               G_MAXINT, 0, G_PARAM_READABLE);
   properties[PROP_N_ARGS] = g_param_spec_int ("n-args", "n-args", "n-args", 0,
                                               G_MAXINT, 0, G_PARAM_READABLE);
-  properties[PROP_BINDINGS] = g_param_spec_uint64 (
-      "bindings", "bindings", "bindings", 0, G_MAXUINT64, 0, G_PARAM_READABLE);
 }
 
 static void
@@ -130,22 +125,6 @@ gdn_frame_info_init (G_GNUC_UNUSED GdnFrameInfo *self)
 {
 }
 
-#if 0
-static GdnFrameInfo *
-frame_info_new (const char *name, const char *filename, int line, int column, int n_args, SCM bindings)
-{
-  GdnFrameInfo *self = g_object_new (GDN_FRAME_INFO_TYPE, NULL);
-
-  self->name = g_strdup (name);
-  self->filename = g_strdup (filename);
-  self->line = line;
-  self->column = column;
-  self->n_args = n_args;
-  self->bindings = SCM_UNPACK (bindings);
-
-  return self;
-}
-#endif
 
 static GdnFrameInfo *
 frame_info_new_from_scm (SCM frame)
@@ -170,7 +149,7 @@ frame_info_new_from_scm (SCM frame)
   self->line = scm_to_int (s_line);
   self->column = scm_to_int (s_column);
   self->n_args = scm_to_int (s_n_args);
-  self->bindings = SCM_UNPACK (s_bindings);
+  self->bindings = gdn_binding_info_array_new_from_scm (s_bindings);
 
   g_log_structured (G_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "MESSAGE_ID",
                     "38a21f3e600d497c9194e4080769fdb0", "CODE_FILE", __FILE__,
@@ -179,44 +158,17 @@ frame_info_new_from_scm (SCM frame)
   return self;
 }
 
-void
-gdn_frame_info_store_update (GListStore *store, SCM frames)
+GPtrArray *
+gdn_frame_info_array_new_from_scm (SCM frames)
 {
-  g_assert_nonnull (store);
-  g_assert_nonnull (frames);
   g_assert (scm_is_vector (frames));
 
-  // g_list_store_remove_all (store);
+  size_t     len = scm_c_vector_length (frames);
+  GPtrArray *array = g_ptr_array_new_full (len, g_object_unref);
 
-  for (size_t i = 0; i < scm_c_vector_length (frames); i++)
-    {
-      SCM           entry = scm_c_vector_ref (frames, i);
-      GdnFrameInfo *info = frame_info_new_from_scm (entry);
-      if (g_list_model_get_object (G_LIST_MODEL (store), i) != NULL)
-        {
-          GdnFrameInfo *old_info = GDN_FRAME_INFO (
-              g_list_model_get_object (G_LIST_MODEL (store), i));
-          free (old_info->name);
-          old_info->name = g_strdup (info->name);
-          free (old_info->filename);
-          old_info->filename = g_strdup (info->filename);
-          old_info->line = info->line;
-          old_info->column = info->column;
-          old_info->n_args = info->n_args;
-          old_info->bindings = info->bindings;
-          g_object_unref (info);
-        }
-      else
-        g_list_store_append (store, info);
-    }
-  if (scm_c_vector_length (frames) <
-      g_list_model_get_n_items (G_LIST_MODEL (store)))
-    {
-      g_list_store_splice (store, scm_c_vector_length (frames),
-                           g_list_model_get_n_items (G_LIST_MODEL (store)) -
-                               scm_c_vector_length (frames),
-                           NULL, 0);
-    }
+  for (size_t i = 0; i < len; i++)
+    g_ptr_array_add (array, frame_info_new_from_scm (scm_c_vector_ref (frames, i)));
+  return array;
 }
 
 const char *
@@ -243,7 +195,7 @@ gdn_frame_info_get_column (GdnFrameInfo *self)
   return self->column;
 }
 
-guint64
+GPtrArray *
 gdn_frame_info_get_bindings (GdnFrameInfo *self)
 {
   return self->bindings;

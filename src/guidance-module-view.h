@@ -26,5 +26,13 @@ G_BEGIN_DECLS
 
 G_DECLARE_FINAL_TYPE (GdnModuleView, gdn_module_view, GDN, MODULE_VIEW, GtkBox)
 
+/* Signals:
+ *   location (file, line, column): the operator wants to see source.
+ *   trap (module-name, procedure-name): the operator wants a trap.
+ *   expand (module-name): a module was expanded, so its procedures
+ *     are needed.  Send them with gdn-set-module-procedures!.
+ */
+
+SCM  gdn_module_view_to_scm (GdnModuleView *self);
 void gdn_module_view_guile_init (void);
 G_END_DECLS

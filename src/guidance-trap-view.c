@@ -18,6 +18,7 @@
 
 #include "guidance-trap-view.h"
 #include "guidance-trap-info.h"
+#include "guidance-xgtk.h"
 #include <glib-unix.h>
 
 struct _GdnTrapView
@@ -31,7 +32,6 @@ struct _GdnTrapView
   GtkColumnViewColumn *active_col;
   GtkColumnViewColumn *delete_col;
 
-  GPtrArray * temp_store;
   GListStore *store;
 };
 
@@ -49,8 +49,6 @@ enum
 ////////////////////////////////////////////////////////////////
 static unsigned signals[N_SIGNALS];
 static SCM      scm_trap_view_type = SCM_BOOL_F;
-static GMutex   lock;
-static gboolean update_store (gpointer user_data);
 
 typedef void (*factory_func_t) (GtkListItemFactory *self,
                                 GtkListItem *       listitem,
@@ -60,7 +58,8 @@ static void set_column_view_model (GtkColumnView *view, GListModel *model);
 static void add_column_factory (GtkColumnViewColumn *col,
                                 factory_func_t       setup,
                                 factory_func_t       bind,
-                                factory_func_t       unbind);
+                                factory_func_t       unbind,
+                                gpointer             user_data);
 
 static void name_setup (GtkListItemFactory *factory,
                         GtkListItem *       list_item,
@@ -137,36 +136,51 @@ gdn_trap_view_init (GdnTrapView *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
 
-  self->temp_store = g_ptr_array_new_full (1, g_object_unref);
   self->store = g_list_store_new (GDN_TRAP_INFO_TYPE);
 
   set_column_view_model (self->column_view, G_LIST_MODEL (self->store));
-  add_column_factory (self->name_col, name_setup, name_bind, name_unbind);
-  add_column_factory (self->index_col, index_setup, index_bind, index_unbind);
+  add_column_factory (self->name_col, name_setup, name_bind, name_unbind,
+                      self);
+  add_column_factory (self->index_col, index_setup, index_bind, index_unbind,
+                      self);
   add_column_factory (self->active_col, active_setup, active_bind,
-                      active_unbind);
+                      active_unbind, self);
   add_column_factory (self->delete_col, delete_setup, delete_bind,
-                      delete_unbind);
+                      delete_unbind, self);
 }
 
 ////////////////////////////////////////////////////////////////
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
 
+/* The Delete button asks for the row's trap to be deleted. */
 static void
-delete_activate (G_GNUC_UNUSED GtkButton *self,
-                 G_GNUC_UNUSED gpointer   user_data)
+delete_activate (GtkButton *button, gpointer user_data)
 {
-#if 1
-  g_debug ("activate delete");
-#else
   GtkListItem *list_item = user_data;
+  GdnTrapInfo *info = gtk_list_item_get_item (list_item);
+  GdnTrapView *view = g_object_get_data (G_OBJECT (button), "view");
 
-  GObject *    obj = gtk_list_item_get_item (list_item);
-  GdnTrapInfo *info = GDN_TRAP_INFO (obj);
-  SCM          bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
-  gdn_binding_info_update_all (bindings);
-#endif
+  if (info != NULL)
+    g_signal_emit (view, signals[DELETE_TRAP], 0,
+                   gdn_trap_info_get_index (info));
+}
+
+/* The Active switch asks for the row's trap to be enabled or
+ * disabled.  Binding a row also sets the switch, which is ignored
+ * because it matches the trap's state. */
+static void
+active_toggled (GtkSwitch *swtch, G_GNUC_UNUSED GParamSpec *pspec,
+                gpointer user_data)
+{
+  GtkListItem *list_item = user_data;
+  GdnTrapInfo *info = gtk_list_item_get_item (list_item);
+  GdnTrapView *view = g_object_get_data (G_OBJECT (swtch), "view");
+  gboolean     active = gtk_switch_get_active (swtch);
+
+  if (info != NULL && active != gdn_trap_info_get_active (info))
+    g_signal_emit (view, signals[ENABLE_TRAP], 0,
+                   gdn_trap_info_get_index (info), active);
 }
 
 static void
@@ -254,13 +268,17 @@ index_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
 static void
 active_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
               GtkListItem *                     list_item,
-              G_GNUC_UNUSED gpointer            user_data)
+              gpointer                          user_data)
 {
   GtkBox *   box;
   GtkSwitch *swtch;
 
   box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
   swtch = GTK_SWITCH (gtk_switch_new ());
+  gtk_widget_set_halign (GTK_WIDGET (swtch), GTK_ALIGN_START);
+  g_object_set_data (G_OBJECT (swtch), "view", user_data);
+  g_signal_connect (swtch, "notify::active", G_CALLBACK (active_toggled),
+                    list_item);
   gtk_box_append (box, GTK_WIDGET (swtch));
   gtk_list_item_set_child (list_item, GTK_WIDGET (box));
 }
@@ -292,13 +310,16 @@ active_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
 static void
 delete_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
               GtkListItem *                     list_item,
-              G_GNUC_UNUSED gpointer            user_data)
+              gpointer                          user_data)
 {
   GtkBox *   box;
   GtkButton *button;
 
   box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_VERTICAL, 0));
-  button = GTK_BUTTON (gtk_button_new_from_icon_name ("delete"));
+  button = GTK_BUTTON (gtk_button_new_from_icon_name ("edit-delete"));
+  gtk_widget_set_halign (GTK_WIDGET (button), GTK_ALIGN_START);
+  gtk_widget_set_tooltip_text (GTK_WIDGET (button), "Delete this trap");
+  g_object_set_data (G_OBJECT (button), "view", user_data);
   gtk_box_append (box, GTK_WIDGET (button));
   gtk_list_item_set_child (list_item, GTK_WIDGET (box));
 
@@ -324,32 +345,6 @@ delete_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
-/* This GSourceFunc is used on-idle to move the trap temp_store to
- * the trap GListStore that the GUI uses. This has to occur in the
- * GTK thread. */
-static gboolean
-update_store (gpointer user_data)
-{
-  GdnTrapView * self = GDN_TRAP_VIEW (user_data);
-  gsize         len;
-  GdnTrapInfo **array;
-
-  g_mutex_lock (&lock);
-  array = g_ptr_array_steal (self->temp_store, &len);
-
-  /* This operation adds a reference to each entry array. */
-  g_list_store_splice (self->store, 0, g_list_model_get_n_items (self->store),
-                       array, len);
-
-  /* So we can drop the original reference here. */
-  for (guint i = 0; i < len; i++)
-    g_object_unref (g_list_model_get_object (self->store, i));
-  g_mutex_unlock (&lock);
-
-  /* We only run this once. */
-  return G_SOURCE_REMOVE;
-}
-
 static void
 set_column_view_model (GtkColumnView *view, GListModel *model)
 {
@@ -363,13 +358,14 @@ static void
 add_column_factory (GtkColumnViewColumn *col,
                     factory_func_t       setup,
                     factory_func_t       bind,
-                    factory_func_t       unbind)
+                    factory_func_t       unbind,
+                    gpointer             user_data)
 {
   GtkSignalListItemFactory *factory;
   factory = GTK_SIGNAL_LIST_ITEM_FACTORY (gtk_signal_list_item_factory_new ());
-  g_signal_connect (factory, "setup", G_CALLBACK (setup), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (bind), NULL);
-  g_signal_connect (factory, "unbind", G_CALLBACK (unbind), NULL);
+  g_signal_connect (factory, "setup", G_CALLBACK (setup), user_data);
+  g_signal_connect (factory, "bind", G_CALLBACK (bind), user_data);
+  g_signal_connect (factory, "unbind", G_CALLBACK (unbind), user_data);
   gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
 }
 
@@ -392,25 +388,18 @@ scm_update_traps_x (SCM s_self, SCM trap_list)
 {
   scm_assert_foreign_object_type (scm_trap_view_type, s_self);
 
-  g_mutex_lock (&lock);
   SCM          trap_vec = scm_vector (trap_list);
   GdnTrapView *self = scm_foreign_object_ref (s_self, 0);
+  size_t       len = scm_c_vector_length (trap_vec);
+  GPtrArray *  items = g_ptr_array_new_full (len, g_object_unref);
 
-  g_ptr_array_set_size (self->temp_store, 0);
+  for (size_t i = 0; i < len; i++)
+    g_ptr_array_add (items,
+                     trap_info_new_from_trap_id (
+                         scm_to_int (scm_c_vector_ref (trap_vec, i)), 0));
 
-  for (size_t i = 0; i < scm_c_vector_length (trap_vec); i++)
-    {
-      GdnTrapInfo *info = trap_info_new_from_trap_id (
-          scm_to_int (scm_c_vector_ref (trap_vec, i)), 0);
-      g_ptr_array_insert (self->temp_store, -1, info);
-    }
-
-  g_mutex_unlock (&lock);
-
-  /* The GListModel can only be updated from the GTK thread, so
-   * we stage the changes to the temp storage array, and update the
-   * GListModel in the next available tick. */
-  g_idle_add (update_store, self);
+  /* The GListModel can only be updated from the GTK thread. */
+  xgtk_list_store_replace_all_on_main (self->store, items);
 
   return SCM_UNSPECIFIED;
 }

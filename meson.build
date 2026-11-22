@@ -3,24 +3,25 @@ project('guidance', 'c',
     meson_version: '>= 0.50.0',
   default_options: [ 'warning_level=2',
                      'c_std=c2x',
-                     # 'b_sanitize=address',
-                     # 'b_sanitize=leak',
-                     # 'b_sanitize=undefined'
                    ],
 )
 
-if meson.get_compiler('c').get_id() == 'gcc'
-  add_global_arguments([
+# Sanitizers are not forced on.  Enable them with meson's built-in
+# option, e.g. `meson setup -Db_sanitize=address,undefined _build`.
+cc = meson.get_compiler('c')
+add_project_arguments(cc.get_supported_arguments([
   '-fstack-protector-strong',
   '-fstack-clash-protection',
-  '-fsanitize=address',
-  '-fsanitize=leak',
-  '-fsanitize=undefined',
   '-fcf-protection',
   '-Werror=shadow',
+  '-Werror=incompatible-pointer-types',
+  '-Werror=implicit-function-declaration',
   '-fexceptions',
-  '-fvar-tracking',
-  '-fanalyzer'], language : 'c')
+]), language: 'c')
+
+if get_option('analyzer')
+  add_project_arguments(cc.get_supported_arguments(['-fanalyzer']),
+                        language: 'c')
 endif
 
 i18n = import('i18n')
@@ -33,13 +34,12 @@ configure_file(
   output: 'guidance-config.h',
   configuration: config_h,
 )
-add_project_arguments([
-  '-I' + meson.build_root(),
-], language: 'c')
+config_inc = include_directories('.')
 
 
 subdir('data')
 subdir('src')
+subdir('tests')
 subdir('po')
 
 meson.add_install_script('build-aux/meson/postinstall.py')

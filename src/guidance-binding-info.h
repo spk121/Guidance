@@ -32,7 +32,8 @@ const char *gdn_binding_info_get_representation (GdnBindingInfo *self);
 const char *gdn_binding_info_get_value (GdnBindingInfo *self);
 const char *gdn_binding_info_get_extra (GdnBindingInfo *self);
 
-void gdn_binding_info_list_store_update_all (GListStore *store,
-                                             SCM         all_bindings);
+/* Returns a new array of GdnBindingInfo built from a vector of binding
+ * vectors, as produced by gdn-get-backtrace. */
+GPtrArray *gdn_binding_info_array_new_from_scm (SCM all_bindings);
 
 G_END_DECLS

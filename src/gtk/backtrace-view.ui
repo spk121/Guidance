@@ -5,6 +5,9 @@
     <child>                  
       <object class="GtkPaned">
         <property name="wide-handle">True</property>
+        <property name="hexpand">True</property>
+        <property name="position">330</property>
+        <property name="shrink-start-child">False</property>
         <child>
           <object class="GtkFrame">
             <child>

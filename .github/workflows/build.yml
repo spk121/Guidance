@@ -1,0 +1,56 @@
+# Builds Guidance and runs its tests, including the GUI test on a
+# virtual X display.
+
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Build and test
+            setup-options: ''
+          - name: Build and test with sanitizers
+            setup-options: -Db_sanitize=address,undefined
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            meson ninja-build gcc pkg-config gettext \
+            libgtk-4-dev guile-3.0 guile-3.0-dev \
+            desktop-file-utils appstream-util \
+            xvfb xdotool
+
+      # With the runner's high address-space randomization, programs
+      # built with AddressSanitizer can crash at startup.
+      - name: Lower address-space randomization for the sanitizers
+        if: contains(matrix.setup-options, 'sanitize')
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: meson setup ${{ matrix.setup-options }} _build
+
+      - name: Build
+        run: ninja -C _build
+
+      - name: Test
+        run: meson test -C _build --print-errorlogs
+
+      - name: Upload the test log
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: testlog (${{ matrix.name }})
+          path: _build/meson-logs/testlog.txt

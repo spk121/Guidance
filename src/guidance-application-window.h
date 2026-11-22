@@ -30,5 +30,6 @@ G_DECLARE_FINAL_TYPE (GdnApplicationWindow,
                       APPLICATION_WINDOW,
                       GtkApplicationWindow)
 void gdn_application_window_guile_init (void);
+void gdn_application_window_focus_entry (GdnApplicationWindow *self);
 
 G_END_DECLS

@@ -17,6 +17,7 @@
  */
 
 #include "guidance-backtrace-view.h"
+#include "guidance-xgtk.h"
 #include "guidance-binding-info.h"
 #include "guidance-frame-info.h"
 
@@ -46,6 +47,8 @@ G_DEFINE_TYPE (GdnBacktraceView, gdn_backtrace_view, GTK_TYPE_BOX)
 enum
 {
   LOCATION = 0,
+  SELECT_FRAME,
+  TOP_FRAME,
   N_SIGNALS
 };
 
@@ -54,6 +57,12 @@ typedef struct _GdnBacktraceViewAndListItem
   GdnBacktraceView *view;
   GtkListItem *     item;
 } GdnBacktraceViewAndListItem;
+
+typedef struct
+{
+  GdnBacktraceView *view;
+  GPtrArray *       frames; /* of GdnFrameInfo */
+} BacktraceUpdate;
 
 ////////////////////////////////////////////////////////////////
 // DECLARATIONS
@@ -144,6 +153,9 @@ static GdnBacktraceViewAndListItem *create_pair (GdnBacktraceView *view,
                                                  GtkListItem *     item);
 static void free_pair (GdnBacktraceViewAndListItem *bvli);
 static void free_pair_closure_notify (gpointer data, GClosure *closure);
+static void show_bindings (GdnBacktraceView *self, GdnFrameInfo *info);
+static gboolean apply_backtrace_update (gpointer user_data);
+static void     backtrace_update_free (gpointer user_data);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -175,6 +187,15 @@ gdn_backtrace_view_class_init (GdnBacktraceViewClass *klass)
                                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0,
                                     NULL, NULL, NULL, G_TYPE_NONE, 3,
                                     G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
+  /* The operator chose a frame; its index, innermost first. */
+  signals[SELECT_FRAME] = g_signal_new ("select-frame", G_TYPE_FROM_CLASS (klass),
+                                        G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                        G_TYPE_NONE, 1, G_TYPE_INT);
+  /* A new backtrace arrived; the innermost frame's location. */
+  signals[TOP_FRAME] = g_signal_new ("top-frame", G_TYPE_FROM_CLASS (klass),
+                                     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                     G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_INT,
+                                     G_TYPE_INT);
 }
 
 static void
@@ -221,9 +242,9 @@ frame_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
   g_assert_cmpuint (G_OBJECT_TYPE (self), ==, GDN_TYPE_BACKTRACE_VIEW);
   GdnFrameInfo *info = gtk_list_item_get_item (bvli->item);
   g_assert_cmpuint (G_OBJECT_TYPE (info), ==, GDN_FRAME_INFO_TYPE);
-  SCM bindings = SCM_PACK (gdn_frame_info_get_bindings (info));
-
-  gdn_binding_info_list_store_update_all (self->bindings, bindings);
+  show_bindings (self, info);
+  g_signal_emit (self, signals[SELECT_FRAME], 0,
+                 (int) gtk_list_item_get_position (bvli->item));
 }
 
 /* This GtkButton::clicked handler */
@@ -239,9 +260,9 @@ location_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
     {
       int line = gdn_frame_info_get_line (info);
       int col = gdn_frame_info_get_column (info);
-      // FIXME: do I need to strdup here. How do I free?
-      g_signal_emit (bvli->view, signals[LOCATION], 0, g_strdup (filename),
-                     line, col);
+      /* G_TYPE_STRING signal arguments are copied by the signal
+       * system, so there is nothing to free here. */
+      g_signal_emit (bvli->view, signals[LOCATION], 0, filename, line, col);
     }
 }
 
@@ -258,7 +279,7 @@ frame_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
   button = GTK_BUTTON (gtk_button_new_with_label (NULL));
   label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
-  gtk_label_set_width_chars (label, 30);
+  gtk_label_set_width_chars (label, 24);
   gtk_list_item_set_child (list_item, GTK_WIDGET (button));
 
   GdnBacktraceViewAndListItem *bvli;
@@ -338,13 +359,16 @@ location_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
     {
 
       info = GDN_FRAME_INFO (obj);
-      if (gdn_frame_info_get_filename (info) != NULL)
+      const char *filename = gdn_frame_info_get_filename (info);
+      if (filename != NULL && *filename != '\0')
         {
-          location = g_strdup_printf (
-              "%s:%d:%d", gdn_frame_info_get_filename (info),
-              gdn_frame_info_get_line (info), gdn_frame_info_get_column (info));
+          char *base = g_path_get_basename (filename);
+          location = g_strdup_printf ("%s:%d", base,
+                                      gdn_frame_info_get_line (info));
           gtk_label_set_text (label, location);
+          gtk_widget_set_tooltip_text (GTK_WIDGET (label), filename);
           g_free (location);
+          g_free (base);
         }
       else
         {
@@ -588,13 +612,64 @@ add_column_factory (GtkColumnViewColumn *col,
   gtk_column_view_column_set_factory (col, GTK_LIST_ITEM_FACTORY (factory));
 }
 
+/* GTK THREAD: Replaces the bindings list with those of INFO, or clears
+ * it if INFO is NULL. */
+static void
+show_bindings (GdnBacktraceView *self, GdnFrameInfo *info)
+{
+  guint n_old = g_list_model_get_n_items (G_LIST_MODEL (self->bindings));
+
+  if (info == NULL || gdn_frame_info_get_bindings (info) == NULL)
+    {
+      g_list_store_remove_all (self->bindings);
+      return;
+    }
+  GPtrArray *bindings = gdn_frame_info_get_bindings (info);
+  g_list_store_splice (self->bindings, 0, n_old, bindings->pdata,
+                       bindings->len);
+}
+
+/* GTK THREAD: Installs a new backtrace and shows the variables of the
+ * innermost frame. */
+static gboolean
+apply_backtrace_update (gpointer user_data)
+{
+  BacktraceUpdate * u = user_data;
+  GdnBacktraceView *self = u->view;
+
+  g_list_store_splice (self->frames, 0,
+                       g_list_model_get_n_items (G_LIST_MODEL (self->frames)),
+                       u->frames->pdata, u->frames->len);
+  show_bindings (self, u->frames->len > 0 ? u->frames->pdata[0] : NULL);
+  if (u->frames->len > 0)
+    {
+      GdnFrameInfo *top = u->frames->pdata[0];
+      const char *  file = gdn_frame_info_get_filename (top);
+      if (file != NULL && *file != '\0')
+        g_signal_emit (self, signals[TOP_FRAME], 0, file,
+                       gdn_frame_info_get_line (top),
+                       gdn_frame_info_get_column (top));
+    }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+backtrace_update_free (gpointer user_data)
+{
+  BacktraceUpdate *u = user_data;
+  g_object_unref (u->view);
+  g_ptr_array_unref (u->frames);
+  g_free (u);
+}
+
 static GdnBacktraceViewAndListItem *
 create_pair (GdnBacktraceView *view, GtkListItem *item)
 {
   GdnBacktraceViewAndListItem *bvli;
 
   g_assert_cmpuint (G_OBJECT_TYPE (view), ==, GDN_TYPE_BACKTRACE_VIEW);
-  g_assert_cmpuint (G_OBJECT_TYPE (item), ==, GTK_TYPE_LIST_ITEM);
+  /* Since GTK 4.12, column view cells are a GtkListItem subclass. */
+  g_assert (GTK_IS_LIST_ITEM (item));
 
   bvli = g_new0 (GdnBacktraceViewAndListItem, 1);
   bvli->view = g_object_ref (view);
@@ -628,12 +703,13 @@ gdn_backtrace_view_to_scm (GdnBacktraceView *self)
 }
 
 static SCM
-scm_update_backtrace_x (SCM s_self, SCM s_frame)
+scm_update_backtrace_x (SCM s_self, SCM s_frames, SCM s_top_frame)
 {
   scm_assert_foreign_object_type (scm_backtrace_view_type, s_self);
-  if (SCM_UNBNDP (s_frame))
-    s_frame = SCM_BOOL_F;
-  SCM frames = scm_call_1 (get_backtrace_func, s_frame);
+  if (SCM_UNBNDP (s_top_frame))
+    s_top_frame = SCM_BOOL_F;
+  /* S_FRAMES is a list of frames, innermost first, or #f. */
+  SCM frames = scm_call_2 (get_backtrace_func, s_frames, s_top_frame);
 #ifndef G_DISABLE_ASSERT
   g_assert (scm_is_vector (frames));
   for (size_t i = 0; i < scm_c_vector_length (frames); i++)
@@ -650,8 +726,14 @@ scm_update_backtrace_x (SCM s_self, SCM s_frame)
     }
 #endif
 
+  /* This is called from the Guile thread.  Build the GObjects here,
+   * where reading the SCM data is natural, then hand them to the GTK
+   * thread, which is the only one allowed to touch the list stores. */
   GdnBacktraceView *self = scm_foreign_object_ref (s_self, 0);
-  gdn_frame_info_store_update (self->frames, frames);
+  BacktraceUpdate * u = g_new0 (BacktraceUpdate, 1);
+  u->view = g_object_ref (self);
+  u->frames = gdn_frame_info_array_new_from_scm (frames);
+  xgtk_invoke_on_main (apply_backtrace_update, u, backtrace_update_free);
   return SCM_UNSPECIFIED;
 }
 
@@ -667,7 +749,7 @@ gdn_backtrace_view_guile_init (void)
   get_backtrace_func =
       scm_variable_ref (scm_c_public_lookup ("gdn lib", "gdn-get-backtrace"));
 
-  scm_c_define_gsubr ("gdn-update-backtrace!", 1, 1, 0,
+  scm_c_define_gsubr ("gdn-update-backtrace!", 2, 1, 0,
                       (scm_t_subr) scm_update_backtrace_x);
   scm_c_export ("gdn-update-backtrace!", NULL);
 }

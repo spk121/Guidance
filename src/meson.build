@@ -13,7 +13,6 @@ guidance_sources = [
   'guidance-backtrace-view.c',
   'guidance-thread-info.c',
   'guidance-thread-view.c',
-  'guidance-module-info.c',
   'guidance-module-view.c',
   'guidance-terminal-view.c',
   'guidance-trap-info.c',
@@ -23,9 +22,9 @@ guidance_sources = [
 
 guidance_deps = [
   dependency('gio-2.0', version: '>= 2.50'),
-  dependency('gtk4', version: '>= 4.2.1'),
-  dependency('guile-3.0', version: '>= 3.0.7'),
-  dependency('glib-2.0', version: '>= 2.68')
+  dependency('gtk4', version: '>= 4.10'),
+  dependency('guile-3.0', version: '>= 3.0.9'),
+  dependency('glib-2.0', version: '>= 2.74')
 ]
 
 gnome = import('gnome')
@@ -35,10 +34,8 @@ guidance_sources += gnome.compile_resources('guidance-resources',
   c_name: 'guidance'
 )
 
-executable('guidance', guidance_sources,
+guidance_exe = executable('guidance', guidance_sources,
   dependencies: guidance_deps,
+  include_directories: config_inc,
   install: true,
-  link_args : ['-fsanitize=address',
-  '-fsanitize=leak',
-  '-fsanitize=undefined']
 )

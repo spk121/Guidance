@@ -22,4 +22,22 @@
 
 G_BEGIN_DECLS
 void xgtk_button_set_sensitive (GtkButton *button, gboolean flag);
+
+/* Schedules FUNC (DATA) to run once on the GTK main thread.  NOTIFY,
+ * if not NULL, is called on DATA afterwards.  Safe to call from any
+ * thread.  Calls made in order are run in order. */
+void xgtk_invoke_on_main (GSourceFunc func, gpointer data,
+                          GDestroyNotify notify);
+
+/* Replaces the entire contents of STORE with the objects in ITEMS, on
+ * the GTK main thread.  Takes ownership of ITEMS, which should own
+ * its elements (e.g. created with g_ptr_array_new_with_free_func
+ * (g_object_unref)).  Safe to call from any thread. */
+void xgtk_list_store_replace_all_on_main (GListStore *store,
+                                          GPtrArray * items);
+
+/* When the environment variable GUIDANCE_TRANSCRIPT names a file,
+ * appends TEXT to it.  The tests use this to see what Guidance shows.
+ * GTK thread only. */
+void xgtk_transcribe (const char *text);
 G_END_DECLS

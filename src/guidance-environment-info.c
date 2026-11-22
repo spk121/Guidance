@@ -47,15 +47,19 @@ gdn_environment_info_init (G_GNUC_UNUSED GdnEnvironmentInfo *self)
 // METHODS
 ////////////////////////////////////////////////////////////////
 gboolean
-gdn_environment_info_equal (GdnEnvironmentInfo *a, GdnEnvironmentInfo *b)
+gdn_environment_info_equal (gconstpointer a, gconstpointer b)
 {
-  return (g_strcmp0 (a->key, b->key) == 0);
+  const GdnEnvironmentInfo *x = a;
+  const GdnEnvironmentInfo *y = b;
+  return (g_strcmp0 (x->key, y->key) == 0);
 }
 
 gint
-gdn_environment_info_compare (GdnEnvironmentInfo *a, GdnEnvironmentInfo *b)
+gdn_environment_info_compare (gconstpointer a, gconstpointer b)
 {
-  return g_strcmp0 (a->key, b->key);
+  const GdnEnvironmentInfo *x = a;
+  const GdnEnvironmentInfo *y = b;
+  return g_strcmp0 (x->key, y->key);
 }
 
 ////////////////////////////////////////////////////////////////
