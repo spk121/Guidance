@@ -122,8 +122,8 @@ Phase 1 notes:
   stopping a later program.
 - The Scheme modules are compiled when they are loaded, because
   Guile's procedure traps cannot tell interpreted procedures apart.
-  This costs about a second at startup; installing the modules where
-  Guile can cache the compiled code would avoid it.
+  The compiled code is now kept in Guidance's cache (see the alpha
+  bugs below), so only the first start pays for it.
 - Tests: `meson test` runs `tests/repl-test.scm`, which tests the
   debugger core in plain Guile with the GUI stubbed out
   (`tests/stubs`), and `tests/gui-smoke.sh`, which drives the real app
@@ -677,12 +677,30 @@ The open one is last in this list.
       Echoed entries, no longer set apart by their font, are bold.
       The text has a small margin from the frame.  There is no
       automatic test of fonts; checked by screenshot.
-- [ ] **Startup warnings.**  On Guile 3.0.9 Guidance prints
+- [x] **Startup warnings.**  On Guile 3.0.9 Guidance prints
       "possibly unbound variable `total-processor-count'" and
       "`current-processor-count'" to its own stderr at every start,
       and the Environment page shows 0 for both; `(gdn lib)` needs
       `(ice-9 threads)`.  Startup takes 1.7 s, most of it compiling
-      the Scheme modules (noted under Phase 1).
+      the Scheme modules (noted under Phase 1).  Fixed:
+      - `(gdn lib)` imports the two procedures from `(ice-9 threads)`,
+        so the warnings are gone and the Environment page shows the
+        counts.  The REPL test compiles `(gdn lib)` and `(gdn repl)`
+        and checks for warnings, and checks the counts.  (The GUI
+        test cannot see these warnings: `(gdn lib)` is loaded before
+        the standard ports are redirected, while Guile's error port
+        still buffers for a file.)
+      - Guidance's two modules are compiled once into
+        `$XDG_CACHE_HOME/guidance/modules/VERSION/SHA256/gdn/`, keyed
+        by the Guile version and a hash of the source, and loaded
+        from there with `load-compiled` on later starts.  They are
+        compiled with `compile-file` with that directory on the load
+        path, so their procedures still record `gdn/lib.scm` and
+        `gdn/repl.scm` as their files, by which the debugger knows
+        Guidance's own frames.  If the cache cannot be written, they
+        are compiled in memory as before.  Startup to the first
+        prompt went from about 2.7 s to 0.6 s here.  The GUI test
+        starts with an empty cache and checks that both are cached.
 - [ ] **Options.**  Guile options that Guidance does not know, such as
       `--no-auto-compile` and `--debug`, are reported as unrecognized
       after the first prompt.  Accept the harmless ones.  `-e` only

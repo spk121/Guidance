@@ -652,6 +652,39 @@ INPUT."
   (check "the warning is shown"
          (output-contains? "possibly unbound variable `no-such-procedure'")))
 
+(define-test "Guidance's own modules compile without warnings"
+  (for-each
+   (lambda (file)
+     (let* ((go (string-append (or (getenv "TMPDIR") "/tmp")
+                               "/guidance-test-" (number->string (getpid))
+                               ".go"))
+            (warnings
+             (call-with-output-string
+               (lambda (port)
+                 (parameterize ((current-warning-port port))
+                   ((@ (system base compile) compile-file)
+                    file #:output-file go))))))
+       (delete-file go)
+       (unless (string-null? warnings)
+         (display warnings))
+       (check (string-append file " has no warnings")
+              (not (string-contains warnings "warning:")))))
+   (list (%search-load-path "gdn/lib.scm")
+         (%search-load-path "gdn/repl.scm"))))
+
+(define-test "environment: the processor counts are found"
+  ;; Each category is #(NAME "" #(#(KEY VALUE) ...)).
+  (define (entry key)
+    (any (lambda (category)
+           (any (lambda (e) (and (string=? (vector-ref e 0) key)
+                                 (vector-ref e 1)))
+                (vector->list (vector-ref category 2))))
+         (vector->list (gdn-get-environment))))
+  (check "Processor Count is not 0"
+         (positive? (string->number (entry "Processor Count"))))
+  (check "Processors Used is not 0"
+         (positive? (string->number (entry "Processors Used")))))
+
 (define-test "modules: list modules and their procedures"
   (run-repl
    (list (load-expression "procs.scm")

@@ -190,7 +190,8 @@ Guidance compiles them, and the modules they use, with some of Guile's
 optimizations turned off, so that variables keep their names and
 stepping follows the lines as written.  It keeps what it compiles in a
 cache of its own, `$XDG_CACHE_HOME/guidance` or `~/.cache/guidance`,
-apart from Guile's.  A variable bound to the result of a call becomes
+apart from Guile's, along with Guidance's own Scheme modules, so that
+it starts quickly after the first time.  A variable bound to the result of a call becomes
 visible one step after the line that binds it.  Guile's notes about
 compiling (";;; compiling ...") are not shown, but the compiler's
 warnings are.

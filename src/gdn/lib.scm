@@ -22,6 +22,8 @@
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-43)
+  #:use-module ((ice-9 threads)
+                #:select (total-processor-count current-processor-count))
   #:use-module (system vm debug)
   #:use-module (system vm frame)
   #:use-module (system vm program)

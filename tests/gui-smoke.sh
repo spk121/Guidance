@@ -125,6 +125,26 @@ type_line () {
     xdotool key Return
 }
 
+# Guidance compiles its own Scheme modules into its cache the first
+# time, and loads them from there afterwards.  (The REPL test checks
+# that they compile without warnings.)
+OLD_CACHE=${XDG_CACHE_HOME-}
+export XDG_CACHE_HOME=$WORK/cache
+start
+for module in lib repl; do
+    ls "$XDG_CACHE_HOME"/guidance/modules/*/*/gdn/$module.go >/dev/null 2>&1 ||
+        fail "gdn/$module.go is not in the cache"
+done
+echo "ok: modules cached"
+stop_app
+start
+stop_app
+if [ -n "$OLD_CACHE" ]; then
+    export XDG_CACHE_HOME=$OLD_CACHE
+else
+    unset XDG_CACHE_HOME
+fi
+
 # Break, step, continue, then an error and Stop.
 start "$PROGRAMS/break.scm"
 key F5

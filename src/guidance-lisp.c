@@ -506,10 +506,79 @@ after_sweep_handler (G_GNUC_UNUSED void *hook_data,
 // HELPER FUNCTIONS
 ////////////////////////////////////////////////////////////////
 
+/* Compiles the source file SRC to GO, unless GO exists, with ROOT at
+ * the front of the load path, so that the file names recorded in the
+ * compiled code are relative to ROOT; then loads GO.  Returns #f if
+ * any of that fails. */
+static const char compile_and_load_code[] =
+    "(lambda (root src go)\n"
+    "  (catch #t\n"
+    "    (lambda ()\n"
+    "      (unless (file-exists? go)\n"
+    "        (let ((old-path %load-path))\n"
+    "          (dynamic-wind\n"
+    "            (lambda () (set! %load-path (cons root old-path)))\n"
+    "            (lambda ()\n"
+    "              ((@ (system base compile) compile-file) src\n"
+    "               #:output-file go))\n"
+    "            (lambda () (set! %load-path old-path)))))\n"
+    "      (load-compiled go)\n"
+    "      #t)\n"
+    "    (lambda args #f)))";
+
+/* Loads the Scheme file in CONTENTS, whose name on the load path would
+ * be FILE_NAME, compiled, from Guidance's cache.  It is compiled into
+ * the cache the first time.  The cache is keyed by the Guile version
+ * and the file's contents, so a new version of either is compiled
+ * afresh.  Returns FALSE if it could not be done. */
+static gboolean
+load_cached_resource (GBytes *contents, const char *file_name)
+{
+  static SCM compile_and_load = SCM_BOOL_F;
+  gboolean   ok = FALSE;
+  char *     hash = g_compute_checksum_for_bytes (G_CHECKSUM_SHA256, contents);
+  char *     version = scm_to_utf8_string (scm_version ());
+  char *     root = g_build_filename (g_get_user_cache_dir (), "guidance",
+                                      "modules", version, hash, NULL);
+  char *     src = g_build_filename (root, file_name, NULL);
+  char *     base = g_strndup (src, strlen (src)
+                                          - (g_str_has_suffix (src, ".scm")
+                                                 ? strlen (".scm")
+                                                 : 0));
+  char *     go = g_strconcat (base, ".go", NULL);
+  char *     dir = g_path_get_dirname (src);
+
+  if (!g_file_test (go, G_FILE_TEST_EXISTS))
+    {
+      gsize       len;
+      const char *data = g_bytes_get_data (contents, &len);
+      if (g_mkdir_with_parents (dir, 0700) != 0
+          || !g_file_set_contents (src, data, len, NULL))
+        goto out;
+    }
+
+  if (scm_is_false (compile_and_load))
+    compile_and_load =
+        scm_permanent_object (scm_c_eval_string (compile_and_load_code));
+  ok = scm_is_true (scm_call_3 (compile_and_load, scm_from_utf8_string (root),
+                                scm_from_utf8_string (src),
+                                scm_from_utf8_string (go)));
+out:
+  g_free (dir);
+  g_free (go);
+  g_free (base);
+  g_free (src);
+  g_free (root);
+  free (version);
+  g_free (hash);
+  return ok;
+}
+
 /* Evaluates a Scheme file stored in the GResource bundle.  It is
  * compiled rather than interpreted: compiled procedures are faster,
  * and Guile's procedure traps can only tell compiled procedures
- * apart.
+ * apart.  The compiled code is kept in Guidance's cache, so that later
+ * starts need not compile it again.
  *
  * FILE_NAME is recorded as the source file of its procedures, as if it
  * had been loaded from the load path.  The debugger recognizes
@@ -526,11 +595,16 @@ eval_resource (const char *path, const char *file_name)
   contents = g_resource_lookup_data (guidance_get_resource (), path,
                                      G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
   g_assert_nonnull (contents);
-  data = g_bytes_get_data (contents, &len);
-  eval_string = scm_c_public_ref ("ice-9 eval-string", "eval-string");
-  scm_call_5 (eval_string, scm_from_utf8_stringn (data, len),
-              scm_from_utf8_keyword ("compile?"), SCM_BOOL_T,
-              scm_from_utf8_keyword ("file"), scm_from_utf8_string (file_name));
+  if (!load_cached_resource (contents, file_name))
+    {
+      /* Without the cache, compile it in memory. */
+      data = g_bytes_get_data (contents, &len);
+      eval_string = scm_c_public_ref ("ice-9 eval-string", "eval-string");
+      scm_call_5 (eval_string, scm_from_utf8_stringn (data, len),
+                  scm_from_utf8_keyword ("compile?"), SCM_BOOL_T,
+                  scm_from_utf8_keyword ("file"),
+                  scm_from_utf8_string (file_name));
+    }
   g_bytes_unref (contents);
 }
 
