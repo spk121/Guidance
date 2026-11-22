@@ -298,6 +298,16 @@ key shift+F5
 wait_for "Stopped."
 stop_app
 
+# Recursion without end enters error mode, and Stop leaves it.
+start "$PROGRAMS/deep.scm"
+key F5
+wait_for "Stack overflow: the program used more than"
+wait_for "[prompt error>]"
+key shift+F5
+wait_for "Stopped."
+wait_for "[prompt repl>]" 2
+stop_app
+
 # _pk_ logs on the Peek page.
 start "$PROGRAMS/peek.scm"
 key F5

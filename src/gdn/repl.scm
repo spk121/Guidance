@@ -49,6 +49,7 @@
   #:use-module (system vm program)
   #:use-module (system vm traps)
   #:use-module ((ice-9 threads) #:select (current-thread))
+  #:use-module ((system foreign) #:select (sizeof))
   #:use-module (system vm vm)
   #:use-module ((system vm debug)
                 #:select (find-program-sources source-post-pc))
@@ -515,7 +516,7 @@ replaces, for any other port."
 that error mode can show the stack.  Error mode only returns by
 aborting to the stop prompt."
   (unless (memq key '(quit stack-overflow out-of-memory
-                      read-error syntax-error))
+                      read-error syntax-error gdn-stack-limit))
     (error-mode key args)))
 
 (define (exception-handler-unwind key . args)
@@ -528,6 +529,9 @@ aborting to the stop prompt."
                  "")))
     ((stack-overflow)
      (format (current-error-port) "Stack overflow!~%"))
+    ;; The stack is shallow again here: see stack-limit-reached.
+    ((gdn-stack-limit)
+     (error-mode-after-unwind (car args)))
     ((out-of-memory)
      (format (current-error-port) "Out of memory!~%"))
     (else
@@ -588,6 +592,31 @@ threads), so it sees the replacement."
         (variable-set! variable %call-with-new-thread)
         (set! *program-thread* #f)))))
 
+;; The most stack a program may use, in words: 256 MiB on a 64-bit
+;; machine, enough for some eleven million frames of a simple
+;; recursive procedure.  Past that, the program is taken to be
+;; recursing without end, and enters error mode.  Without a limit of
+;; its own, Guile lets the stack grow until memory runs short, which
+;; under Guidance took minutes.
+(define %stack-limit (* 32 1024 1024))
+
+(define (stack-limit-reached)
+  "Guile calls this where a program exceeded %stack-limit.  Error mode
+cannot stay here: Stop would unwind out of this handler, at which Guile
+puts the program's limit back while the stack is still deep, and the
+limit would be exceeded again.  So the backtrace is shown now, while
+the frames exist, and the program is unwound first; error mode then
+runs from exception-handler-unwind."
+  (set-vm-trace-level! 0)
+  (print-error-on-exception
+   (lambda ()
+     (gdn-update-backtrace! *gdn-backtrace-view*
+                            (gdn-error-frames %stack-tag))))
+  (throw 'gdn-stack-limit
+         (format #f "Stack overflow: the program used more than ~a MiB \
+of stack, so it is probably recursing without end."
+                 (quotient (* %stack-limit (sizeof '*)) (* 1024 1024)))))
+
 (define (run-under-debugger thunk)
   "Runs THUNK in Run mode, with Guidance's error and trap handlers.
 Returns THUNK's values, or no values if it was stopped or raised an
@@ -607,9 +636,12 @@ exception."
                       (enable-trap-hooks!)
                       (call-with-thread-reports
                        (lambda ()
-                         (call-with-prompt %stack-tag
-                           thunk
-                           (lambda (k . vals) (apply values vals))))))
+                         (call-with-stack-overflow-handler %stack-limit
+                           (lambda ()
+                             (call-with-prompt %stack-tag
+                               thunk
+                               (lambda (k . vals) (apply values vals))))
+                           stack-limit-reached))))
                     exception-handler-unwind
                     exception-handler-pre-unwind))
                 (lambda ()
@@ -704,6 +736,35 @@ program until they press Stop."
          (loop))
         (else
          (loop))))))
+
+(define (error-mode-after-unwind message)
+  "Error mode for an error whose stack is gone, though the Backtrace
+page still shows it.  Expressions are evaluated at the top level."
+  (set-vm-trace-level! 0)
+  (set! *selected-frame* 0)
+  (parameterize ((*paused* #t)
+                 (*pause-frames* '())
+                 (*pause-top-frame?* #f))
+    (gdn-set-input-mode! *gdn-application-window* 'error)
+    (format (current-error-port) "~&~a~%" message)
+    (format #t "~&Entering error mode.  The Backtrace page shows where \
+the program was; it has been unwound, so expressions are evaluated at \
+the top level.~%")
+    (format #t "When ready, press the Stop button to return to the REPL.~%")
+    (let loop ()
+      (print-error-on-exception refresh-views!)
+      (show-prompt "error>")
+      (let* ((input (get-user-input))
+             (action (car input))
+             (data (cadr input)))
+        (case action
+          ((stop)
+           (abort-to-prompt %stop-tag))
+          ((eval)
+           (eval-and-print data)
+           (loop))
+          (else
+           (loop)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TRAP MODE

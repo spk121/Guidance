@@ -196,6 +196,11 @@ logs `foo.scm:2: (double 21)` when called with 21.
 Known limitations
 -----------------
 
+- A program may use up to 256 MiB of stack (on a 64-bit machine),
+  about eleven million frames of a simple recursive procedure.  Past
+  that, Guidance takes it to be recursing without end and enters Error
+  mode, with the stack shown on the Backtrace page but already unwound,
+  so expressions are evaluated at the top level.
 - A program runs about as fast under Guidance as under Guile, until a
   breakpoint at a line or a procedure is set.  While one is, Guile
   calls Guidance on every procedure call, and the program runs some

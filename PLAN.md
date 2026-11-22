@@ -506,11 +506,21 @@ The open one is last in this list.
       Still open: debugging other threads; threads started through
       `make-thread`, futures, or `par-map`, which Guile's own code
       starts, keep Guile's messages.
-- [ ] **Runaway recursion never ends.**  `(define (deep n) (+ 1 (deep
-      (+ n 1))))` reaches "stack overflow" in 13 s in plain Guile.
-      Under Guidance it was still running after 150 s.  Stop and Pause
-      do work.  Set a stack limit with
-      `call-with-stack-overflow-handler` and enter Error mode.
+- [x] **Runaway recursion never ends.**  `(define (deep n) (+ 1 (deep
+      (+ n 1))))` reaches "stack overflow" in 13 s in plain Guile, and
+      was still running after 150 s under Guidance: the apply hook of
+      the `_break_` trap made deep recursion quadratic (see the next
+      item).  Fixed: with that hook gone, and a limit of 256 MiB set
+      with `call-with-stack-overflow-handler`, the program enters
+      Error mode within a second or two.  Error mode cannot run inside
+      the overflow handler, because Stop would unwind out of it while
+      the stack is still deep, and Guile then puts the program's limit
+      back and it overflows again.  So the handler shows the backtrace
+      while the frames exist, then unwinds, and Error mode runs on a
+      shallow stack, with expressions at the top level.  Tests: one in
+      `tests/repl-test.scm` and one in `tests/gui-smoke.sh`, with
+      `tests/programs/deep.scm`.  With a breakpoint set, the apply
+      hook is back, and deep recursion is slow to reach the limit.
 - [x] **Programs run about 25 times slower.**  `(fib 30)` took 31 ms
       in plain Guile and 750 ms under Guidance.  The cause was not the
       trace level, which costs little by itself, but the trap that

@@ -423,6 +423,25 @@ in the REPL thread, as the GUI does while a program runs."
                 direct-ms debugged-ms)
         (check "within five times the speed of running it directly"
                (and debugged-ms (< debugged-ms (* 5 (max direct-ms 20)))))))))
+(define-test "run: recursion without end enters error mode"
+  (let ((start (get-internal-real-time)))
+    (run-repl
+     (list '(run #f)
+           (checkpoint "the backtrace shows the recursion"
+                       (lambda () (and (string-prefix? "(deep" (top-frame-call))
+                                       (string-suffix? "deep.scm"
+                                                       (top-frame-file))))
+                       '(stop #f))
+           '(eval "(+ 1 2)")
+           '(quit 0))
+     (program "deep.scm"))
+    (check "the overflow is reported"
+           (output-contains? "Stack overflow: the program used more than 256 MiB"))
+    (check "error mode, then Stop returns to the REPL"
+           (and (memq 'error (modes)) (output-order? "Stopped." "→ 3")))
+    (check "within a minute"
+           (< (- (get-internal-real-time) start)
+              (* 60 internal-time-units-per-second)))))
 
 (define-test "run: no program given"
   (run-repl (list '(run #f) '(quit 0)))
