@@ -561,7 +561,7 @@ Things noticed along the way that the items above do not cover.
 
 - **Sanitizers.**  None of this phase's changes were run locally
   under ASan and UBSan; the GitHub workflow does that.  The GUI test
-  now has seventeen scenarios and takes 35 to 45 seconds, so its
+  now has fifteen scenarios and takes 35 to 45 seconds, so its
   time limit, and that of the REPL test, was raised from 120 to 300
   seconds for the sanitizer job.
 - **The GUI test depends on timing.**  It waits for text in the
