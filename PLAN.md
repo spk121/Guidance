@@ -874,7 +874,8 @@ alone is reason not to release 0.2.0 as it is.
 
 Status: all three blockers and all four P1 items have since been
 fixed, one commit each; what is left of each is under "Still open" in
-its item.  The P2 items are open, except the one about line 1.
+its item.  The P2 items have since been dealt with too, one commit
+each: see the notes on them.
 
 To be sure that none of this came from stale compiled files,
 `~/.cache/guidance` and `~/.cache/guile` were then both deleted,
