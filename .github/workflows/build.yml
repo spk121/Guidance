@@ -22,7 +22,7 @@ jobs:
             setup-options: -Db_sanitize=address,undefined
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -50,7 +50,7 @@ jobs:
 
       - name: Upload the test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: testlog (${{ matrix.name }})
           path: _build/meson-logs/testlog.txt
