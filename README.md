@@ -102,8 +102,10 @@ shows which mode it is in.
    it is unfinished, the prompt is `...`.  Up and Down go through the
    entries made so far, and the button beside the entry lists the
    recent ones.  Run (F5) runs the program from the command line.
-   Expressions are run in the same way as a program, so errors and
-   traps in them are handled as below.
+   Expressions are run in the same way as a program, so traps in
+   them, and errors in the procedures they call, are handled as below.
+   An error in the expression itself, such as a mistyped name, is just
+   reported.
 
 2. **Run.**  The program is running.  Its output appears in the
    terminal, and what is typed in the entry is its standard input.

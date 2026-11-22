@@ -54,7 +54,7 @@
   #:use-module ((system foreign) #:select (sizeof))
   #:use-module (system vm vm)
   #:use-module ((system vm debug)
-                #:select (find-program-sources source-post-pc))
+                #:select (find-program-sources source-file source-post-pc))
   #:use-module (system vm trap-state)
   #:use-module ((system vm trap-state)
                 #:select ((add-trap-at-procedure-call!
@@ -337,15 +337,25 @@ values."
                           define-syntax-rule define-module use-modules
                           define-record-type define-values))))
 
+;; The address of the code of the expression that eval-form is
+;; running, or #f for a definition, which has no procedure of its own.
+;; See slip-of-the-operator?.
+(define *expression-code* #f)
+
 (define (eval-form form)
   "Compiles and runs FORM in the current module, returning its values.
 Definitions are compiled as they are, so that they are made at the top
 level; anything else is compiled as a thunk, so that all of its values
 are returned."
-  (if (definition? form)
-      (compile form #:env (current-module) #:opts %debug-compile-options)
-      ((compile `(lambda () ,form) #:env (current-module)
-                #:opts %debug-compile-options))))
+  (cond
+   ((definition? form)
+    (set! *expression-code* #f)
+    (compile form #:env (current-module) #:opts %debug-compile-options))
+   (else
+    (let ((thunk (compile `(lambda () ,form) #:env (current-module)
+                          #:opts %debug-compile-options)))
+      (set! *expression-code* (and (program? thunk) (program-code thunk)))
+      (thunk)))))
 
 (define (eval-forms str)
   "Compiles and runs the expressions in STR, one at a time, in the
@@ -712,9 +722,39 @@ replaces, for any other port."
   "Runs where the exception was raised, before the stack unwinds, so
 that error mode can show the stack.  Error mode only returns by
 aborting to the stop prompt."
-  (unless (memq key '(quit stack-overflow out-of-memory
-                      read-error syntax-error gdn-stack-limit))
+  (unless (or (memq key '(quit stack-overflow out-of-memory
+                          read-error syntax-error gdn-stack-limit))
+              (slip-of-the-operator?))
     (error-mode key args)))
+
+;; True while an expression that the operator entered at the REPL
+;; prompt is being run, rather than the program.
+(define *expression?* (make-parameter #f))
+
+(define (slip-of-the-operator?)
+  "Call from within a pre-unwind exception handler.  True if the error
+was raised by an expression entered at the REPL prompt, in that
+expression itself and not in a procedure that it called: a mistyped
+name, say, or a wrong argument.  There is then no stack worth showing,
+and error mode, which needs Stop to leave, is more than a slip
+deserves; the error is just reported."
+  (and (*expression?*)
+       (let ((frames (remove (lambda (frame)
+                               (or (guile-internal-frame? frame)
+                                   (guidance-frame? frame)))
+                             (gdn-error-frames %stack-tag))))
+         (cond
+          ((null? frames) #t)
+          ;; The innermost frame is the expression's own.  Counting
+          ;; frames would not do: an expression that is just a call,
+          ;; like (f 5), makes it as a tail call, and its own frame is
+          ;; gone by the time the procedure fails.
+          (*expression-code*
+           (call-with-values (lambda () (frame-code-extent (car frames)))
+             (lambda (start end)
+               (eqv? start *expression-code*))))
+          ;; A definition: nothing but its own frame.
+          (else (null? (cdr frames)))))))
 
 (define (exception-handler-unwind key . args)
   "Handles the exceptions that do not enter error mode."
@@ -1191,12 +1231,21 @@ whose code starts at START."
         (code-line-ranges start (source:file source) (source:line source))
         '())))
 
-(define (position-starts start)
+(define (position-starts start internal?)
   "A table of the addresses at which a source position begins, in the
-procedure whose code starts at START."
+procedure whose code starts at START.
+
+Unless INTERNAL?, positions in Guile's own files are left out.  A
+procedure of the program has some: where it uses a macro of Guile's,
+such as `load', the code that the macro expands to is part of the
+procedure, but carries the file and line of the macro's definition.  A
+step that paused there would show a line of boot-9.scm in the middle
+of the program."
   (let ((table (make-hash-table)))
     (for-each (lambda (source)
-                (hashv-set! table (source-post-pc source) #t))
+                (when (or internal?
+                          (not (guile-internal-file? (source-file source))))
+                  (hashv-set! table (source-post-pc source) #t)))
               (if start (find-program-sources start) '()))
     table))
 
@@ -1282,7 +1331,7 @@ and so is the apply hook unless INTO?."
     (define (look-up f)
       (call-with-values (lambda () (frame-code-extent f))
         (lambda (start end)
-          (vector start end (position-starts start)))))
+          (vector start end (position-starts start internal?)))))
     (define (aim! address info)
       (set! fp address)
       (set! start (vector-ref info 0))
@@ -1662,8 +1711,9 @@ command arrives.  Returns the exit status."
         ((eval)
          (call-with-values
              (lambda ()
-               (run-under-debugger
-                (lambda () (eval-forms data))))
+               (parameterize ((*expression?* #t))
+                 (run-under-debugger
+                  (lambda () (eval-forms data)))))
            print-return-values)
          (loop))
         (else

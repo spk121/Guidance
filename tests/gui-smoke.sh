@@ -42,6 +42,26 @@ TRANSCRIPT=$WORK/transcript
 LOG=$WORK/log
 APP=
 
+# Guidance makes file descriptors 1 and 2 the Terminal's, for the
+# program's subprocesses.  So what a sanitizer would write to
+# descriptor 2 would be shown in the Terminal, and lost if Guidance
+# then died.  The sanitizers are told to write their reports to files
+# instead, named $SANITIZER_LOG.PID.
+SANITIZER_LOG=$WORK/sanitizer
+
+# sanitizer_reports: prints the sanitizers' reports, if there are any,
+# and succeeds if there were.
+sanitizer_reports () {
+    found=1
+    for report in "$SANITIZER_LOG".*; do
+        [ -f "$report" ] || continue
+        found=0
+        echo "--- sanitizer report $report ---"
+        cat "$report"
+    done
+    return $found
+}
+
 # start ARG...: starts Guidance with the command-line arguments ARG...,
 # and a fresh transcript.
 start () {
@@ -52,7 +72,8 @@ start () {
     GTK_A11Y=none \
     GDK_BACKEND=x11 \
     LC_ALL=C.UTF-8 \
-    ASAN_OPTIONS=detect_leaks=0 \
+    ASAN_OPTIONS="detect_leaks=0:log_path=$SANITIZER_LOG" \
+    UBSAN_OPTIONS="${UBSAN_OPTIONS:+$UBSAN_OPTIONS:}log_path=$SANITIZER_LOG" \
         "$BIN" "$@" > "$LOG" 2>&1 &
     APP=$!
     wait_for "[prompt repl>]"
@@ -64,11 +85,14 @@ start () {
 # stop_app: checks that Guidance is healthy, then closes it.
 stop_app () {
     kill -0 "$APP" 2>/dev/null || fail "Guidance exited"
-    # Sanitizer reports go to file descriptor 2, which is the
-    # Terminal's, so look in the transcript too.
+    # The transcript too: file descriptor 2 is the Terminal's, and not
+    # everything that writes to it can be told to write elsewhere.
     if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG" ||
        grep -E "runtime error|AddressSanitizer" "$TRANSCRIPT"; then
         fail "problems were logged"
+    fi
+    if sanitizer_reports > /dev/null; then
+        fail "a sanitizer reported a problem"
     fi
     kill "$APP" 2>/dev/null
     wait "$APP" 2>/dev/null
@@ -81,6 +105,7 @@ finish () {
     [ -n "${KNOWN_FAILURE:-}" ] && exit "$1"
     echo "--- transcript ---"; cat "$TRANSCRIPT"
     echo "--- log ---"; cat "$LOG"
+    sanitizer_reports
     rm -rf "$WORK"
     exit "$1"
 }
@@ -176,7 +201,14 @@ key F5
 wait_for "four"
 wait_for "[prompt repl>]" 2
 
+# A slip in an expression is just reported; an error in a procedure
+# that it calls enters error mode.
 type_line "(car 5)"
+wait_for "Wrong type argument"
+wait_for "[prompt repl>]" 3
+refute "Entering error mode"
+type_line "(define (first-of x) (car x))"
+type_line "(first-of 5)"
 wait_for "Entering error mode"
 key shift+F5
 wait_for "Stopped."
@@ -195,6 +227,10 @@ wait_for "[prompt break>]"
 sleep 0.5
 key F9
 wait_for "Breakpoint at break.scm:6"
+# The line is in `numbers', which is loaded, so there is nothing to
+# warn about.  The warning used to appear when the program's procedures
+# were kept in a module that the search for loaded code leaves out.
+refute "No code is loaded"
 key F5
 wait_for "[prompt repl>]" 2
 key F5
@@ -418,6 +454,16 @@ wait_for "→ 42" 2
 key Up Up Down
 key Return
 wait_for "→ 42" 3
+# An expression entered over two lines is recalled whole, not as its
+# last line alone, which would be a read error.
+type_line "(list 'recalled"
+wait_for "[prompt ...]" 2
+type_line "      'whole)"
+wait_for "→ (recalled whole)"
+key Up
+key Return
+wait_for "→ (recalled whole)" 2
+refute "unexpected"
 stop_app
 
 # _pk_ logs on the Peek page.
@@ -591,6 +637,9 @@ status=$?
 [ "$status" -eq 0 ] || fail "Guidance quit with status $status"
 if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
     fail "problems were logged"
+fi
+if sanitizer_reports > /dev/null; then
+    fail "a sanitizer reported a problem"
 fi
 echo "ok: quit"
 

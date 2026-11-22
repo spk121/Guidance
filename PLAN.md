@@ -874,7 +874,8 @@ alone is reason not to release 0.2.0 as it is.
 
 Status: all three blockers and all four P1 items have since been
 fixed, one commit each; what is left of each is under "Still open" in
-its item.  The P2 items are open, except the one about line 1.
+its item.  The P2 items have since been dealt with too, one commit
+each: see the notes on them.
 
 To be sure that none of this came from stale compiled files,
 `~/.cache/guidance` and `~/.cache/guile` were then both deleted,
@@ -1131,26 +1132,58 @@ Each item has a test: see "Tests for these" at the end of this phase.
 
 #### P2: noticed, can wait
 
-- Step Into on a line that uses `load` first pauses at
-  "boot-9.scm:4419": the macro's expansion is part of the program's
-  procedure but carries the library's file and line.  Steps should
-  pass over positions in Guile's own files.
-- "No code is loaded at spin.scm:3 yet" is printed for a breakpoint
-  set, while paused, on a line of a procedure that is loaded, and
-  that then fires at once.
-- Up recalls lines, not entries: after an expression entered over
-  two lines, Up gives its second line alone, which is a read error.
-- A mistyped name at `repl>` enters Error mode, which then needs
-  Stop.  This follows from running expressions as programs, but is
-  heavy for a typo.
-- File descriptors 1 and 2 are now the Terminal's, so what the C
+- Fixed: a step no longer pauses at a source position in one of
+  Guile's own files, unless it began in one (`position-starts`).  The
+  REPL test that steps through a `load` checks it.  It was: Step Into
+  on a line that uses `load` first pauses at "boot-9.scm:4419": the
+  macro's expansion is part of the program's procedure but carries the
+  library's file and line. Steps should pass over positions in Guile's
+  own files.
+- Fixed: this was a consequence of the first blocker.  The search for
+  loaded code leaves out Guidance's own modules, and the program's
+  procedures were in one of them.  With the program back in
+  `(guile-user)` the warning no longer appears; the GUI test that sets
+  a breakpoint while paused now checks that.  It was: "No code is
+  loaded at spin.scm:3 yet" is printed for a breakpoint set, while
+  paused, on a line of a procedure that is loaded, and that then fires
+  at once.
+- Fixed: a line entered at the continuation prompt is added to the
+  history entry of the line before, so Up recalls the whole
+  expression, which can be entered again as it is.  The history menu
+  shows such an entry on one line.  The GUI test recalls a two-line
+  expression.  It was: Up recalls lines, not entries: after an
+  expression entered over two lines, Up gives its second line alone,
+  which is a read error.
+- Fixed: an error raised by an expression entered at `repl>`, in that
+  expression itself and not in a procedure that it called, is just
+  reported: there is no stack worth showing (`slip-of-the-operator?`).
+  An error in a procedure that the expression calls enters Error mode
+  as before.  Three REPL tests and the GUI test cover both.  It was: A
+  mistyped name at `repl>` enters Error mode, which then needs Stop.
+  This follows from running expressions as programs, but is heavy for
+  a typo.
+- Fixed: in part.  The descriptors stay the Terminal's, which is what
+  gives subprocesses the Terminal; what else writes straight to them
+  still appears there.  But the GUI test now tells the sanitizers to
+  write their reports to files (`log_path`), checks for them whenever
+  it checks that Guidance is healthy, and prints them when it fails,
+  so a report is no longer lost if Guidance dies.  This was checked
+  with a stand-in for Guidance that leaves a pretend report.  It was:
+  File descriptors 1 and 2 are now the Terminal's, so what the C
   library, GLib's fallbacks, or a sanitizer writes straight to them
-  appears in the Terminal, not where Guidance was started.  A
-  sanitizer report in CI would be in the test's transcript, not its
-  log, and lost if Guidance died first.
+  appears in the Terminal, not where Guidance was started. A sanitizer
+  report in CI would be in the test's transcript, not its log, and
+  lost if Guidance died first.
 - Fixed with the Source page item: Open Program showed the file with
   line 1 marked as the current line, though nothing was paused there.
-- The breakpoint mark in the Source page's margin is a thin bar,
+- Fixed: the note was mistaken about the mark: it was a red disc, six
+  pixels across; the thin bar was the text cursor.  The disc is now
+  ten pixels across, as large as its space allows.  Looking closely
+  showed a real fault as well: the ring for a disabled breakpoint had
+  a line running from it to the previous line's number, because the
+  circle was added to the path left by drawing that number.  That is
+  fixed.  Checked by screenshot; there is no test of the drawing.  It
+  was: The breakpoint mark in the Source page's margin is a thin bar,
   easy to miss.
 
 #### Tests for these

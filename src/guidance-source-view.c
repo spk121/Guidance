@@ -493,14 +493,20 @@ gutter_draw (G_GNUC_UNUSED GtkDrawingArea *area,
       SourceBreakpoint *bp = breakpoint_at_line (self, line);
       if (bp != NULL)
         {
-          double radius = MIN (digit, line_height) * 0.4;
+          /* As large as fits the space left for it, two digits wide,
+           * and the line. */
+          double radius = MIN (2 * digit, line_height) * 0.32;
+          /* A new path: otherwise cairo joins the circle to wherever
+           * the last line number was drawn, with a line that shows
+           * when the circle is stroked. */
+          cairo_new_path (cr);
           cairo_arc (cr, digit, wy + line_height / 2.0, radius, 0, 2 * G_PI);
           cairo_set_source_rgb (cr, 0.85, 0.1, 0.1);
           if (bp->enabled)
             cairo_fill (cr);
           else
             {
-              cairo_set_line_width (cr, 1.5);
+              cairo_set_line_width (cr, 2.0);
               cairo_stroke (cr);
             }
         }
