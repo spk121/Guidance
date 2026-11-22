@@ -188,10 +188,19 @@ stop_app
 
 # A program that prints a great deal loses none of it, and the terminal
 # keeps only the latest part.
+# The first run compiles the program.  The compiler's notes come by the
+# error stream, and can land in the middle of an output line, so the
+# lines are counted in a second run, which has none.
 start "$PROGRAMS/flood.scm"
 key F5
 wait_for "end of flood"
 wait_for "[prompt repl>]" 2
+stop_app
+start "$PROGRAMS/flood.scm"
+key F5
+wait_for "end of flood"
+wait_for "[prompt repl>]" 2
+refute ";;;"
 expect_count "line " 30000
 wait_for "line 1 λ→日本語 äöü"
 wait_for "line 30000 λ→日本語 äöü"

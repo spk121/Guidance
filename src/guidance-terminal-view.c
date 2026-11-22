@@ -34,6 +34,8 @@ struct _GdnTerminalView
   guint          prompt_source;
   guint          error_source;
   int            output_fd;
+  int            input_fd; /* The program's output */
+  int            error_fd; /* The program's error output */
   /* Bytes read from each stream that end part-way through a UTF-8
    * character, kept until the rest arrives. */
   GByteArray *   input_pending;
@@ -69,6 +71,10 @@ static char *read_text (int fd, GByteArray *pending);
 static void  append_text (GdnTerminalView *self,
                           const char *     text,
                           const char *     tag_name);
+static void  drain_stream (GdnTerminalView *self,
+                           int              fd,
+                           GByteArray *     pending,
+                           const char *     tag_name);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
@@ -159,6 +165,16 @@ gdn_terminal_view_connect_ports (GdnTerminalView *self,
       g_unix_fd_add_full (G_PRIORITY_DEFAULT_IDLE, error_fd, G_IO_IN,
                           poll_terminal_error, self, NULL);
   self->output_fd = output_fd;
+  self->input_fd = input_fd;
+  self->error_fd = error_fd;
+
+  /* A stream that is ready when the GTK thread looks may have been
+   * read by drain_stream by the time its handler runs.  The read must
+   * then come back empty-handed rather than wait, which would stop the
+   * GTK thread. */
+  g_unix_set_fd_nonblocking (input_fd, TRUE, NULL);
+  g_unix_set_fd_nonblocking (prompt_fd, TRUE, NULL);
+  g_unix_set_fd_nonblocking (error_fd, TRUE, NULL);
 }
 
 void
@@ -279,6 +295,11 @@ poll_terminal_prompt (gint                       fd,
 
   GdnTerminalView *self = GDN_TERMINAL_VIEW (user_data);
   char *buf;
+
+  /* The REPL prints its prompt after the output that goes before it,
+   * but by another stream.  Show that output first. */
+  drain_stream (self, self->input_fd, self->input_pending, NULL);
+  drain_stream (self, self->error_fd, self->error_pending, "error");
 
   /* Clear out the old label */
   gtk_label_set_text (self->prompt_label, "");
@@ -425,6 +446,30 @@ read_text (int fd, GByteArray *pending)
   text = g_utf8_make_valid (data, pending->len);
   g_byte_array_set_size (pending, 0);
   return text;
+}
+
+/* Reads and shows what is waiting on FD now, without waiting for more.
+ * It stops after a few megabytes, in case another thread of the
+ * program is printing without end. */
+static void
+drain_stream (GdnTerminalView *self,
+              int              fd,
+              GByteArray *     pending,
+              const char *     tag_name)
+{
+  for (int i = 0; i < 64; i++)
+    {
+      GPollFD poll_fd = { fd, G_IO_IN, 0 };
+      char *  text;
+
+      if (g_poll (&poll_fd, 1, 0) <= 0 || !(poll_fd.revents & G_IO_IN))
+        break;
+      text = read_text (fd, pending);
+      if (text == NULL)
+        break;
+      append_text (self, text, tag_name);
+      g_free (text);
+    }
 }
 
 static gboolean
