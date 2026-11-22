@@ -87,12 +87,24 @@ set_accels (GdnApplication *app)
     { "win.step-out", { "<Shift>F11", NULL } },
     { "win.process-pause", { "F6", NULL } },
     { "win.set-breakpoint", { "F9", NULL } },
+    { "win.open-program", { "<Control>o", NULL } },
+    { "app.quit", { "<Control>q", NULL } },
   };
 
   for (gsize i = 0; i < G_N_ELEMENTS (accels); i++)
     gtk_application_set_accels_for_action (GTK_APPLICATION (app),
                                            accels[i].action,
                                            accels[i].accels);
+}
+
+/* Quit ends Guidance, and the program it is running, as closing the
+ * window does. */
+static void
+handle_quit (G_GNUC_UNUSED GSimpleAction *action,
+             G_GNUC_UNUSED GVariant *     parameter,
+             gpointer                     user_data)
+{
+  g_application_quit (G_APPLICATION (user_data));
 }
 
 /* The app's "activate" signal handler */
@@ -138,6 +150,11 @@ gdn_application_new (void)
                          NULL, NULL, 0);
   g_signal_connect_data ((gpointer) app, "command-line",
                          G_CALLBACK (on_command_line), NULL, NULL, 0);
+
+  GSimpleAction *quit = g_simple_action_new ("quit", NULL);
+  g_signal_connect (quit, "activate", G_CALLBACK (handle_quit), app);
+  g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (quit));
+  g_object_unref (quit);
 
   _default = app;
   return app;

@@ -410,14 +410,33 @@ debugger core is enough, otherwise in `tests/gui-smoke.sh`.
 
       Still open: after instruction steps leave a file given with
       `-l`, they may not pause in the next file.  Line steps do.
-- [ ] **The menu button does nothing.**  It is a plain `GtkButton`.
-      `menus.ui` is not used, and names actions that do not exist
-      (`win.repl-load`, `win.repl-history-next`, `app.quit`).  There
-      is no About dialog and no Quit, and Ctrl+Q does nothing.  The
-      program can only be named on the command line, so Guidance
-      started from its desktop entry is a REPL with nothing to run.
-      Give the menu at least Open Program, Keyboard Shortcuts (the
-      overlay exists and works on Ctrl+?), About, and Quit.
+- [x] **The menu button does nothing.**  It was a plain `GtkButton`.
+      `menus.ui` was not used, and named actions that do not exist.
+      There was no About dialog and no Quit, and the program could
+      only be named on the command line, so Guidance started from its
+      desktop entry was a REPL with nothing to run.  Fixed: the
+      button is a `GtkMenuButton` with this menu:
+      - Open Program (Ctrl+O): a file dialog, starting in the
+        directory Guidance was started in.  The chosen file replaces
+        the program from the command line, without arguments; the
+        other options stay.  It is loaded on the Source page, so that
+        breakpoints can be set before it runs.  Available at the
+        `repl>` prompt only.
+      - Keyboard Shortcuts (Ctrl+?): the existing overlay, which now
+        lists the new shortcuts.
+      - About Guidance: name, version, licence, website, author, and
+        the Guile and GTK versions.  The icon is now also in the
+        resources, so that it shows when Guidance is not installed.
+      - Quit (Ctrl+Q): as closing the window.
+
+      `menus.ui` is removed.  Tests: Open Program's effect in
+      `tests/repl-test.scm`, Quit in `tests/gui-smoke.sh`.  The file
+      dialog and the About dialog were checked by hand, with the
+      mouse, and are not in the tests.
+
+      Still open: arguments for a program chosen from the menu; a
+      list of recent programs; the window title does not name the
+      program.
 
 #### Should fix
 

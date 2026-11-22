@@ -416,6 +416,12 @@ gdn_lisp_request_module_procedures (GdnLisp *self, const char *module_name)
 }
 
 void
+gdn_lisp_request_set_program (GdnLisp *self, const char *file)
+{
+  push_request (self, scm_list_2 (sym ("set-program"), str (file)));
+}
+
+void
 gdn_lisp_request_select_frame (GdnLisp *self, int index)
 {
   push_request (self, scm_list_2 (sym ("select-frame"), scm_from_int (index)));

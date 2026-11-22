@@ -336,5 +336,25 @@ type_line "(+ 1 1)"
 wait_for "→ 2"
 stop_app
 
+# Quit, from the menu or with Ctrl+Q, ends Guidance cleanly, also while
+# a program is running.
+start "$PROGRAMS/loop.scm"
+key F5
+wait_for "spinning"
+key ctrl+q
+i=0
+while kill -0 "$APP" 2>/dev/null; do
+    i=$((i + 1))
+    [ $i -gt 100 ] && fail "Guidance did not quit"
+    sleep 0.1
+done
+wait "$APP"
+status=$?
+[ "$status" -eq 0 ] || fail "Guidance quit with status $status"
+if grep -E "CRITICAL|ERROR|runtime error|AddressSanitizer" "$LOG"; then
+    fail "problems were logged"
+fi
+echo "ok: quit"
+
 echo "PASS"
 finish 0

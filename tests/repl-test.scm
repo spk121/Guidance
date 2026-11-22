@@ -647,6 +647,24 @@ INPUT."
   (check "the expression after Stop is evaluated" (output-contains? "→ 42"))
   (check "no internal error" (not (output-contains? "make-stack"))))
 
+;; Open Program, in the menu, changes the program that Run runs.
+
+(define-test "open: a program chosen from the menu replaces the one given"
+  (run-repl
+   (list '(run #f)
+         (lambda ()
+           (push-request! `(set-program ,(program "greet.scm")))
+           '(wake #f))
+         '(run #f)
+         '(quit 0))
+   (program "procs.scm") "one" "two")
+  (check "first the program from the command line, then the one chosen"
+         (output-order? "Press Run (F5) to run procs.scm." "procs.scm"
+                        "Press Run (F5) to run greet.scm."
+                        "greet.scm" "Hello, world"))
+  (check "the chosen program has no arguments"
+         (equal? (command-line) (list (program "greet.scm")))))
+
 ;; Programs are compiled so that they can be debugged: variables keep
 ;; their names, and stepping follows the lines as written.
 

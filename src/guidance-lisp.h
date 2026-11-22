@@ -90,6 +90,8 @@ void gdn_lisp_request_source_trap (GdnLisp *self, const char *file, int line);
 void gdn_lisp_request_trap_enabled (GdnLisp *self, int index, gboolean enable);
 void gdn_lisp_request_trap_delete (GdnLisp *self, int index);
 void gdn_lisp_request_module_procedures (GdnLisp *self, const char *module_name);
+/* Makes FILE, an absolute path, the program that Run runs. */
+void     gdn_lisp_request_set_program (GdnLisp *self, const char *file);
 void gdn_lisp_request_select_frame (GdnLisp *self, int index);
 
 /* GTK THREAD: Asks the REPL to stop the running program. */

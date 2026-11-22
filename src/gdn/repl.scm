@@ -353,6 +353,20 @@ again.  Otherwise it is Guile's trap, for PROC itself."
 take effect if some is.~%" (basename file) line))
     idx))
 
+(define (set-program! file)
+  "Makes FILE the program that Run runs, in place of the one given on
+the command line, and without arguments.  The other options, such as
+the load path, stay as they are."
+  (set! *options*
+    (map (lambda (entry)
+           (case (car entry)
+             ((script) (cons 'script file))
+             ((expression) (cons 'expression #f))
+             ((arguments) (cons 'arguments '()))
+             (else entry)))
+         *options*))
+  (format #t "~&Press Run (F5) to run ~a.~%" (program-name)))
+
 (define (process-request request)
   "Handles one request from the GUI.  A request is a list whose first
 element says what it is."
@@ -384,6 +398,9 @@ element says what it is."
        ((module-procedures)
         (gdn-set-module-procedures! *gdn-module-view* (cadr request)
                                     (gdn-module-procedures (cadr request))))
+       ;; (set-program FILE): the program that Run runs
+       ((set-program)
+        (set-program! (cadr request)))
        ;; (select-frame INDEX): the frame for evaluating expressions
        ((select-frame)
         (let ((index (cadr request))

@@ -58,6 +58,11 @@ Press Run (F5) to run FILE with the ARGs, as `guile FILE ARG...`
 would.  The program sees its own command line, so `(command-line)`
 returns `("FILE" "ARG" ...)`.  Without a FILE, Guidance is a REPL.
 
+The menu's Open Program (Ctrl+O) chooses a program in place of FILE,
+without arguments.  The options, such as `-L`, stay in effect.  The
+menu also has the keyboard shortcuts (Ctrl+?), About, and Quit
+(Ctrl+Q).
+
 These options are a subset of Guile's:
 
 | Option         | Meaning                                                    |
