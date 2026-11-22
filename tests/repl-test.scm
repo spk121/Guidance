@@ -1410,15 +1410,13 @@ seconds the step took, or #f if it was stopped."
     (check "finishes within 5 seconds" seconds)
     (check "the line ran" (output-contains? "= printed"))))
 
-(define-known-failure "speed: Step Into a line that calls Guile's libraries a lot"
-  "Phase 6, Stepping can take minutes"
+(define-test "speed: Step Into a line that calls Guile's libraries a lot"
   (let ((seconds (time-one-step 'into-library 'step-into 2)))
     (format #t "  took ~a s~%" seconds)
     (check "finishes within 2 seconds, as Step Over does" seconds)
     (check "the line ran" (output-contains? "= printed"))))
 
-(define-known-failure "speed: Step Over a line that recurses deeply"
-  "Phase 6, Stepping can take minutes"
+(define-test "speed: Step Over a line that recurses deeply"
   (let ((seconds (time-one-step 'deep 'step 2)))
     (format #t "  took ~a s~%" seconds)
     (check "finishes within 2 seconds" seconds)

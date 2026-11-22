@@ -1029,7 +1029,7 @@ these" at the end of this phase.
 
 #### P1: fix before the alpha if at all possible
 
-- [ ] **Stepping can take minutes, and looks like a hang.**  Stop
+- [x] **Stepping can take minutes, and looks like a hang.**  Stop
       does still work.  Two separate causes:
       - *Step Into through library code that makes many calls.*  The
         apply hook looks up debugging information for every procedure
@@ -1048,6 +1048,23 @@ these" at the end of this phase.
         removing the instruction hook while the stepped frame is not
         the innermost, using the apply and return hooks to put it
         back.
+
+      Fixed: measured in plain Guile, every call of a VM hook takes time
+      in proportion to the depth of the stack, whichever hook it is, and
+      the instruction hook is called most by far.  So a step now
+      installs only the hooks it needs at the time: while a procedure
+      that the stepped frame called is running, the instruction hook is
+      removed, and so is the apply hook unless stepping into; the return
+      hook puts them back.  And the apply hook remembers, per procedure,
+      whether it is the program's (`entry-kind`).  In the GUI: Step Into
+      through the `pretty-print` takes 0.18 s, was 12.8 s; into the
+      `load`, 1.2 s, was 62 s; Step Over `(fib 25)` 0.17 s, was 1.1 s;
+      over the `map` of 30,000, 2.3 s, was 48 s.  Both REPL tests are
+      ordinary tests now.  Still open: the return hook remains while the
+      callee runs, so the cost still grows with the square of the depth;
+      Step Over the `map` of 300,000 elements still had not finished
+      after 150 s.
+
 - [ ] **Error output from `system*` and pipes is thrown away.**  Since
       "show output and errors in order", `(current-error-port)` is a
       port of Guidance's own type, not a file port.  Guile's `system*`
