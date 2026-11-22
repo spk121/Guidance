@@ -51,7 +51,8 @@
   #:use-module (system vm trap-state)
   #:export (gdn-top-repl
             gdn-async-poll
-            _break_)
+            _break_
+            _pk_)
   #:declarative? #f)
 
 ;; Aborting to this prompt stops the running program and returns to
@@ -79,6 +80,12 @@
 
 ;; The module list most recently sent to the GUI.
 (define *last-module-list* #f)
+
+;; Guidance's parsed command line; see gdn-parse-command-line.
+(define *options* (gdn-parse-command-line '()))
+
+(define (option key)
+  (assq-ref *options* key))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HELPERS
@@ -387,16 +394,50 @@ exception."
       (format #t "~&Stopped.~%")
       (values))))
 
+(define (program-name)
+  "A short name for the program on the command line, or #f."
+  (cond
+   ((option 'script) => basename)
+   ((option 'expression) "the expression given with -c")
+   (else #f)))
+
 (define (run-program)
-  "Loads the program named on the command line, under the debugger."
-  (if (< (length (command-line)) 2)
-      (format #t "No program was given on the command line.~%")
-      (let ((file (cadr (command-line))))
-        (if (not (file-exists? file))
-            (format #t "Cannot find the program ~s.~%" file)
-            (let ((path (canonicalize-path file)))
-              (format #t "Running ~a~%" path)
-              (run-under-debugger (lambda () (load path))))))))
+  "Runs the program given on Guidance's command line, under the
+debugger, as Guile would: with its own command line, after loading the
+files given with -l, then calling the function given with -e."
+  (let ((script (option 'script))
+        (expression (option 'expression))
+        (entry (option 'entry)))
+    (cond
+     ((and (not script) (not expression))
+      (format #t "No program was given on the command line.~%"))
+     ((and script (not (file-exists? script)))
+      (format #t "Cannot find the program ~s.~%" script))
+     (else
+      (let ((path (and script (canonicalize-path script))))
+        (format #t "Running ~a~%" (or path (program-name)))
+        (run-under-debugger
+         (lambda ()
+           (set-program-arguments
+            (cons (or script "guidance") (option 'arguments)))
+           (for-each (lambda (file) (load (canonicalize-path file)))
+                     (option 'load-files))
+           (if path
+               (load path)
+               (eval-forms expression))
+           (when entry
+             ((module-ref (current-module) entry) (command-line))))))))))
+
+(define (apply-command-line! args)
+  "Parses Guidance's command-line ARGS and applies the options that
+take effect at once."
+  (set! *options* (gdn-parse-command-line args))
+  (for-each (lambda (message)
+              (format (current-error-port) "guidance: ~a~%" message))
+            (option 'errors))
+  (set! %load-path (append (option 'load-path) %load-path))
+  (set! %load-compiled-path
+    (append (option 'compiled-path) %load-compiled-path)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ERROR MODE
@@ -606,6 +647,29 @@ in the innermost frame of the program instead."
                  "pause>" #:top-frame? #f)
           (set-vm-trace-level! saved-level)))))
 
+(define (caller-location)
+  "The source location of the code that called the procedure calling
+this one, like \"foo.scm:12\", or #f if it has no source file."
+  ;; Frame 0 is make-stack, 1 this procedure, 2 its caller.
+  (let* ((stack (make-stack #t))
+         (frame (and (> (stack-length stack) 3) (stack-ref stack 3)))
+         (source (and frame (frame-source frame))))
+    (and source (source:file source)
+         (not (guile-internal-frame? frame))
+         (frame-location frame))))
+
+(define (_pk_ . values)
+  "Like Guile's pk, for \"peek\": logs VALUES on Guidance's Peek page,
+with where it was called from, and returns the last of them."
+  (gdn-add-peek! *gdn-application-window*
+                 (let ((location (caller-location)))
+                   (if location
+                       (format #f "~a: ~s" location values)
+                       (format #f "~s" values))))
+  (if (null? values)
+      *unspecified*
+      (car (last-pair values))))
+
 (define (_break_)
   "Pauses the program in trap mode at the caller of _break_, when the
 program is run by Guidance.  Otherwise, does nothing."
@@ -618,6 +682,8 @@ program is run by Guidance.  Otherwise, does nothing."
   "A friendly welcome message printed to the console."
   (format #t "Welcome to Guidance, an alternative Guile REPL.~%")
   (format #t "This is linked to Guile ~a.~%" (version))
+  (when (program-name)
+    (format #t "Press Run (F5) to run ~a.~%" (program-name)))
   (newline))
 
 (define (repl-loop)
@@ -655,6 +721,7 @@ command arrives.  Returns the exit status."
   ;; Make the trap procedures, like add-trap-at-procedure-call!,
   ;; available to the operator.
   (module-use! (current-module) (resolve-interface '(system vm trap-state)))
+  (apply-command-line! (cdr (command-line)))
   (repl-welcome)
   (let ((status (repl-loop)))
     (format #t "The REPL has ended with a return status of ~a.~%" status)

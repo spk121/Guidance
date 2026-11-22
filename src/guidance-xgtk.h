@@ -35,4 +35,9 @@ void xgtk_invoke_on_main (GSourceFunc func, gpointer data,
  * (g_object_unref)).  Safe to call from any thread. */
 void xgtk_list_store_replace_all_on_main (GListStore *store,
                                           GPtrArray * items);
+
+/* When the environment variable GUIDANCE_TRANSCRIPT names a file,
+ * appends TEXT to it.  The tests use this to see what Guidance shows.
+ * GTK thread only. */
+void xgtk_transcribe (const char *text);
 G_END_DECLS

@@ -17,6 +17,7 @@
  */
 
 #include "guidance-xgtk.h"
+#include <stdio.h>
 
 void
 xgtk_button_set_sensitive (GtkButton *button, gboolean flag)
@@ -68,4 +69,24 @@ xgtk_list_store_replace_all_on_main (GListStore *store, GPtrArray *items)
   r->store = g_object_ref (store);
   r->items = items;
   xgtk_invoke_on_main (replace_all, r, store_replacement_free);
+}
+
+void
+xgtk_transcribe (const char *text)
+{
+  static FILE *   transcript = NULL;
+  static gboolean checked = FALSE;
+
+  if (!checked)
+    {
+      const char *path = g_getenv ("GUIDANCE_TRANSCRIPT");
+      checked = TRUE;
+      if (path != NULL && *path != '\0')
+        transcript = fopen (path, "a");
+    }
+  if (transcript != NULL && text != NULL)
+    {
+      fputs (text, transcript);
+      fflush (transcript);
+    }
 }

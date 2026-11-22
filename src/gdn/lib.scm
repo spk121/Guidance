@@ -35,20 +35,96 @@
             gdn-module-procedures
             gdn-trap-at-line
             gdn-loaded-code-at-line?
+            gdn-parse-command-line
             gdn-get-backtrace
             gdn-get-environment))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; COMMAND LINE
+
+;; Guidance takes a subset of Guile's command-line options, so that it
+;; can be called the way Guile would be.  main.c handles --help and
+;; --version itself, before starting the GUI, using the same rules
+;; for where the options end, and has the usage message.
+
+(define (gdn-parse-command-line args)
+  "Parses Guidance's command-line arguments, ARGS, not including the
+program name.  Returns an alist with these keys:
+
+  load-path       directories from -L, in order
+  compiled-path   directories from -C, in order
+  load-files      files from -l, in order
+  script          the program FILE, or #f
+  expression      the program EXPR from -c, or #f
+  entry           the FUNCTION from -e, as a symbol, or #f
+  arguments       the program's ARGs
+  errors          a list of messages about bad arguments"
+  (let loop ((args args)
+             (load-path '()) (compiled-path '()) (load-files '())
+             (entry #f) (errors '()))
+    (define (finish script expression arguments errors)
+      `((load-path . ,(reverse load-path))
+        (compiled-path . ,(reverse compiled-path))
+        (load-files . ,(reverse load-files))
+        (script . ,script)
+        (expression . ,expression)
+        (entry . ,entry)
+        (arguments . ,arguments)
+        (errors . ,(reverse errors))))
+    (define (missing option)
+      (finish #f #f '()
+              (cons (format #f "option ~a requires an argument" option)
+                    errors)))
+    (if (null? args)
+        (finish #f #f '() errors)
+        (let ((arg (car args))
+              (rest (cdr args)))
+          (cond
+           ((member arg '("-L" "-C" "-l" "-e" "-s" "-c"))
+            (if (null? rest)
+                (missing arg)
+                (let ((value (car rest)))
+                  (cond
+                   ((string=? arg "-L")
+                    (loop (cdr rest) (cons value load-path) compiled-path
+                          load-files entry errors))
+                   ((string=? arg "-C")
+                    (loop (cdr rest) load-path (cons value compiled-path)
+                          load-files entry errors))
+                   ((string=? arg "-l")
+                    (loop (cdr rest) load-path compiled-path
+                          (cons value load-files) entry errors))
+                   ((string=? arg "-e")
+                    (loop (cdr rest) load-path compiled-path load-files
+                          (string->symbol value) errors))
+                   ((string=? arg "-s")
+                    (finish value #f (cdr rest) errors))
+                   (else              ; -c
+                    (finish #f value (cdr rest) errors))))))
+           ((string=? arg "--")
+            (if (null? rest)
+                (finish #f #f '() errors)
+                (finish (car rest) #f (cdr rest) errors)))
+           ((and (> (string-length arg) 1) (char=? (string-ref arg 0) #\-))
+            (loop rest load-path compiled-path load-files entry
+                  (cons (format #f "unrecognized option ~a" arg) errors)))
+           (else
+            (finish arg #f rest errors)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; STACKS
 
 ;; Guile's own source files are recorded with paths relative to the
-;; load path, e.g. "ice-9/boot-9.scm".
+;; load path, e.g. "ice-9/boot-9.scm".  Guidance's own modules are
+;; included too, for when they are loaded from files rather than from
+;; Guidance's resources, as in the tests.
 (define %guile-source-prefixes
   '("ice-9/" "system/" "srfi/" "language/" "rnrs/" "oop/" "scheme/"
-    "web/" "sxml/" "texinfo/"))
+    "web/" "sxml/" "texinfo/" "gdn/"))
 
 (define (guile-internal-frame? frame)
-  "True if FRAME is running code from Guile's own libraries."
+  "True if FRAME is running code from Guile's own libraries, or from
+Guidance's."
   (let* ((source (frame-source frame))
          (file (and source (source:file source))))
     (and (string? file)

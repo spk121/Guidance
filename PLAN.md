@@ -177,9 +177,26 @@ Phase 2 notes:
 
 ### Phase 3: README features
 
-- [ ] Peek log tab (`_pk_`).
-- [ ] Pass command-line arguments through the Run button.
-- [ ] Rewrite the README to match reality.
+- [x] Peek log tab (`_pk_`).
+- [x] Pass command-line arguments through the Run button.
+- [x] Rewrite the README to match reality.
+
+Phase 3 notes:
+
+- Guidance takes a subset of Guile's options: `-L`, `-C`, `-l`, `-s`,
+  `-c`, `-e`, `--`, `-h`/`--help`, `-v`/`--version`.  They are parsed
+  in `(gdn lib)` (`gdn-parse-command-line`); `main.c` handles `--help`
+  and `--version` before the GUI starts, scanning by the same rules,
+  and gives GApplication no arguments.  Run sets the program's
+  `(command-line)` as Guile would: `("FILE" "ARG" ...)`.
+- `_pk_` logs to the Peek page with the caller's location and returns
+  its last argument, like `pk`.
+- The README keeps the Philosophy section; the rest describes what
+  Guidance does now.  Its Docker section is marked as out of date
+  until Phase 4.
+- Guidance's own modules count as library code: their frames are
+  hidden from backtraces and skipped by stepping, also when they are
+  loaded from files, as in the tests.
 
 ### Phase 4: Packaging
 

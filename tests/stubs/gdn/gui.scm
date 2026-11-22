@@ -23,6 +23,8 @@
             gdn-take-interrupt-request!
             gdn-clear-interrupt-request!
             gdn-set-input-mode!
+            gdn-add-peek!
+            peeks
             gdn-update-backtrace!
             gdn-update-environments!
             gdn-update-traps!
@@ -108,6 +110,17 @@
 
 (define (gdn-clear-interrupt-request! lisp)
   (set! *interrupt* #f))
+
+(define *peeks* '())
+
+(define (peeks)
+  "The entries logged on the Peek page, oldest first."
+  (reverse *peeks*))
+
+(define (gdn-add-peek! window text)
+  (unless (string? text)
+    (error "Malformed peek" text))
+  (set! *peeks* (cons text *peeks*)))
 
 (define (gdn-set-input-mode! window mode)
   (log! 'mode mode))

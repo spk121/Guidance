@@ -12,6 +12,7 @@
 ;;;   guile --debug -L src -L tests/stubs tests/repl-test.scm
 
 (use-modules (gdn repl)
+             (gdn lib)
              (gdn gui)
              (gdn ports)
              (ice-9 threads)
@@ -441,6 +442,68 @@ INPUT."
    (program "error.scm"))
   (check "the erring frame's locals are in scope"
          (output-contains? "→ 50")))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Command line and peeking
+
+(define-test "command line: parsing"
+  (define (parse . args) (gdn-parse-command-line args))
+  (define (ref alist key) (assq-ref alist key))
+  (let ((a (parse "-L" "d1" "-L" "d2" "-C" "c" "-l" "pre.scm" "-e" "main"
+                  "prog.scm" "x" "-L" "y")))
+    (check "-L and -C directories, in order"
+           (and (equal? (ref a 'load-path) '("d1" "d2"))
+                (equal? (ref a 'compiled-path) '("c"))))
+    (check "-l files and the -e function"
+           (and (equal? (ref a 'load-files) '("pre.scm"))
+                (eq? (ref a 'entry) 'main)))
+    (check "the first non-option is the program; the rest are its arguments"
+           (and (equal? (ref a 'script) "prog.scm")
+                (equal? (ref a 'arguments) '("x" "-L" "y")))))
+  (check "-s names the program"
+         (equal? (ref (parse "-s" "-weird.scm" "a") 'script) "-weird.scm"))
+  (check "-- ends the options"
+         (equal? (ref (parse "--" "-x.scm") 'script) "-x.scm"))
+  (check "-c gives an expression"
+         (let ((a (parse "-c" "(f)" "p")))
+           (and (equal? (ref a 'expression) "(f)")
+                (equal? (ref a 'arguments) '("p")))))
+  (check "bad options are reported"
+         (and (equal? (ref (parse "-x" "f.scm") 'errors)
+                      '("unrecognized option -x"))
+              (equal? (ref (parse "-L") 'errors)
+                      '("option -L requires an argument")))))
+
+(define-test "command line: running a program with options and arguments"
+  (run-repl (list '(run #f) '(quit 0))
+            "-L" (program "modules") "-l" (program "preload.scm")
+            "-e" "main" (program "args.scm") "a" "b")
+  (check "the welcome names the program"
+         (output-contains? "Press Run (F5) to run args.scm."))
+  (check "-l files are loaded first, and -L finds modules"
+         (output-order? "preloaded" "args" "Hello, world"))
+  (check "the program sees its own command line"
+         (output-contains? "args.scm a b))"))
+  (check "-e calls the function with the command line"
+         (output-order? "Hello, world" "(main (" "args.scm a b))")))
+
+(define-test "command line: -c and bad options"
+  (run-repl (list '(run #f) '(quit 0))
+            "-q" "-c" "(display (command-line))" "p")
+  (check "the expression runs with its arguments"
+         (output-contains? "(guidance p)"))
+  (check "unrecognized options are reported"
+         (output-contains? "guidance: unrecognized option -q")))
+
+(define-test "peek: _pk_ logs on the Peek page"
+  (run-repl (list '(run #f) '(eval "(_pk_ 'from-repl 7)") '(quit 0))
+            (program "peek.scm"))
+  (check "values pass through _pk_" (output-order? "42" "→ 7"))
+  (check "entries show where _pk_ was called"
+         (and (member "peek.scm:2: (double 21)" (peeks))
+              (member "peek.scm:5: (42)" (peeks))))
+  (check "entries from the REPL have no location"
+         (member "(from-repl 7)" (peeks))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

@@ -64,6 +64,10 @@ struct _GdnApplicationWindow
   GtkButton *step_out_button;
   GtkButton *menu_button;
 
+  /* Peek tab */
+  GtkTextView *peek_view;
+  GtkButton *  peek_clear_button;
+
   /* Terminal tab */
   GtkBox *terminal_box;
   GdnTerminalView *terminal_view;
@@ -156,6 +160,7 @@ static void     handle_set_breakpoint (GSimpleAction *simple,
                                        gpointer       user_data);
 static void     show_page (GdnApplicationWindow *self, const char *name);
 static gboolean is_running (GdnApplicationWindow *self);
+static void     clear_peek_log (GdnApplicationWindow *self);
 
 static void add_simple_action (GdnApplicationWindow *self,
                                const char *          name,
@@ -224,6 +229,8 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   BIND (menu_button);
 
   BIND (main_stack);
+  BIND (peek_view);
+  BIND (peek_clear_button);
   BIND (terminal_box);
   BIND (thread_window);
   BIND (trap_window);
@@ -347,6 +354,8 @@ gdn_application_window_init (GdnApplicationWindow *self)
                      G_CALLBACK (handle_process_continue));
   add_simple_action (self, "process-stop", G_CALLBACK (handle_process_stop));
   add_simple_action (self, "process-pause", G_CALLBACK (handle_process_pause));
+  g_signal_connect_swapped (self->peek_clear_button, "clicked",
+                            G_CALLBACK (clear_peek_log), self);
   add_simple_action (self, "set-breakpoint",
                      G_CALLBACK (handle_set_breakpoint));
 
@@ -652,6 +661,64 @@ gdn_application_window_focus_entry (GdnApplicationWindow *self)
   gdn_terminal_view_focus_entry (self->terminal_view);
 }
 
+static void
+clear_peek_log (GdnApplicationWindow *self)
+{
+  gtk_text_buffer_set_text (gtk_text_view_get_buffer (self->peek_view), "", 0);
+}
+
+typedef struct
+{
+  GdnApplicationWindow *self;
+  char *                line;
+} PeekEntry;
+
+static void
+peek_entry_free (gpointer data)
+{
+  PeekEntry *entry = data;
+  g_object_unref (entry->self);
+  g_free (entry->line);
+  g_free (entry);
+}
+
+/* GTK THREAD: Appends a line to the Peek log. */
+static gboolean
+append_peek (gpointer data)
+{
+  PeekEntry *    entry = data;
+  GtkTextBuffer *buf = gtk_text_view_get_buffer (entry->self->peek_view);
+  GtkTextIter    end;
+
+  gtk_text_buffer_get_end_iter (buf, &end);
+  gtk_text_buffer_insert (buf, &end, entry->line, -1);
+  gtk_text_buffer_insert (buf, &end, "\n", 1);
+  gtk_text_view_scroll_to_iter (entry->self->peek_view, &end, 0.0, FALSE,
+                                0.0, 1.0);
+
+  char *transcript_line = g_strdup_printf ("[peek] %s\n", entry->line);
+  xgtk_transcribe (transcript_line);
+  g_free (transcript_line);
+  return G_SOURCE_REMOVE;
+}
+
+/* GUILE THREAD: (gdn-add-peek! window text), used by _pk_. */
+static SCM
+scm_add_peek_x (SCM s_appwin, SCM s_text)
+{
+  scm_assert_foreign_object_type (scm_application_window_type, s_appwin);
+  SCM_ASSERT_TYPE (scm_is_string (s_text), s_text, SCM_ARG2, "gdn-add-peek!",
+                   "string");
+
+  PeekEntry *entry = g_new0 (PeekEntry, 1);
+  char *     text = scm_to_utf8_string (s_text);
+  entry->self = g_object_ref (scm_foreign_object_ref (s_appwin, 0));
+  entry->line = g_strdup (text);
+  free (text);
+  xgtk_invoke_on_main (append_peek, entry, peek_entry_free);
+  return SCM_UNSPECIFIED;
+}
+
 static gboolean
 is_running (GdnApplicationWindow *self)
 {
@@ -765,5 +832,6 @@ gdn_application_window_guile_init (void)
   scm_trap_sym = scm_from_utf8_symbol ("trap");
 
   scm_c_define_gsubr ("gdn-set-input-mode!", 2, 0, 0, scm_set_input_mode_x);
-  scm_c_export ("gdn-set-input-mode!", NULL);
+  scm_c_define_gsubr ("gdn-add-peek!", 2, 0, 0, scm_add_peek_x);
+  scm_c_export ("gdn-set-input-mode!", "gdn-add-peek!", NULL);
 }
