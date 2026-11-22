@@ -135,16 +135,45 @@ Phase 1 notes:
 
 ### Phase 2: Finish the panels
 
-- [ ] Modules page: register the module view and hook module loading.
-      Adding a trap from it should use `gdn_lisp_add_proc_trap`.
-- [ ] Backtrace frame click jumps to source; set breakpoints from a
-      source line.
-- [ ] Enable/disable/delete traps from the Traps page, as new request
-      types handled by `process-request` in `(gdn repl)`.
-- [ ] Pause: interrupt a running program and enter trap mode, using
-      the same async as Stop.
-- [ ] Evaluate expressions in error and trap mode in the paused
-      frame's environment, so local variables are visible.
+- [x] Modules page: lists loaded modules; expanding one lists its
+      procedures; each can be opened in the Source page or trapped.
+- [x] Backtrace frame click selects the frame (variables, and the
+      frame for evaluation); its location opens the Source page.
+- [x] Set breakpoints from a source line: "Set Breakpoint Here" in the
+      Source page's context menu, or F9.  The Source page follows the
+      paused program.
+- [x] Enable/disable/delete traps from the Traps page.
+- [x] Pause (F6 or the toolbar): interrupt a running program and enter
+      trap mode.
+- [x] Evaluate expressions in error and trap mode with the selected
+      frame's local variables in scope.
+
+Phase 2 notes:
+
+- The GTK thread never reads Guile data.  The REPL sends plain data
+  (strings and numbers) for every page, and the GUI sends requests
+  that name things by value (a module and procedure name, a file and
+  line, a trap index, a frame index).  See `process-request` in
+  `(gdn repl)` and the `gdn_lisp_request_*` functions.
+- Line breakpoints are Guidance's own, in `(gdn lib)`.  Guile's
+  `add-trap-at-source-location!` relies on an index that goes stale
+  after `load`, and only covers code loaded when the trap is made.
+  Guidance's attach to loaded procedures, and to any other procedure
+  with code at the line when it is first called.  So breakpoints can
+  be set before Run, and survive running the program again.  They
+  match exact lines: a line with no code gets a note instead.
+- A breakpoint set on the paused line does not stop again when the
+  program continues back into that line.
+- Expressions see copies of the frame's locals: assigning to them
+  does not change the program.  Which locals exist at a given point is
+  up to Guile's liveness information; for example, a variable's last
+  use may already have consumed it.
+- Backtraces show at most 500 frames.
+- Requests are handled with asyncs blocked, so that a burst of them
+  (as from the Modules page) cannot nest and starve the program.
+- Not yet: highlighting breakpoint lines in the Source page.  Nested
+  procedures can have line breakpoints, but the Modules page lists
+  only procedures bound at a module's top level.
 
 ### Phase 3: README features
 

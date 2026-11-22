@@ -85,6 +85,8 @@ set_accels (GdnApplication *app)
     { "win.step-over", { "F10", NULL } },
     { "win.step-into", { "F11", NULL } },
     { "win.step-out", { "<Shift>F11", NULL } },
+    { "win.process-pause", { "F6", NULL } },
+    { "win.set-breakpoint", { "F9", NULL } },
   };
 
   for (gsize i = 0; i < G_N_ELEMENTS (accels); i++)

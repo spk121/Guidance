@@ -55,6 +55,7 @@ struct _GdnApplicationWindow
 
   /* Toolbar */
   GtkButton *run_button;
+  GtkButton *pause_button;
   GtkButton *stop_button;
   GtkButton *step_over_button;
   GtkButton *step_over_instruction_button;
@@ -122,8 +123,37 @@ static void     handle_css_parsing_error (GtkCssProvider *provider,
 static void     handle_after_gc (GdnLisp *lisp, gpointer user_data);
 static void     handle_after_sweep (GdnLisp *lisp, gpointer user_data);
 static void     handle_module_view_trap (GdnModuleView *view,
-                                         guint64        packed_var,
+                                         const char *   module_name,
+                                         const char *   procedure_name,
                                          gpointer       user_data);
+static void     handle_module_view_expand (GdnModuleView *view,
+                                           const char *   module_name,
+                                           gpointer       user_data);
+static void     handle_trap_view_enable (GdnTrapView *view,
+                                         int          index,
+                                         gboolean     enable,
+                                         gpointer     user_data);
+static void     handle_trap_view_delete (GdnTrapView *view,
+                                         int          index,
+                                         gpointer     user_data);
+static void     handle_backtrace_view_select_frame (GdnBacktraceView *view,
+                                                    int               index,
+                                                    gpointer user_data);
+static void     handle_backtrace_view_top_frame (GdnBacktraceView *view,
+                                                 const char *      filename,
+                                                 int               line,
+                                                 int               col,
+                                                 gpointer          user_data);
+static void     handle_source_view_breakpoint (GdnSourceView *view,
+                                               const char *   file,
+                                               int            line,
+                                               gpointer       user_data);
+static void     handle_process_pause (GSimpleAction *simple,
+                                      GVariant *     parameter,
+                                      gpointer       user_data);
+static void     handle_set_breakpoint (GSimpleAction *simple,
+                                       GVariant *     parameter,
+                                       gpointer       user_data);
 static void     show_page (GdnApplicationWindow *self, const char *name);
 static gboolean is_running (GdnApplicationWindow *self);
 
@@ -184,6 +214,7 @@ gdn_application_window_class_init (GdnApplicationWindowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GdnApplicationWindow, x)
 
   BIND (run_button);
+  BIND (pause_button);
   BIND (stop_button);
   BIND (step_over_button);
   BIND (step_over_instruction_button);
@@ -220,10 +251,13 @@ gdn_widgets_guile_init (void *user_data)
   scm_c_define ("*gdn-thread-view*",
                 gdn_thread_view_to_scm (self->thread_view));
   scm_c_define ("*gdn-trap-view*", gdn_trap_view_to_scm (self->trap_view));
+  scm_c_define ("*gdn-module-view*",
+                gdn_module_view_to_scm (self->module_view));
   scm_c_define ("*gdn-lisp*", gdn_lisp_to_scm (self->lisp));
   scm_c_export ("*gdn-application-window*", "*gdn-backtrace-view*",
                 "*gdn-environment-view*", "*gdn-source-view*",
-                "*gdn-thread-view*", "*gdn-trap-view*", "*gdn-lisp*", NULL);
+                "*gdn-thread-view*", "*gdn-trap-view*", "*gdn-module-view*",
+                "*gdn-lisp*", NULL);
 }
 
 static void
@@ -260,10 +294,16 @@ gdn_application_window_init (GdnApplicationWindow *self)
 
   self->source_view = g_object_new (GDN_TYPE_SOURCE_VIEW, NULL);
   gtk_box_append (self->source_box, GTK_WIDGET (self->source_view));
+  g_signal_connect (self->source_view, "breakpoint",
+                    G_CALLBACK (handle_source_view_breakpoint), self);
 
   self->trap_view = g_object_new (GDN_TYPE_TRAP_VIEW, NULL);
   gtk_scrolled_window_set_child (self->trap_window,
                                  GTK_WIDGET (self->trap_view));
+  g_signal_connect (self->trap_view, "enable-trap",
+                    G_CALLBACK (handle_trap_view_enable), self);
+  g_signal_connect (self->trap_view, "delete-trap",
+                    G_CALLBACK (handle_trap_view_delete), self);
 
   self->module_view = g_object_new (GDN_TYPE_MODULE_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->module_window),
@@ -271,6 +311,8 @@ gdn_application_window_init (GdnApplicationWindow *self)
   g_signal_connect_data (self->module_view, "location",
                          G_CALLBACK (handle_module_view_location), self, NULL,
                          0);
+  g_signal_connect (self->module_view, "expand",
+                    G_CALLBACK (handle_module_view_expand), self);
 
   self->environment_view = g_object_new (GDN_TYPE_ENVIRONMENT_VIEW, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->environment_window),
@@ -281,6 +323,10 @@ gdn_application_window_init (GdnApplicationWindow *self)
   g_signal_connect_data (self->backtrace_view, "location",
                          G_CALLBACK (handle_backtrace_view_location), self,
                          NULL, 0);
+  g_signal_connect (self->backtrace_view, "select-frame",
+                    G_CALLBACK (handle_backtrace_view_select_frame), self);
+  g_signal_connect (self->backtrace_view, "top-frame",
+                    G_CALLBACK (handle_backtrace_view_top_frame), self);
 
   g_signal_connect (self->lisp, "after-gc", G_CALLBACK (handle_after_gc), self);
   g_signal_connect (self->lisp, "after-sweep", G_CALLBACK (handle_after_sweep),
@@ -300,6 +346,9 @@ gdn_application_window_init (GdnApplicationWindow *self)
   add_simple_action (self, "process-continue",
                      G_CALLBACK (handle_process_continue));
   add_simple_action (self, "process-stop", G_CALLBACK (handle_process_stop));
+  add_simple_action (self, "process-pause", G_CALLBACK (handle_process_pause));
+  add_simple_action (self, "set-breakpoint",
+                     G_CALLBACK (handle_set_breakpoint));
 
   scm_c_define_module ("gdn widgets", gdn_widgets_guile_init, self);
 
@@ -398,17 +447,97 @@ handle_module_view_location (G_GNUC_UNUSED GdnModuleView *mview,
 }
 
 static void
-handle_module_view_trap (GdnModuleView *view,
-                         guint64        packed_var,
-                         gpointer       user_data)
+handle_module_view_trap (G_GNUC_UNUSED GdnModuleView *view,
+                         const char *                 module_name,
+                         const char *                 procedure_name,
+                         gpointer                     user_data)
 {
-  g_assert_cmpstr (G_OBJECT_TYPE_NAME (view), ==, "GdnModuleView");
-  g_assert_cmpstr (G_OBJECT_TYPE_NAME (user_data), ==, "GdnApplicationWindow");
-
   GdnApplicationWindow *self = user_data;
-  scm_t_bits            x_bits = (scm_t_bits) packed_var;
-  SCM                   proc = SCM_PACK (x_bits);
-  gdn_lisp_add_proc_trap (self->lisp, proc, is_running (self));
+  gdn_lisp_request_proc_trap (self->lisp, module_name, procedure_name);
+}
+
+static void
+handle_module_view_expand (G_GNUC_UNUSED GdnModuleView *view,
+                           const char *                 module_name,
+                           gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_request_module_procedures (self->lisp, module_name);
+}
+
+static void
+handle_trap_view_enable (G_GNUC_UNUSED GdnTrapView *view,
+                         int                        index,
+                         gboolean                   enable,
+                         gpointer                   user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_request_trap_enabled (self->lisp, index, enable);
+}
+
+static void
+handle_trap_view_delete (G_GNUC_UNUSED GdnTrapView *view,
+                         int                        index,
+                         gpointer                   user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_request_trap_delete (self->lisp, index);
+}
+
+static void
+handle_backtrace_view_select_frame (G_GNUC_UNUSED GdnBacktraceView *view,
+                                    int                            index,
+                                    gpointer                       user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  GdnInputMode          mode = g_atomic_int_get (&self->input_mode);
+
+  /* Frames can only be selected while the program is paused. */
+  if (mode == GDN_INPUT_MODE_ERROR || mode == GDN_INPUT_MODE_TRAP)
+    gdn_lisp_request_select_frame (self->lisp, index);
+}
+
+/* When the program pauses, the Source page follows it, without
+ * switching to that page. */
+static void
+handle_backtrace_view_top_frame (G_GNUC_UNUSED GdnBacktraceView *view,
+                                 const char *                    filename,
+                                 int                             line,
+                                 int                             col,
+                                 gpointer                        user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_source_view_show_location (self->source_view, filename, line, col);
+}
+
+static void
+handle_source_view_breakpoint (G_GNUC_UNUSED GdnSourceView *view,
+                               const char *                 file,
+                               int                          line,
+                               gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_lisp_request_source_trap (self->lisp, file, line);
+}
+
+static void
+handle_process_pause (G_GNUC_UNUSED GSimpleAction *simple,
+                      G_GNUC_UNUSED GVariant *     parameter,
+                      gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  if (is_running (self))
+    gdn_lisp_pause_async (self->lisp);
+}
+
+/* F9: a breakpoint at the cursor's line of the Source page. */
+static void
+handle_set_breakpoint (G_GNUC_UNUSED GSimpleAction *simple,
+                       G_GNUC_UNUSED GVariant *     parameter,
+                       gpointer                     user_data)
+{
+  GdnApplicationWindow *self = user_data;
+  gdn_source_view_request_breakpoint (self->source_view);
 }
 
 static void
@@ -575,6 +704,7 @@ apply_input_mode (gpointer data)
   gboolean step = (mode == GDN_INPUT_MODE_TRAP);
 
   xgtk_button_set_sensitive (self->run_button, run);
+  xgtk_button_set_sensitive (self->pause_button, mode == GDN_INPUT_MODE_RUN);
   xgtk_button_set_sensitive (self->stop_button, stop);
   xgtk_button_set_sensitive (self->step_into_button, step);
   xgtk_button_set_sensitive (self->step_into_instruction_button, step);
@@ -610,6 +740,7 @@ scm_set_input_mode_x (SCM s_appwin, SCM s_mode)
                             "one of repl, run, error, or trap");
 
   g_atomic_int_set (&self->input_mode, mode);
+  gdn_lisp_set_running (self->lisp, mode == GDN_INPUT_MODE_RUN);
 
   InputModeChange *change = g_new0 (InputModeChange, 1);
   change->self = g_object_ref (self);

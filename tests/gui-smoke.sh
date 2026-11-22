@@ -120,6 +120,37 @@ wait_for "→ 42"
 
 stop_app
 
+# A breakpoint set with F9 on the Source page, which follows the
+# paused program.
+start break.scm
+key F5
+wait_for "Break at break.scm:6"
+# The Source page loads the paused file on the GTK thread; let it.
+wait_for "[prompt break>]"
+sleep 0.5
+key F9
+wait_for "Breakpoint at break.scm:6"
+key F5
+wait_for "[prompt repl>]" 2
+key F5
+wait_for "Breakpoint at break.scm:6, at break.scm:6"
+key shift+F5
+wait_for "Stopped."
+stop_app
+
+# Pause a running program, evaluate an expression, then stop.
+start loop.scm
+key F5
+wait_for "spinning"
+sleep 1
+key F6
+wait_for "Paused at loop.scm"
+type_line "(procedure? spin)"
+wait_for "→ #t"
+key shift+F5
+wait_for "Stopped."
+stop_app
+
 # Stop interrupts a running program.
 start loop.scm
 key F5

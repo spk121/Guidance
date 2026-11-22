@@ -15,6 +15,7 @@
              (gdn gui)
              (gdn ports)
              (ice-9 threads)
+             (system vm trap-state)
              (srfi srfi-1)
              (ice-9 format))
 
@@ -50,6 +51,8 @@
 been started with PROGRAM-ARGS.  Returns the REPL's status, and sets
 *output* and *events*."
   (set-program-arguments (cons "guidance" program-args))
+  ;; Traps belong to the thread, so remove those of earlier tests.
+  (for-each delete-trap! (list-traps))
   (clear-events!)
   (set-input-script! script)
   (let ((status #f)
@@ -284,6 +287,160 @@ in the REPL thread, as the GUI does while a program runs."
 (define-test "run: no program given"
   (run-repl (list '(run #f) '(quit 0)))
   (check "says so" (output-contains? "No program was given")))
+
+(define (request input . request)
+  "A script element that queues REQUEST, as the GUI does, then sends
+INPUT."
+  (lambda ()
+    (push-request! request)
+    input))
+
+(define (load-expression name)
+  `(eval ,(format #f "(load ~s)" (program name))))
+
+(define-test "traps: breakpoints at source lines"
+  (run-repl
+   (list (load-expression "procs.scm")
+         (request '(wake #f) 'add-source-trap (program "procs.scm") 2)
+         (request '(wake #f) 'add-source-trap (program "procs.scm") 3)
+         (request '(wake #f) 'add-source-trap (program "procs.scm") 5)
+         '(eval "(sum-of-squares 3 4)")
+         (checkpoint "pauses at line 5 first"
+                     (lambda () (equal? (top-frame-line) 5))
+                     '(continue #f))
+         (checkpoint "then at line 2, in square"
+                     (lambda () (and (equal? (top-frame-line) 2)
+                                     (string-prefix? "(square" (top-frame-call))))
+                     '(continue #f))
+         (checkpoint "and at line 2 again, for the second call"
+                     (lambda () (equal? (top-frame-line) 2))
+                     '(continue #f))
+         '(quit 0)))
+  (check "reports the breakpoint"
+         (output-contains? "Breakpoint at procs.scm:2"))
+  (check "a line with no code is reported"
+         (output-contains? "No code is loaded at procs.scm:3 yet"))
+  (check "the expression finishes" (output-contains? "→ 25")))
+
+(define-test "traps: a breakpoint set on the paused line"
+  (run-repl
+   (list '(run #f)
+         (request '(continue #f) 'add-source-trap (program "break.scm") 6)
+         '(run #f)
+         (checkpoint "the new breakpoint fires on the next run"
+                     (lambda () (equal? (top-frame-line) 6))
+                     '(stop #f))
+         '(quit 0))
+   (program "break.scm"))
+  (check "continuing does not stop again on the same line"
+         (output-order? "Break at break.scm:6" "four"
+                        "Breakpoint at break.scm:6, at break.scm:6")))
+
+(define-test "traps: a breakpoint set before its code is loaded"
+  (run-repl
+   (list (request '(run #f) 'add-source-trap (program "pending.scm") 10)
+         (checkpoint "the program breaks at line 8"
+                     (lambda () (equal? (top-frame-line) 8))
+                     '(continue #f))
+         (checkpoint "then the breakpoint fires, once its code is loaded"
+                     (lambda () (equal? (top-frame-line) 10))
+                     '(stop #f))
+         '(quit 0))
+   (program "pending.scm"))
+  (check "the breakpoint is pending at first"
+         (output-contains? "No code is loaded at pending.scm:10 yet")))
+
+(define-test "traps: disable, enable, and delete"
+  (define (first-trap) (car (list-traps)))
+  (run-repl
+   (list (load-expression "procs.scm")
+         (request '(wake #f) 'add-proc-trap-by-name "(guile-user)" "square")
+         (lambda ()
+           (push-request! (list 'disable-trap (first-trap)))
+           '(eval "(square 2)"))
+         (lambda ()
+           (push-request! (list 'enable-trap (first-trap)))
+           '(eval "(square 3)"))
+         (checkpoint "an enabled trap fires"
+                     (lambda () (equal? (top-frame-call) "(square\n  3)"))
+                     '(continue #f))
+         (lambda ()
+           (push-request! (list 'delete-trap (first-trap)))
+           '(eval "(square 4)"))
+         (checkpoint "deleted traps are gone"
+                     (lambda () (null? (list-traps)))
+                     '(quit 0))))
+  (check "a disabled trap does not fire" (output-contains? "→ 4"))
+  (check "the trap fires once" (= 1 (count (lambda (e) (equal? e '(mode trap)))
+                                           *events*)))
+  (check "a deleted trap does not fire" (output-contains? "→ 16")))
+
+(define-test "modules: list modules and their procedures"
+  (run-repl
+   (list (load-expression "procs.scm")
+         (request '(wake #f) 'module-procedures "(guile-user)")
+         '(quit 0)))
+  (check "the module list is sent"
+         (and (last-module-list)
+              (member "(guile-user)"
+                      (map (lambda (m) (vector-ref m 0))
+                           (vector->list (last-module-list))))))
+  (let* ((procs (or (module-procedures "(guile-user)") #()))
+         (square (find (lambda (p) (string=? (vector-ref p 0) "square"))
+                       (vector->list procs))))
+    (check "procedures are listed with their source"
+           (and square
+                (string-suffix? "procs.scm" (vector-ref square 1))
+                (= 1 (vector-ref square 2))
+                (vector-ref square 3)))))
+
+(define-test "pause: pause a running program, inspect, and continue"
+  (run-repl
+   (list (lambda ()
+           (after-delay 0.5 request-pause!)
+           '(run #f))
+         (checkpoint "pauses in the program"
+                     (lambda () (string-suffix? "loop.scm" (top-frame-file)))
+                     ;; Which locals are available depends on where
+                     ;; the interrupt lands, so don't rely on them.
+                     '(eval "(procedure? tick)"))
+         (lambda ()
+           (after-delay 0.5 request-stop!)
+           '(continue #f))
+         '(quit 0))
+   (program "loop.scm"))
+  (check "reports the pause" (output-contains? "Paused at loop.scm"))
+  (check "expressions can be evaluated while paused"
+         (output-contains? "→ #t"))
+  (check "continues, then stops"
+         (output-order? "Paused at" "Stopped.")))
+
+(define-test "eval: local variables of the paused frame"
+  (run-repl
+   (list '(run #f)
+         '(eval "(+ sum product)")
+         '(eval "(define from-break 'yes)")
+         (request '(eval "(list 'outer)") 'select-frame 1)
+         '(run #f)
+         '(eval "from-break")
+         '(quit 0))
+   (program "locals.scm"))
+  (check "locals are in scope" (output-contains? "→ 19"))
+  (check "frames can be selected"
+         (output-contains? "Expressions are now evaluated in frame 1"))
+  (check "definitions are made at the top level"
+         (output-contains? "→ yes"))
+  (check "the program finishes" (output-contains? "(7 12)")))
+
+(define-test "eval: local variables in error mode"
+  (run-repl
+   (list '(run #f)
+         '(eval "(* x 10)")
+         '(stop #f)
+         '(quit 0))
+   (program "error.scm"))
+  (check "the erring frame's locals are in scope"
+         (output-contains? "→ 50")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

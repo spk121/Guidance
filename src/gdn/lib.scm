@@ -22,11 +22,19 @@
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-43)
+  #:use-module (system vm debug)
   #:use-module (system vm frame)
   #:use-module (system vm program)
+  #:use-module (system vm traps)
+  #:use-module (system vm vm)
   #:export (gdn-error-frames
             gdn-frame-frames
             guile-internal-frame?
+            gdn-loaded-modules
+            gdn-module-list
+            gdn-module-procedures
+            gdn-trap-at-line
+            gdn-loaded-code-at-line?
             gdn-get-backtrace
             gdn-get-environment))
 
@@ -47,8 +55,12 @@
          (any (lambda (prefix) (string-prefix? prefix file))
               %guile-source-prefixes))))
 
+;; Backtraces show at most this many frames, innermost first, so that
+;; deep recursion doesn't make them enormous.
+(define %max-backtrace-frames 500)
+
 (define (stack->frame-list stack)
-  (let loop ((i (1- (stack-length stack)))
+  (let loop ((i (1- (min (stack-length stack) %max-backtrace-frames)))
              (frames '()))
     (if (< i 0)
         frames
@@ -110,6 +122,253 @@ since it may be the subject of a trap."
                            outer)
                     '()
                     outer))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; MODULES AND PROCEDURES
+
+(define (absolute-source-file file)
+  "Guile records the source files of its own libraries relative to the
+load path.  Returns FILE as an absolute path if it can be found, or
+else FILE itself."
+  (cond
+   ((not (string? file)) #f)
+   ((absolute-file-name? file) file)
+   ((%search-load-path file) => identity)
+   (else file)))
+
+(define (gdn-loaded-modules)
+  "Returns the loaded modules, except Guidance's own, sorted by name."
+  ;; Guile has no documented way to list the loaded modules.  Walking
+  ;; the module tree from the root with `module-submodules' is how
+  ;; Guile's own (system xref) finds them.
+  (let ((seen (make-hash-table)))
+    (let loop ((pending (list (resolve-module '() #f)))
+               (modules '()))
+      (if (null? pending)
+          (sort modules
+                (lambda (a b)
+                  (string<? (object->string (module-name a))
+                            (object->string (module-name b)))))
+          (let* ((m (car pending))
+                 (subs (filter (lambda (sub)
+                                 (and (not (hashq-ref seen sub))
+                                      (hashq-set! seen sub #t)))
+                               (hash-map->list (lambda (k v) v)
+                                               (module-submodules m)))))
+            (loop (append subs (cdr pending))
+                  (if (and (eq? (module-kind m) 'directory)
+                           (pair? (module-name m))
+                           (not (eq? (car (module-name m)) 'gdn)))
+                      (cons m modules)
+                      modules)))))))
+
+(define (gdn-module-list)
+  "Returns a vector with an entry #(NAME FILE) for each loaded module.
+NAME is the module name as a string, like \"(ice-9 format)\".  FILE is
+the absolute path of its source, or \"\" if it is not known."
+  (list->vector
+   (map (lambda (m)
+          (vector (object->string (module-name m))
+                  (or (absolute-source-file (module-filename m)) "")))
+        (gdn-loaded-modules))))
+
+(define (procedure-location proc)
+  "Returns two values: the absolute source file of PROC and its 1-based
+line, or #f and 0 if they are unknown."
+  (let ((sources (if (program? proc) (program-sources proc) '())))
+    (if (pair? sources)
+        (let ((source (car sources)))     ; (ip file line . column)
+          (values (absolute-source-file (cadr source))
+                  (1+ (caddr source))))
+        (values #f 0))))
+
+(define (gdn-module-procedures module-name-string)
+  "Returns a vector with an entry #(NAME FILE LINE TRAPPABLE?) for each
+procedure defined in the module named by MODULE-NAME-STRING, sorted by
+name.  FILE is an absolute path, or \"\" if it is unknown, in which case
+LINE is 0.  Only compiled procedures are TRAPPABLE?."
+  (let* ((name (false-if-exception
+                (call-with-input-string module-name-string read)))
+         (module (and (list? name)
+                      (resolve-module name #f #f #:ensure #f)))
+         (entries '()))
+    (when module
+      (module-for-each
+       (lambda (sym var)
+         (when (variable-bound? var)
+           (let ((value (variable-ref var)))
+             (when (procedure? value)
+               (call-with-values (lambda () (procedure-location value))
+                 (lambda (file line)
+                   (set! entries
+                     (cons (vector (symbol->string sym)
+                                   (or file "")
+                                   line
+                                   (program? value))
+                           entries))))))))
+       module))
+    (list->vector
+     (sort entries (lambda (a b) (string<? (vector-ref a 0)
+                                           (vector-ref b 0)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; BREAKPOINTS AT SOURCE LINES
+
+;; Guile's add-trap-at-source-location! finds procedures through
+;; (system xref), whose index is not updated for top-level definitions
+;; made by `load', and it only covers code loaded when the trap is
+;; made.  Guidance's line traps instead attach themselves to each
+;; procedure with code at the line: to those already loaded when the
+;; trap is made, and to any other when it is first called.  So a
+;; breakpoint can be set before its code is loaded, and survives the
+;; program being loaded again.
+
+(define (same-source-file? recorded file)
+  (and (string? recorded)
+       (or (string=? recorded file)
+           (equal? (absolute-source-file recorded) file))))
+
+(define (code-extent code)
+  "Returns the start and end addresses of the procedure whose code
+includes the address CODE, or #f and #f."
+  (let ((info (find-program-debug-info code)))
+    (if info
+        (values (program-debug-info-addr info)
+                (+ (program-debug-info-addr info)
+                   (program-debug-info-size info)))
+        (values #f #f))))
+
+(define (code-line-ranges code file line)
+  "Returns the instruction ranges, as a list of absolute (START . END)
+pairs, of the code at LINE of FILE in the procedure whose code begins
+at CODE.  LINE is 0-based.  Returns '() if the procedure has no code
+at LINE.  (Lines with no code are not moved to the next line with
+code: procedures nest, so the next line may belong to another.)"
+  (call-with-values (lambda () (code-extent code))
+    (lambda (start end)
+      (let* ((sources (if start (find-program-sources start) '()))
+             ;; Each entry is (LINE START . END), for the sources in FILE.
+             (entries
+              (let loop ((sources sources) (acc '()))
+                (if (null? sources)
+                    acc
+                    (let* ((source (car sources))
+                           (next (if (pair? (cdr sources))
+                                     (source-post-pc (cadr sources))
+                                     end)))
+                      (loop (cdr sources)
+                            (if (same-source-file? (source-file source) file)
+                                (cons (cons* (source-line source)
+                                             (source-post-pc source)
+                                             next)
+                                      acc)
+                                acc)))))))
+        (map cdr (filter (lambda (e) (= (car e) line)) entries))))))
+
+(define (procedures-at-line file line)
+  "Returns a list of (CODE . RANGES) for the compiled procedures in the
+loaded modules that have code at LINE (0-based) of FILE, where CODE is
+the address of the procedure's code."
+  (let ((seen (make-hash-table)))
+    (append-map
+     (lambda (module)
+       (let ((found '()))
+         (module-for-each
+          (lambda (sym var)
+            (when (variable-bound? var)
+              (let ((value (variable-ref var)))
+                (when (and (program? value)
+                           (not (hashv-ref seen (program-code value))))
+                  (let* ((code (program-code value))
+                         (ranges (code-line-ranges code file line)))
+                    (hashv-set! seen code #t)
+                    (when (pair? ranges)
+                      (set! found (cons (cons code ranges) found))))))))
+          module)
+         found))
+     (gdn-loaded-modules))))
+
+(define (gdn-loaded-code-at-line? file user-line)
+  "True if a loaded procedure has code at USER-LINE (1-based) of FILE."
+  (pair? (procedures-at-line file (1- user-line))))
+
+(define (ip-in-ranges? ip ranges)
+  (any (lambda (range) (and (<= (car range) ip) (< ip (cdr range))))
+       ranges))
+
+(define (code-range-trap code ranges handler current-frame)
+  "An enabled low-level trap calling HANDLER when execution enters
+RANGES in the procedure whose code begins at CODE."
+  (call-with-values (lambda () (code-extent code))
+    (lambda (start end)
+      (trap-at-procedure-ip-in-range
+       ;; The procedure itself is only needed to recognize its frames,
+       ;; which OUR-FRAME? does from the code's addresses instead.
+       identity ranges handler
+       #:current-frame current-frame
+       #:our-frame? (lambda (frame)
+                      (let ((ip (frame-instruction-pointer frame)))
+                        (and (<= start ip) (< ip end))))))))
+
+(define* (gdn-trap-at-line file user-line handler #:optional (current-frames '()))
+  "Creates an enabled low-level trap that calls HANDLER with the frame
+whenever execution reaches USER-LINE (1-based) of FILE, an absolute
+path.
+
+CURRENT-FRAMES are the frames of a paused program.  Those already at
+the line will return into it when the program resumes; that is not
+reaching the line, so their first hit is ignored."
+  (define line (1- user-line))
+  (define (enable current-frames)
+    (let ((subtraps '())
+          (covered (make-hash-table))    ; code address -> #t
+          (seen (make-hash-table))       ; entry address -> #t
+          (already-there #f))
+      (define (line-handler frame)
+        (let ((address (frame-address frame)))
+          (if (memv address already-there)
+              (set! already-there (delv address already-there))
+              (handler frame))))
+      (define (attach! code ranges current-frame)
+        (hashv-set! covered code #t)
+        (set! subtraps
+          (cons (code-range-trap code ranges line-handler current-frame)
+                subtraps)))
+      ;; Attach to procedures as they are called.
+      (define (apply-hook frame)
+        (let ((ip (frame-instruction-pointer frame)))
+          (unless (hashv-ref seen ip)
+            (hashv-set! seen ip #t)
+            (call-with-values (lambda () (code-extent ip))
+              (lambda (start end)
+                (when (and start (not (hashv-ref covered start)))
+                  (let ((ranges (code-line-ranges start file line)))
+                    (if (pair? ranges)
+                        (attach! start ranges frame)
+                        (hashv-set! covered start #t)))))))))
+      ;; Attach to the procedures already loaded.
+      (let ((loaded (procedures-at-line file line)))
+        (set! already-there
+          (filter-map (lambda (frame)
+                        (and (ip-in-ranges? (frame-instruction-pointer frame)
+                                            (append-map cdr loaded))
+                             (frame-address frame)))
+                      current-frames))
+        (for-each (lambda (match) (attach! (car match) (cdr match) #f))
+                  loaded))
+      (vm-add-apply-hook! apply-hook)
+      ;; The trap interface: calling it disables the trap and returns
+      ;; a procedure that enables it again.
+      (lambda* (#:optional frame)
+        ;; Guile's procedure traps need a frame when disabled inside
+        ;; their procedure, which is the case if the program was
+        ;; stopped there; trap-state doesn't pass one.
+        (let ((frame (or frame (stack-ref (make-stack #t) 0))))
+          (vm-remove-apply-hook! apply-hook)
+          (for-each (lambda (trap) (trap frame)) subtraps))
+        (lambda* (#:optional frame)
+          (enable '())))))
+  (enable current-frames))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; BACKTRACE

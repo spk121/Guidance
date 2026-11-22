@@ -20,7 +20,7 @@
 #include "guidance-lisp.h"
 #include "guidance-backtrace-view.h"
 #include "guidance-environment-view.h"
-#include "guidance-module-info.h"
+#include "guidance-module-view.h"
 #include "guidance-resources.h"
 #include "guidance-source-view.h"
 #include "guidance-thread-view.h"
@@ -65,12 +65,21 @@ struct _GdnLisp
 
   GAsyncQueue *user_input_queue; /* of GdnLispUserInput */
   GAsyncQueue *request_queue;    /* of GC-protected SCM requests */
-  gint         stop_requested;   /* Atomic: the operator pressed Stop */
+  gint         interrupt;        /* Atomic GdnLispInterrupt */
+  gint         running;          /* Atomic: a program is running */
 
   SCM default_thread; /* The Guile thread running the REPL */
 };
 
 G_DEFINE_TYPE (GdnLisp, gdn_lisp, G_TYPE_OBJECT)
+
+/* What the operator asked a running program to do. */
+typedef enum
+{
+  GDN_LISP_INTERRUPT_NONE = 0,
+  GDN_LISP_INTERRUPT_STOP,
+  GDN_LISP_INTERRUPT_PAUSE
+} GdnLispInterrupt;
 
 enum
 {
@@ -86,7 +95,8 @@ enum
 static unsigned signals[N_SIGNALS];
 static SCM      scm_lisp_type;
 static SCM      async_poll_proc = SCM_BOOL_F;
-static SCM      add_proc_trap_sym;
+static SCM      stop_sym;
+static SCM      pause_sym;
 
 static SCM command_syms[GDN_LISP_N_COMMANDS];
 
@@ -115,11 +125,11 @@ gdn_gui_guile_init (G_GNUC_UNUSED void *user_data)
   gdn_application_window_guile_init ();
   gdn_backtrace_view_guile_init ();
   gdn_environment_view_guile_init ();
-  gdn_module_info_guile_init ();
   gdn_source_view_guile_init ();
   gdn_thread_view_guile_init ();
   gdn_trap_info_guile_init ();
   gdn_trap_view_guile_init ();
+  gdn_module_view_guile_init ();
 }
 
 static void
@@ -189,7 +199,8 @@ gdn_lisp_init (GdnLisp *self)
 
   self->user_input_queue = g_async_queue_new ();
   self->request_queue = g_async_queue_new ();
-  self->stop_requested = 0;
+  self->interrupt = GDN_LISP_INTERRUPT_NONE;
+  self->running = FALSE;
 
   /* A couple of the garbage collection hooks use the c_hook interface. */
   scm_c_hook_add (&scm_after_gc_c_hook, after_gc_handler, self, 0);
@@ -300,15 +311,28 @@ gdn_lisp_set_user_response (GdnLisp *self, GdnLispCommand cmd, const void *data)
   g_async_queue_push (self->user_input_queue, input);
 }
 
-/* GTK THREAD: Queues a request for the REPL thread, which is a Scheme
- * list such as (add-proc-trap PROC).  Traps belong to the thread that
- * sets them, so they must be set in the REPL thread. */
-static void
-push_request (GdnLisp *self, SCM request, gboolean running)
+void
+gdn_lisp_set_running (GdnLisp *self, gboolean running)
 {
+  g_atomic_int_set (&self->running, running);
+}
+
+gboolean
+gdn_lisp_is_running (GdnLisp *self)
+{
+  return g_atomic_int_get (&self->running);
+}
+
+/* GTK THREAD: Queues a request for the REPL thread, which is a Scheme
+ * list such as (delete-trap 3). */
+static void
+push_request (GdnLisp *self, SCM request)
+{
+  g_assert (GDN_IS_LISP (self));
+
   g_async_queue_push (self->request_queue,
                       SCM_TO_GPOINTER (scm_gc_protect_object (request)));
-  if (running)
+  if (gdn_lisp_is_running (self))
     /* The program is running, so the REPL isn't waiting for input.
      * Interrupt it. */
     mark_async_poll (self);
@@ -317,11 +341,58 @@ push_request (GdnLisp *self, SCM request, gboolean running)
     gdn_lisp_set_user_response (self, GDN_LISP_COMMAND_WAKE, NULL);
 }
 
-void
-gdn_lisp_add_proc_trap (GdnLisp *self, SCM proc, gboolean running)
+static SCM
+sym (const char *name)
 {
-  g_assert (GDN_IS_LISP (self));
-  push_request (self, scm_list_2 (add_proc_trap_sym, proc), running);
+  return scm_from_utf8_symbol (name);
+}
+
+static SCM
+str (const char *s)
+{
+  return scm_from_utf8_string (s);
+}
+
+void
+gdn_lisp_request_proc_trap (GdnLisp *   self,
+                            const char *module_name,
+                            const char *symbol)
+{
+  push_request (self, scm_list_3 (sym ("add-proc-trap-by-name"),
+                                  str (module_name), str (symbol)));
+}
+
+void
+gdn_lisp_request_source_trap (GdnLisp *self, const char *file, int line)
+{
+  push_request (self, scm_list_3 (sym ("add-source-trap"), str (file),
+                                  scm_from_int (line)));
+}
+
+void
+gdn_lisp_request_trap_enabled (GdnLisp *self, int index, gboolean enable)
+{
+  push_request (self, scm_list_2 (sym (enable ? "enable-trap" : "disable-trap"),
+                                  scm_from_int (index)));
+}
+
+void
+gdn_lisp_request_trap_delete (GdnLisp *self, int index)
+{
+  push_request (self, scm_list_2 (sym ("delete-trap"), scm_from_int (index)));
+}
+
+void
+gdn_lisp_request_module_procedures (GdnLisp *self, const char *module_name)
+{
+  push_request (self,
+                scm_list_2 (sym ("module-procedures"), str (module_name)));
+}
+
+void
+gdn_lisp_request_select_frame (GdnLisp *self, int index)
+{
+  push_request (self, scm_list_2 (sym ("select-frame"), scm_from_int (index)));
 }
 
 void
@@ -329,9 +400,22 @@ gdn_lisp_stop_async (GdnLisp *self)
 {
   g_assert (GDN_IS_LISP (self));
 
-  /* The flag guards against a late async stopping a later program:
-   * the REPL clears it whenever it starts running something. */
-  g_atomic_int_set (&self->stop_requested, 1);
+  /* The flag guards against a late async interrupting a later program:
+   * the REPL clears it whenever it starts running something.  Stop
+   * overrides a pending pause. */
+  g_atomic_int_set (&self->interrupt, GDN_LISP_INTERRUPT_STOP);
+  mark_async_poll (self);
+}
+
+void
+gdn_lisp_pause_async (GdnLisp *self)
+{
+  g_assert (GDN_IS_LISP (self));
+
+  /* A pending stop is not downgraded to a pause. */
+  g_atomic_int_compare_and_exchange (&self->interrupt,
+                                     GDN_LISP_INTERRUPT_NONE,
+                                     GDN_LISP_INTERRUPT_PAUSE);
   mark_async_poll (self);
 }
 
@@ -573,24 +657,32 @@ scm_take_requests_x (SCM s_self)
   return scm_reverse_x (requests, SCM_EOL);
 }
 
-/* GUILE THREAD: Returns #t, once, if the operator asked to stop. */
+/* GUILE THREAD: Returns, once, the symbol stop or pause if the operator
+ * asked to stop or pause the program, or #f. */
 static SCM
-scm_take_stop_request_x (SCM s_self)
+scm_take_interrupt_request_x (SCM s_self)
 {
   scm_assert_foreign_object_type (scm_lisp_type, s_self);
 
   GdnLisp *self = scm_foreign_object_ref (s_self, 0);
-  return scm_from_bool (
-      g_atomic_int_compare_and_exchange (&self->stop_requested, 1, 0));
+  switch (g_atomic_int_exchange (&self->interrupt, GDN_LISP_INTERRUPT_NONE))
+    {
+    case GDN_LISP_INTERRUPT_STOP:
+      return stop_sym;
+    case GDN_LISP_INTERRUPT_PAUSE:
+      return pause_sym;
+    default:
+      return SCM_BOOL_F;
+    }
 }
 
 static SCM
-scm_clear_stop_request_x (SCM s_self)
+scm_clear_interrupt_request_x (SCM s_self)
 {
   scm_assert_foreign_object_type (scm_lisp_type, s_self);
 
   GdnLisp *self = scm_foreign_object_ref (s_self, 0);
-  g_atomic_int_set (&self->stop_requested, 0);
+  g_atomic_int_set (&self->interrupt, GDN_LISP_INTERRUPT_NONE);
   return SCM_UNSPECIFIED;
 }
 
@@ -616,16 +708,18 @@ gdn_lisp_guile_init (void)
   command_syms[GDN_LISP_COMMAND_STOP] = scm_from_utf8_symbol ("stop");
   command_syms[GDN_LISP_COMMAND_EVAL] = scm_from_utf8_symbol ("eval");
   command_syms[GDN_LISP_COMMAND_WAKE] = scm_from_utf8_symbol ("wake");
-  add_proc_trap_sym = scm_from_utf8_symbol ("add-proc-trap");
+  stop_sym = scm_from_utf8_symbol ("stop");
+  pause_sym = scm_from_utf8_symbol ("pause");
 
   scm_c_define_gsubr ("gdn-get-user-input", 1, 0, 0,
                       (scm_t_subr) scm_get_user_input);
   scm_c_define_gsubr ("gdn-take-requests!", 1, 0, 0,
                       (scm_t_subr) scm_take_requests_x);
-  scm_c_define_gsubr ("gdn-take-stop-request!", 1, 0, 0,
-                      (scm_t_subr) scm_take_stop_request_x);
-  scm_c_define_gsubr ("gdn-clear-stop-request!", 1, 0, 0,
-                      (scm_t_subr) scm_clear_stop_request_x);
+  scm_c_define_gsubr ("gdn-take-interrupt-request!", 1, 0, 0,
+                      (scm_t_subr) scm_take_interrupt_request_x);
+  scm_c_define_gsubr ("gdn-clear-interrupt-request!", 1, 0, 0,
+                      (scm_t_subr) scm_clear_interrupt_request_x);
   scm_c_export ("gdn-get-user-input", "gdn-take-requests!",
-                "gdn-take-stop-request!", "gdn-clear-stop-request!", NULL);
+                "gdn-take-interrupt-request!", "gdn-clear-interrupt-request!",
+                NULL);
 }

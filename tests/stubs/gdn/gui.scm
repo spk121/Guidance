@@ -20,17 +20,22 @@
   #:use-module (srfi srfi-43)
   #:export (gdn-get-user-input
             gdn-take-requests!
-            gdn-take-stop-request!
-            gdn-clear-stop-request!
+            gdn-take-interrupt-request!
+            gdn-clear-interrupt-request!
             gdn-set-input-mode!
             gdn-update-backtrace!
             gdn-update-environments!
             gdn-update-traps!
             gdn-update-threads!
+            gdn-update-modules!
+            gdn-set-module-procedures!
             ;; Test controls
             set-input-script!
             push-request!
             request-stop!
+            request-pause!
+            module-procedures
+            last-module-list
             events
             clear-events!
             last-backtrace))
@@ -38,7 +43,13 @@
 (define *mutex* (make-mutex))
 (define *script* '())
 (define *requests* '())
-(define *stop-requested* #f)
+(define *interrupt* #f)
+(define *module-procedures* (make-hash-table))
+(define *last-module-list* #f)
+
+(define (last-module-list)
+  "The module list most recently sent by the REPL."
+  *last-module-list*)
 (define *events* '())
 (define *last-backtrace* #f)
 
@@ -63,7 +74,14 @@
   (with-mutex *mutex* (set! *requests* (append *requests* (list request)))))
 
 (define (request-stop!)
-  (set! *stop-requested* #t))
+  (set! *interrupt* 'stop))
+
+(define (request-pause!)
+  (set! *interrupt* 'pause))
+
+(define (module-procedures name)
+  "The procedure list most recently sent for the module NAME."
+  (hash-ref *module-procedures* name))
 
 ;; Primitives used by (gdn repl)
 
@@ -83,13 +101,13 @@
       (set! *requests* '())
       requests)))
 
-(define (gdn-take-stop-request! lisp)
-  (let ((requested *stop-requested*))
-    (set! *stop-requested* #f)
+(define (gdn-take-interrupt-request! lisp)
+  (let ((requested *interrupt*))
+    (set! *interrupt* #f)
     requested))
 
-(define (gdn-clear-stop-request! lisp)
-  (set! *stop-requested* #f))
+(define (gdn-clear-interrupt-request! lisp)
+  (set! *interrupt* #f))
 
 (define (gdn-set-input-mode! window mode)
   (log! 'mode mode))
@@ -121,3 +139,27 @@
 
 (define (gdn-update-threads! view)
   #t)
+
+(define (gdn-update-modules! view modules)
+  (vector-for-each
+   (lambda (i entry)
+     (unless (and (vector? entry) (= 2 (vector-length entry))
+                  (string? (vector-ref entry 0))
+                  (string? (vector-ref entry 1)))
+       (error "Malformed module entry" entry)))
+   modules)
+  (set! *last-module-list* modules)
+  (log! 'modules (vector-length modules)))
+
+(define (gdn-set-module-procedures! view name procedures)
+  (vector-for-each
+   (lambda (i entry)
+     (unless (and (vector? entry) (= 4 (vector-length entry))
+                  (string? (vector-ref entry 0))
+                  (string? (vector-ref entry 1))
+                  (integer? (vector-ref entry 2))
+                  (boolean? (vector-ref entry 3)))
+       (error "Malformed procedure entry" entry)))
+   procedures)
+  (hash-set! *module-procedures* name procedures)
+  (log! 'module-procedures name))

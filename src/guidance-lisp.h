@@ -74,12 +74,27 @@ void gdn_lisp_set_user_response (GdnLisp *      self,
                                  GdnLispCommand cmd,
                                  const void *   data);
 
-/* GTK THREAD: Asks the REPL to add a trap at a call to PROC.  If the
- * program is RUNNING, the request is delivered asynchronously;
- * otherwise it is handled while the REPL waits for input. */
-void gdn_lisp_add_proc_trap (GdnLisp *self, SCM proc, gboolean running);
+/* GUILE THREAD: Tells the interpreter whether a program is running,
+ * which decides how requests are delivered: asynchronously while a
+ * program runs, or while the REPL waits for input otherwise. */
+void gdn_lisp_set_running (GdnLisp *self, gboolean running);
+gboolean gdn_lisp_is_running (GdnLisp *self);
+
+/* GTK THREAD: Requests to the REPL.  Traps belong to the REPL thread,
+ * so they are always set there.  See process-request in (gdn repl). */
+void gdn_lisp_request_proc_trap (GdnLisp *   self,
+                                 const char *module_name,
+                                 const char *symbol);
+void gdn_lisp_request_source_trap (GdnLisp *self, const char *file, int line);
+void gdn_lisp_request_trap_enabled (GdnLisp *self, int index, gboolean enable);
+void gdn_lisp_request_trap_delete (GdnLisp *self, int index);
+void gdn_lisp_request_module_procedures (GdnLisp *self, const char *module_name);
+void gdn_lisp_request_select_frame (GdnLisp *self, int index);
 
 /* GTK THREAD: Asks the REPL to stop the running program. */
 void gdn_lisp_stop_async (GdnLisp *self);
+
+/* GTK THREAD: Asks the REPL to pause the running program. */
+void gdn_lisp_pause_async (GdnLisp *self);
 
 G_END_DECLS

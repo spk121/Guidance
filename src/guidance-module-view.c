@@ -18,8 +18,7 @@
 
 #include "guidance-module-view.h"
 #include "guidance-module-info.h"
-#include <glib-unix.h>
-
+#include "guidance-xgtk.h"
 
 struct _GdnModuleView
 {
@@ -28,7 +27,7 @@ struct _GdnModuleView
   GtkScrolledWindow *scrolled_window;
   GtkListView *      list_view;
 
-  GListStore *      store;
+  GListStore *      store; /* of GdnModuleInfo for modules */
   GtkTreeListModel *model;
 };
 
@@ -38,72 +37,60 @@ enum
 {
   TRAP = 0,
   LOCATION,
+  EXPAND,
   N_SIGNALS
 };
 
-typedef struct _GdnModuleViewAndListItem
-{
-  GdnModuleView *view;
-  GtkListItem *  item;
-} GdnModuleViewAndListItem;
-
-
-////////////////////////////////////////////////////////////////
-// DECLARATIONS
-////////////////////////////////////////////////////////////////
-
 static unsigned signals[N_SIGNALS];
+static SCM      scm_module_view_type;
 
-static void entry_setup (GtkListItemFactory *factory,
-                         GtkListItem *       list_item,
-                         void *              user_data);
-static void entry_bind (GtkListItemFactory *factory,
-                        GtkListItem *       list_item,
-                        void *              user_data);
-static void entry_unbind (GtkListItemFactory *factory,
-                          GtkListItem *       list_item,
-                          void *              user_data);
-
-static void module_open_activate (GtkButton *button, gpointer user_data);
-static void procedure_open_activate (GtkButton *button, gpointer user_data);
-static void procedure_trap_activate (GtkButton *button, gpointer user_data);
-static void mvli_free (GdnModuleViewAndListItem *mvli, GClosure *closure);
-
-static int module_info_compare (const void *a, const void *b, void *user_data);
-
-static SCM scm_module_view_type;
-static SCM add_binding_key_value_proc;
-static SCM module_name_proc;
-static SCM module_filename_proc;
-static SCM module_obarray_proc;
+static GListModel *create_child_model (gpointer item, gpointer user_data);
+static void        entry_setup (GtkSignalListItemFactory *factory,
+                                GtkListItem *             list_item,
+                                gpointer                  user_data);
+static void        entry_bind (GtkSignalListItemFactory *factory,
+                               GtkListItem *             list_item,
+                               gpointer                  user_data);
+static void        entry_unbind (GtkSignalListItemFactory *factory,
+                                 GtkListItem *             list_item,
+                                 gpointer                  user_data);
 
 ////////////////////////////////////////////////////////////////
 // INITIALIZATION
 ////////////////////////////////////////////////////////////////
 
 static void
+gdn_module_view_dispose (GObject *object)
+{
+  GdnModuleView *self = GDN_MODULE_VIEW (object);
+  g_clear_object (&self->model);
+  g_clear_object (&self->store);
+  G_OBJECT_CLASS (gdn_module_view_parent_class)->dispose (object);
+}
+
+static void
 gdn_module_view_class_init (GdnModuleViewClass *klass)
 {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+  G_OBJECT_CLASS (klass)->dispose = gdn_module_view_dispose;
 
   gtk_widget_class_set_template_from_resource (
       widget_class, "/com/lonelycactus/Guidance/gtk/module-view.ui");
+  gtk_widget_class_bind_template_child (widget_class, GdnModuleView,
+                                        scrolled_window);
+  gtk_widget_class_bind_template_child (widget_class, GdnModuleView,
+                                        list_view);
 
-#define BIND(x)                                                                \
-  gtk_widget_class_bind_template_child (widget_class, GdnModuleView, x)
-
-  BIND (scrolled_window);
-  BIND (list_view);
-#undef BIND
-
-  signals[TRAP] =
-      g_signal_new ("trap", G_TYPE_FROM_CLASS (klass),
-                    G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0, NULL, NULL,
-                    NULL, G_TYPE_NONE, 1, G_TYPE_UINT64);
+  signals[TRAP] = g_signal_new ("trap", G_TYPE_FROM_CLASS (klass),
+                                G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
   signals[LOCATION] = g_signal_new ("location", G_TYPE_FROM_CLASS (klass),
-                                    G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0,
-                                    NULL, NULL, NULL, G_TYPE_NONE, 3,
-                                    G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
+                                    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                    G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_INT,
+                                    G_TYPE_INT);
+  signals[EXPAND] = g_signal_new ("expand", G_TYPE_FROM_CLASS (klass),
+                                  G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                  G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void
@@ -115,308 +102,295 @@ gdn_module_view_init (GdnModuleView *self)
 
   self->store = g_list_store_new (GDN_MODULE_INFO_TYPE);
   self->model = gtk_tree_list_model_new (
-      G_LIST_MODEL (self->store), FALSE, FALSE,
-      (GtkTreeListModelCreateModelFunc) gdn_module_info_get_child_model, NULL,
-      NULL);
+      G_LIST_MODEL (g_object_ref (self->store)), FALSE, FALSE,
+      create_child_model, self, NULL);
 
-  GtkNoSelection *nosel_model =
-      gtk_no_selection_new (G_LIST_MODEL (self->model));
-  gtk_list_view_set_model (self->list_view, GTK_SELECTION_MODEL (nosel_model));
+  gtk_list_view_set_model (
+      self->list_view,
+      GTK_SELECTION_MODEL (gtk_no_selection_new (
+          G_LIST_MODEL (g_object_ref (self->model)))));
 
   factory = gtk_signal_list_item_factory_new ();
-  g_signal_connect (factory, "setup", G_CALLBACK (entry_setup), NULL);
-  g_signal_connect (factory, "bind", G_CALLBACK (entry_bind), NULL);
-  g_signal_connect (factory, "unbind", G_CALLBACK (entry_unbind), NULL);
+  g_signal_connect (factory, "setup", G_CALLBACK (entry_setup), self);
+  g_signal_connect (factory, "bind", G_CALLBACK (entry_bind), self);
+  g_signal_connect (factory, "unbind", G_CALLBACK (entry_unbind), self);
   gtk_list_view_set_factory (self->list_view, factory);
+  g_object_unref (factory);
 }
 
 ////////////////////////////////////////////////////////////////
 // SIGNAL HANDLERS
 ////////////////////////////////////////////////////////////////
 
-static void
-module_open_activate (GtkButton *self, gpointer user_data)
+/* A GtkTreeListModelCreateModelFunc.  Modules have their procedures as
+ * children.  GTK calls this as soon as a row is shown, to learn whether
+ * it can be expanded, so the procedures are not requested here but
+ * when the row is expanded; see row_expanded. */
+static GListModel *
+create_child_model (gpointer item, G_GNUC_UNUSED gpointer user_data)
 {
-  g_assert (self != NULL);
+  GdnModuleInfo *info = GDN_MODULE_INFO (item);
 
-  GdnModuleViewAndListItem *mvli = (GdnModuleViewAndListItem *) user_data;
-  GdnModuleInfo *           info = GDN_MODULE_INFO (mvli->item);
-  char *         path = gdn_module_info_get_abs_path (info);
-  g_signal_emit (mvli->view, signals[LOCATION], 0, g_strdup (path), 0, 0);
-  free (path);
+  if (!gdn_module_info_is_module (info))
+    return NULL;
+  return G_LIST_MODEL (g_object_ref (gdn_module_info_get_children (info)));
 }
 
+/* Requests a module's procedures each time its row is expanded, so
+ * that new definitions appear. */
 static void
-procedure_open_activate (GtkButton *self, gpointer user_data)
+row_expanded (GtkTreeListRow *row, G_GNUC_UNUSED GParamSpec *pspec,
+              gpointer user_data)
 {
-  g_assert (self != NULL);
-  g_assert (user_data != NULL);
-
-  g_debug ("activate procedure open");
-}
-
-static void
-procedure_trap_activate (GtkButton *self, gpointer user_data)
-{
-  g_assert (self != NULL);
-  g_assert (user_data != NULL);
-
-  g_debug ("activate procedure trap");
-  GdnModuleInfo *info = GDN_MODULE_INFO (user_data);
-
-  // FIXME: add a confirmation dialog
-  SCM proc = gdn_module_info_get_procedure (info);
-  if (scm_is_true (scm_procedure_p (proc)))
-    g_signal_emit (self, signals[TRAP], 0, SCM_UNPACK (proc));
-}
-
-static void
-entry_setup (GtkListItemFactory *factory,
-             GtkListItem *       list_item,
-             gpointer            user_data)
-{
-  GtkTreeExpander *expander;
-  GtkLabel *   label;
-  GtkBox *         box;
-  GtkButton *      button;
-
-  g_assert (factory != NULL);
-  g_assert (user_data == NULL);
-
-  expander = GTK_TREE_EXPANDER (gtk_tree_expander_new ());
-  gtk_list_item_set_child (list_item, GTK_WIDGET (expander));
-
-  box = GTK_BOX (gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10));
-  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), GTK_WIDGET (box));
-
-  label = GTK_LABEL (gtk_label_new (NULL));
-  gtk_widget_set_margin_start (GTK_WIDGET (label), 5);
-  gtk_widget_set_margin_end (GTK_WIDGET (label), 5);
-  gtk_widget_set_size_request (GTK_WIDGET (label), 173, -1);
-  gtk_label_set_xalign (label, 0.0);
-  gtk_box_append (box, GTK_WIDGET (label));
-
-  button = GTK_BUTTON (gtk_button_new_from_icon_name ("document-open"));
-  gtk_box_append (box, GTK_WIDGET (button));
-
-  button = GTK_BUTTON (gtk_button_new_from_icon_name ("process-stop"));
-  gtk_box_append (box, GTK_WIDGET (button));
-}
-
-static void
-entry_bind (GtkListItemFactory *factory,
-            GtkListItem *       list_item,
-            gpointer            user_data)
-{
-  GtkTreeListRow * list_row;
-  GObject *        item;
   GdnModuleInfo *info;
-  GtkTreeExpander *expander;
-  GtkBox *         box;
-  GtkLabel *       label;
-  GtkButton *      open_button, *trap_button;
 
-  g_assert (factory != NULL);
-  GdnModuleView *self = user_data;
+  if (!gtk_tree_list_row_get_expanded (row))
+    return;
+  info = GDN_MODULE_INFO (gtk_tree_list_row_get_item (row));
+  if (gdn_module_info_is_module (info))
+    g_signal_emit (user_data, signals[EXPAND], 0,
+                   gdn_module_info_get_module_name (info));
+  g_object_unref (info);
+}
 
-  list_row = gtk_list_item_get_item (list_item);
-  item = gtk_tree_list_row_get_item (list_row);
-  info = GDN_MODULE_INFO (item);
+static GdnModuleInfo *
+list_item_get_info (GtkListItem *list_item)
+{
+  GtkTreeListRow *row = gtk_list_item_get_item (list_item);
+  if (row == NULL)
+    return NULL;
+  return GDN_MODULE_INFO (gtk_tree_list_row_get_item (row));
+}
 
-  expander = GTK_TREE_EXPANDER (gtk_list_item_get_child (list_item));
-  gtk_tree_expander_set_list_row (expander, list_row);
-  box = GTK_BOX (gtk_tree_expander_get_child (expander));
-  label = GTK_LABEL (gtk_widget_get_first_child (GTK_WIDGET (box)));
-  open_button = GTK_BUTTON (gtk_widget_get_next_sibling (GTK_WIDGET (label)));
-  gtk_button_set_has_frame (open_button, FALSE);
-  trap_button =
-      GTK_BUTTON (gtk_widget_get_next_sibling (GTK_WIDGET (open_button)));
-  gtk_button_set_has_frame (trap_button, FALSE);
+static void
+open_clicked (GtkButton *button, gpointer user_data)
+{
+  GtkListItem *  list_item = user_data;
+  GdnModuleView *self =
+      GDN_MODULE_VIEW (g_object_get_data (G_OBJECT (button), "view"));
+  GdnModuleInfo *info = list_item_get_info (list_item);
 
-  gtk_label_set_label (GTK_LABEL (label), gdn_module_info_get_name (info));
-  gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
+  if (info != NULL && gdn_module_info_get_file (info) != NULL)
+    g_signal_emit (self, signals[LOCATION], 0, gdn_module_info_get_file (info),
+                   MAX (gdn_module_info_get_line (info), 1), 0);
+  g_clear_object (&info);
+}
 
+static void
+trap_clicked (GtkButton *button, gpointer user_data)
+{
+  GtkListItem *  list_item = user_data;
+  GdnModuleView *self =
+      GDN_MODULE_VIEW (g_object_get_data (G_OBJECT (button), "view"));
+  GdnModuleInfo *info = list_item_get_info (list_item);
+
+  if (info != NULL && gdn_module_info_get_trappable (info))
+    g_signal_emit (self, signals[TRAP], 0,
+                   gdn_module_info_get_module_name (info),
+                   gdn_module_info_get_name (info));
+  g_clear_object (&info);
+}
+
+static void
+entry_setup (G_GNUC_UNUSED GtkSignalListItemFactory *factory,
+             GtkListItem *                           list_item,
+             gpointer                                user_data)
+{
+  GtkWidget *expander = gtk_tree_expander_new ();
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+  GtkWidget *label = gtk_label_new (NULL);
+  GtkWidget *open_button = gtk_button_new_from_icon_name ("document-open");
+  GtkWidget *trap_button = gtk_button_new_from_icon_name ("media-record");
+
+  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
+  gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
+  gtk_widget_set_hexpand (label, TRUE);
+  gtk_widget_set_size_request (label, 200, -1);
+  gtk_box_append (GTK_BOX (box), label);
+
+  gtk_button_set_has_frame (GTK_BUTTON (open_button), FALSE);
+  gtk_widget_set_tooltip_text (open_button, "Show the source");
+  g_object_set_data (G_OBJECT (open_button), "view", user_data);
+  g_signal_connect (open_button, "clicked", G_CALLBACK (open_clicked),
+                    list_item);
+  gtk_box_append (GTK_BOX (box), open_button);
+
+  gtk_button_set_has_frame (GTK_BUTTON (trap_button), FALSE);
+  gtk_widget_set_tooltip_text (trap_button, "Pause when this is called");
+  g_object_set_data (G_OBJECT (trap_button), "view", user_data);
+  g_signal_connect (trap_button, "clicked", G_CALLBACK (trap_clicked),
+                    list_item);
+  gtk_box_append (GTK_BOX (box), trap_button);
+
+  gtk_tree_expander_set_child (GTK_TREE_EXPANDER (expander), box);
+  gtk_list_item_set_child (list_item, expander);
+}
+
+static void
+entry_unbind (G_GNUC_UNUSED GtkSignalListItemFactory *factory,
+              GtkListItem *                           list_item,
+              G_GNUC_UNUSED gpointer                  user_data)
+{
+  GtkTreeListRow *row = gtk_list_item_get_item (list_item);
+  gulong          id = GPOINTER_TO_SIZE (
+      g_object_get_data (G_OBJECT (list_item), "expanded-handler"));
+
+  if (id != 0 && row != NULL)
+    g_signal_handler_disconnect (row, id);
+  g_object_set_data (G_OBJECT (list_item), "expanded-handler", NULL);
+}
+
+static void
+entry_bind (G_GNUC_UNUSED GtkSignalListItemFactory *factory,
+            GtkListItem *                           list_item,
+            gpointer                                user_data)
+{
+  GtkTreeListRow * row = gtk_list_item_get_item (list_item);
+  GtkTreeExpander *expander =
+      GTK_TREE_EXPANDER (gtk_list_item_get_child (list_item));
+  GtkWidget *    box = gtk_tree_expander_get_child (expander);
+  GtkWidget *    label = gtk_widget_get_first_child (box);
+  GtkWidget *    open_button = gtk_widget_get_next_sibling (label);
+  GtkWidget *    trap_button = gtk_widget_get_next_sibling (open_button);
+  GdnModuleInfo *info = list_item_get_info (list_item);
+
+  gtk_tree_expander_set_list_row (expander, row);
   if (gdn_module_info_is_module (info))
     {
-      gtk_widget_set_visible (GTK_WIDGET (open_button), TRUE);
-      gtk_widget_set_visible (GTK_WIDGET (trap_button), FALSE);
-      GdnModuleViewAndListItem *mvli = g_new0 (GdnModuleViewAndListItem, 1);
-      mvli->view = g_object_ref (self);
-      mvli->item = g_object_ref (list_item);
-      g_signal_connect_data (open_button, "clicked",
-                             G_CALLBACK (module_open_activate), mvli,
-                             (GClosureNotify) mvli_free, G_CONNECT_AFTER);
+      gulong id = g_signal_connect (row, "notify::expanded",
+                                    G_CALLBACK (row_expanded), user_data);
+      g_object_set_data (G_OBJECT (list_item), "expanded-handler",
+                         GSIZE_TO_POINTER (id));
     }
-  else if (gdn_module_info_is_procedure (info))
-    {
-      gtk_widget_set_visible (GTK_WIDGET (open_button), TRUE);
-      gtk_widget_set_visible (GTK_WIDGET (trap_button), TRUE);
-      g_signal_connect (open_button, "clicked",
-                        G_CALLBACK (procedure_open_activate), info);
-      g_signal_connect (trap_button, "clicked",
-                        G_CALLBACK (procedure_trap_activate), info);
-    }
-  else
-    g_return_if_reached ();
-}
-
-static void
-entry_unbind (G_GNUC_UNUSED GtkListItemFactory *factory,
-              GtkListItem *                     list_item,
-              G_GNUC_UNUSED gpointer            user_data)
-{
-  g_assert (factory != NULL);
-  g_assert (list_item != NULL);
-  g_assert (user_data == NULL);
-#if 0
-  GtkButton *button;
-  GtkLabel * label;
-  GObject *  obj;
-
-  GtkTreeListRow *list_row;
-  GtkWidget *     expander;
-  GtkWidget *     label;
-
-  list_row = gtk_list_item_get_item (list_item);
-  expander = gtk_list_item_get_child (list_item);
-  label = gtk_tree_expander_get_child (GTK_TREE_EXPANDER (expander));
-  gtk_label_set_label (GTK_LABEL (label), "");
-
-  button = GTK_BUTTON (gtk_list_item_get_child (list_item));
-  label = gtk_button_get_child (button);
-  gtk_label_set_text (label, "");
-#endif
-}
-
-////////////////////////////////////////////////////////////////
-// HELPER FUNCTIONS
-////////////////////////////////////////////////////////////////
-
-static void
-mvli_free (GdnModuleViewAndListItem *mvli, G_GNUC_UNUSED GClosure *closure)
-{
-  g_object_unref (mvli->view);
-  mvli->view = NULL;
-  g_object_unref (mvli->item);
-  mvli->item = NULL;
-  free (mvli);
-}
-
-/* A GCompareDataFunc that comparestwo GdnModuleInfo by their name. */
-static int
-module_info_compare (const void *a, const void *b, void *user_data)
-{
-  g_assert (user_data == NULL);
-  GdnModuleInfo *entry_a = GDN_MODULE_INFO ((gpointer) a);
-  GdnModuleInfo *entry_b = GDN_MODULE_INFO ((gpointer) b);
-  return strcmp (gdn_module_info_get_name (entry_a),
-                 gdn_module_info_get_name (entry_b));
-}
-
-static int
-module_info_eq (const void *a, const void *b)
-{
-  GdnModuleInfo *entry_a = GDN_MODULE_INFO ((gpointer) a);
-  GdnModuleInfo *entry_b = GDN_MODULE_INFO ((gpointer) b);
-  return strcmp (gdn_module_info_get_name (entry_a),
-                 gdn_module_info_get_name (entry_b)) == 0;
+  gtk_label_set_text (GTK_LABEL (label), gdn_module_info_get_name (info));
+  gtk_widget_set_visible (open_button,
+                          gdn_module_info_get_file (info) != NULL);
+  gtk_widget_set_visible (trap_button, gdn_module_info_get_trappable (info));
+  g_object_unref (info);
 }
 
 ////////////////////////////////////////////////////////////////
 // GUILE API
 ////////////////////////////////////////////////////////////////
-static GListStore *_inner_store = NULL;
 
-/* This procedure is an internal procedure used when creating a
- * GListStore of top-level procedures from an SCM module. This
- * unfortunate proc is a work-around because of having to use
- * scm_hash_for_each. */
-static SCM
-scm_add_binding_key_value (SCM key, SCM value)
+SCM
+gdn_module_view_to_scm (GdnModuleView *self)
 {
-  GdnModuleInfo *info;
-  char *         str;
+  g_assert (GDN_IS_MODULE_VIEW (self));
+  return scm_make_foreign_object_1 (scm_module_view_type, self);
+}
 
-  info = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
-  gdn_module_info_set_module (info, value);
-  str = scm_to_utf8_string (scm_symbol_to_string (key));
-  gdn_module_info_set_name (info, str);
-  free (str);
+static char *
+vector_string_ref (SCM vec, size_t i)
+{
+  return scm_to_utf8_string (scm_c_vector_ref (vec, i));
+}
 
-  g_list_store_insert_sorted (_inner_store, info, module_info_compare, NULL);
+/* GUILE THREAD: (gdn-update-modules! view modules), where MODULES is a
+ * vector of #(NAME FILE).  Replaces the module list. */
+static SCM
+scm_update_modules_x (SCM s_self, SCM modules)
+{
+  scm_assert_foreign_object_type (scm_module_view_type, s_self);
+  SCM_ASSERT_TYPE (scm_is_vector (modules), modules, SCM_ARG2,
+                   "gdn-update-modules!", "vector");
 
+  GdnModuleView *self = scm_foreign_object_ref (s_self, 0);
+  size_t         len = scm_c_vector_length (modules);
+  GPtrArray *    items = g_ptr_array_new_full (len, g_object_unref);
+
+  for (size_t i = 0; i < len; i++)
+    {
+      SCM   entry = scm_c_vector_ref (modules, i);
+      char *name = vector_string_ref (entry, 0);
+      char *file = vector_string_ref (entry, 1);
+      g_ptr_array_add (items, gdn_module_info_new_module (name, file));
+      free (name);
+      free (file);
+    }
+  xgtk_list_store_replace_all_on_main (self->store, items);
   return SCM_UNSPECIFIED;
 }
 
-static SCM
-scm_module_name (SCM module)
+typedef struct
 {
-  return scm_call_1 (module_name_proc, module);
+  GdnModuleView *view;
+  char *         module_name;
+  GPtrArray *    procedures; /* of GdnModuleInfo */
+} ProcedureUpdate;
+
+static void
+procedure_update_free (gpointer data)
+{
+  ProcedureUpdate *u = data;
+  g_object_unref (u->view);
+  g_free (u->module_name);
+  g_ptr_array_unref (u->procedures);
+  g_free (u);
 }
 
-/* This Guile procedure, given a Guile #<directory> module entry,
- * updates the module info store. If an existing entry by this name
- * exists, it is replaced. Returns #t if store is modified. */
-static SCM
-scm_add_module_x (SCM s_self, SCM module)
+/* GTK THREAD: Fills in a module's procedures. */
+static gboolean
+apply_procedure_update (gpointer data)
 {
-  scm_assert_foreign_object_type (scm_module_view_type, s_self);
-  GdnModuleView *self = scm_foreign_object_ref (s_self, 0);
+  ProcedureUpdate *u = data;
+  GListModel *     modules = G_LIST_MODEL (u->view->store);
+  guint            n = g_list_model_get_n_items (modules);
 
-  SCM            symlist;
-  SCM            name;
-  char *         str;
-  GdnModuleInfo *entry, *found;
-  guint          position;
-  SCM            ret = SCM_BOOL_F;
-
-  symlist = scm_module_name (module);
-  name = scm_object_to_string (symlist, SCM_UNDEFINED);
-  str = scm_to_utf8_string (name);
-  entry = g_object_new (GDN_MODULE_INFO_TYPE, NULL);
-  gdn_module_info_set_name (entry, str);
-  free (str);
-  gdn_module_info_set_module (entry, module);
-
-  if (g_list_store_find_with_equal_func (self->store, entry, module_info_eq,
-                                         &position))
+  for (guint i = 0; i < n; i++)
     {
-      found = g_list_model_get_item (G_LIST_MODEL (self->store), position);
-      if (!scm_is_eq (gdn_module_info_get_module (found),
-                      gdn_module_info_get_module (entry)))
+      GdnModuleInfo *info = g_list_model_get_item (modules, i);
+      if (g_strcmp0 (gdn_module_info_get_module_name (info), u->module_name)
+          == 0)
         {
-          gdn_module_info_set_module (found,
-                                      gdn_module_info_get_module (entry));
-          g_list_model_items_changed (G_LIST_MODEL (self->store), position, 1,
-                                      1);
-          ret = SCM_BOOL_T;
+          GListStore *children = gdn_module_info_get_children (info);
+          g_list_store_splice (
+              children, 0, g_list_model_get_n_items (G_LIST_MODEL (children)),
+              u->procedures->pdata, u->procedures->len);
+          g_object_unref (info);
+          break;
         }
-      g_object_unref (entry);
+      g_object_unref (info);
     }
-  else
-    {
-      g_list_store_insert_sorted (self->store, entry, module_info_compare,
-                                  NULL);
-      ret = SCM_BOOL_T;
-    }
-
-  return ret;
+  return G_SOURCE_REMOVE;
 }
 
-/* This Guile procedure deletes all the entries in the module info
- * _STORE.  The return value is unspecified. */
+/* GUILE THREAD: (gdn-set-module-procedures! view module-name procs),
+ * where PROCS is a vector of #(NAME FILE LINE TRAPPABLE?). */
 static SCM
-scm_clear_modules_x (SCM s_self)
+scm_set_module_procedures_x (SCM s_self, SCM s_module_name, SCM procs)
 {
   scm_assert_foreign_object_type (scm_module_view_type, s_self);
-  GdnModuleView *self = scm_foreign_object_ref (s_self, 0);
+  SCM_ASSERT_TYPE (scm_is_string (s_module_name), s_module_name, SCM_ARG2,
+                   "gdn-set-module-procedures!", "string");
+  SCM_ASSERT_TYPE (scm_is_vector (procs), procs, SCM_ARG3,
+                   "gdn-set-module-procedures!", "vector");
 
-  g_list_store_remove_all (self->store);
+  ProcedureUpdate *u = g_new0 (ProcedureUpdate, 1);
+  char *           module_name = scm_to_utf8_string (s_module_name);
+  size_t           len = scm_c_vector_length (procs);
+
+  u->view = g_object_ref (scm_foreign_object_ref (s_self, 0));
+  u->module_name = g_strdup (module_name);
+  u->procedures = g_ptr_array_new_full (len, g_object_unref);
+  for (size_t i = 0; i < len; i++)
+    {
+      SCM   entry = scm_c_vector_ref (procs, i);
+      char *name = vector_string_ref (entry, 0);
+      char *file = vector_string_ref (entry, 1);
+      g_ptr_array_add (u->procedures,
+                       gdn_module_info_new_procedure (
+                           module_name, name, file,
+                           scm_to_int (scm_c_vector_ref (entry, 2)),
+                           scm_is_true (scm_c_vector_ref (entry, 3))));
+      free (name);
+      free (file);
+    }
+  free (module_name);
+  xgtk_invoke_on_main (apply_procedure_update, u, procedure_update_free);
   return SCM_UNSPECIFIED;
 }
 
-/* This procedure initializes the Guile API for the Module page of the
-   GUI. */
 void
 gdn_module_view_guile_init (void)
 {
@@ -426,17 +400,9 @@ gdn_module_view_guile_init (void)
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_module_view_type = scm_make_foreign_object_type (name, slots, NULL);
 
-  /* Guile functions used in this module. */
-  add_binding_key_value_proc =
-      scm_c_define_gsubr ("%gdn-add-binding-key-value", 2, 0, 0,
-                          (scm_t_subr) scm_add_binding_key_value);
-  module_filename_proc = scm_variable_ref (scm_c_lookup ("module-filename"));
-  module_name_proc = scm_variable_ref (scm_c_lookup ("module-name"));
-  module_obarray_proc = scm_variable_ref (scm_c_lookup ("module-obarray"));
-
-  /* The public API */
-  scm_c_define_gsubr ("gdn-add-module!", 2, 0, 0,
-                      (scm_t_subr) scm_add_module_x);
-  scm_c_define_gsubr ("gdn-clear-modules!", 1, 0, 0,
-                      (scm_t_subr) scm_clear_modules_x);
+  scm_c_define_gsubr ("gdn-update-modules!", 2, 0, 0,
+                      (scm_t_subr) scm_update_modules_x);
+  scm_c_define_gsubr ("gdn-set-module-procedures!", 3, 0, 0,
+                      (scm_t_subr) scm_set_module_procedures_x);
+  scm_c_export ("gdn-update-modules!", "gdn-set-module-procedures!", NULL);
 }

@@ -34,6 +34,15 @@ gboolean gdn_source_view_show_location (GdnSourceView *self,
                                         int            line,
                                         int            col);
 
+/* The file shown and the 1-based line of the cursor, if a file is
+ * shown.  FILE is owned by the view. */
+gboolean gdn_source_view_get_cursor_location (GdnSourceView *self,
+                                              const char **  file,
+                                              int *          line);
+
+/* Emits "breakpoint" (file, line) for the cursor's line. */
+void gdn_source_view_request_breakpoint (GdnSourceView *self);
+
 // GUILE API
 SCM  gdn_source_view_to_scm (GdnSourceView *self);
 void gdn_source_view_guile_init (void);

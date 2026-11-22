@@ -47,6 +47,8 @@ G_DEFINE_TYPE (GdnBacktraceView, gdn_backtrace_view, GTK_TYPE_BOX)
 enum
 {
   LOCATION = 0,
+  SELECT_FRAME,
+  TOP_FRAME,
   N_SIGNALS
 };
 
@@ -185,6 +187,15 @@ gdn_backtrace_view_class_init (GdnBacktraceViewClass *klass)
                                     G_SIGNAL_RUN_LAST | G_SIGNAL_NO_RECURSE, 0,
                                     NULL, NULL, NULL, G_TYPE_NONE, 3,
                                     G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
+  /* The operator chose a frame; its index, innermost first. */
+  signals[SELECT_FRAME] = g_signal_new ("select-frame", G_TYPE_FROM_CLASS (klass),
+                                        G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                        G_TYPE_NONE, 1, G_TYPE_INT);
+  /* A new backtrace arrived; the innermost frame's location. */
+  signals[TOP_FRAME] = g_signal_new ("top-frame", G_TYPE_FROM_CLASS (klass),
+                                     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                                     G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_INT,
+                                     G_TYPE_INT);
 }
 
 static void
@@ -232,6 +243,8 @@ frame_button_clicked (G_GNUC_UNUSED GtkButton *button, gpointer user_data)
   GdnFrameInfo *info = gtk_list_item_get_item (bvli->item);
   g_assert_cmpuint (G_OBJECT_TYPE (info), ==, GDN_FRAME_INFO_TYPE);
   show_bindings (self, info);
+  g_signal_emit (self, signals[SELECT_FRAME], 0,
+                 (int) gtk_list_item_get_position (bvli->item));
 }
 
 /* This GtkButton::clicked handler */
@@ -266,7 +279,7 @@ frame_setup (G_GNUC_UNUSED GtkListItemFactory *factory,
   button = GTK_BUTTON (gtk_button_new_with_label (NULL));
   label = GTK_LABEL (gtk_button_get_child (button));
   gtk_label_set_xalign (label, 0);
-  gtk_label_set_width_chars (label, 30);
+  gtk_label_set_width_chars (label, 24);
   gtk_list_item_set_child (list_item, GTK_WIDGET (button));
 
   GdnBacktraceViewAndListItem *bvli;
@@ -346,13 +359,16 @@ location_bind (G_GNUC_UNUSED GtkListItemFactory *factory,
     {
 
       info = GDN_FRAME_INFO (obj);
-      if (gdn_frame_info_get_filename (info) != NULL)
+      const char *filename = gdn_frame_info_get_filename (info);
+      if (filename != NULL && *filename != '\0')
         {
-          location = g_strdup_printf (
-              "%s:%d:%d", gdn_frame_info_get_filename (info),
-              gdn_frame_info_get_line (info), gdn_frame_info_get_column (info));
+          char *base = g_path_get_basename (filename);
+          location = g_strdup_printf ("%s:%d", base,
+                                      gdn_frame_info_get_line (info));
           gtk_label_set_text (label, location);
+          gtk_widget_set_tooltip_text (GTK_WIDGET (label), filename);
           g_free (location);
+          g_free (base);
         }
       else
         {
@@ -625,6 +641,15 @@ apply_backtrace_update (gpointer user_data)
                        g_list_model_get_n_items (G_LIST_MODEL (self->frames)),
                        u->frames->pdata, u->frames->len);
   show_bindings (self, u->frames->len > 0 ? u->frames->pdata[0] : NULL);
+  if (u->frames->len > 0)
+    {
+      GdnFrameInfo *top = u->frames->pdata[0];
+      const char *  file = gdn_frame_info_get_filename (top);
+      if (file != NULL && *file != '\0')
+        g_signal_emit (self, signals[TOP_FRAME], 0, file,
+                       gdn_frame_info_get_line (top),
+                       gdn_frame_info_get_column (top));
+    }
   return G_SOURCE_REMOVE;
 }
 

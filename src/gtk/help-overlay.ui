@@ -23,6 +23,12 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
+                <property name="accelerator">F6</property>
+                <property name="title" translatable="yes">Pause</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
                 <property name="accelerator">F10</property>
                 <property name="title" translatable="yes">Step over</property>
               </object>
@@ -37,6 +43,12 @@
               <object class="GtkShortcutsShortcut">
                 <property name="accelerator">&lt;Shift&gt;F11</property>
                 <property name="title" translatable="yes">Step out</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="accelerator">F9</property>
+                <property name="title" translatable="yes">Set a breakpoint at the cursor's line on the Source page</property>
               </object>
             </child>
           </object>

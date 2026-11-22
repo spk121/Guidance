@@ -41,8 +41,9 @@
   #:use-module (gdn gui)
   #:use-module (gdn ports)
   #:use-module (gdn widgets)
-  #:use-module (ice-9 eval-string)
   #:use-module (ice-9 format)
+  #:use-module (srfi srfi-1)
+  #:use-module (system base compile)
   #:use-module (system vm frame)
   #:use-module (system vm program)
   #:use-module (system vm traps)
@@ -66,6 +67,18 @@
 
 ;; True while the program is paused in error mode or trap mode.
 (define *paused* (make-parameter #f))
+
+;; While paused, the frames of the program's stack, innermost first,
+;; and whether the first is the frame that is executing.
+(define *pause-frames* (make-parameter '()))
+(define *pause-top-frame?* (make-parameter #f))
+
+;; While paused, the index in *pause-frames* of the frame in which the
+;; operator's expressions are evaluated.  The GUI selects it.
+(define *selected-frame* 0)
+
+;; The module list most recently sent to the GUI.
+(define *last-module-list* #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HELPERS
@@ -105,20 +118,99 @@ values."
                 (newline)))
             return-vals))
 
+(define (read-all-from-string str)
+  (call-with-input-string str
+    (lambda (port)
+      (let loop ((forms '()))
+        (let ((form (read port)))
+          (if (eof-object? form)
+              (reverse forms)
+              (loop (cons form forms))))))))
+
+(define (definition? form)
+  (and (pair? form)
+       (memq (car form) '(define define-public define-syntax
+                          define-syntax-rule define-module use-modules
+                          define-record-type define-values))))
+
+(define (eval-form form)
+  "Compiles and runs FORM in the current module, returning its values.
+Definitions are compiled as they are, so that they are made at the top
+level; anything else is compiled as a thunk, so that all of its values
+are returned."
+  (if (definition? form)
+      (compile form #:env (current-module))
+      ((compile `(lambda () ,form) #:env (current-module)))))
+
+(define (eval-forms str)
+  "Compiles and runs the expressions in STR, one at a time, in the
+current module, as Guile's REPL does.  Returns the values of the last."
+  (let loop ((forms (read-all-from-string str)))
+    (cond
+     ((null? forms) *unspecified*)
+     ((null? (cdr forms)) (eval-form (car forms)))
+     (else
+      (eval-form (car forms))
+      (loop (cdr forms))))))
+
+(define (frame-locals frame top-frame?)
+  "Returns an alist of the named local variables of FRAME and their
+values.  If a name is bound more than once, the first binding is used."
+  (let loop ((bindings (or (false-if-exception
+                            (frame-bindings frame top-frame?))
+                           '()))
+             (locals '()))
+    (if (null? bindings)
+        (reverse locals)
+        (let* ((binding (car bindings))
+               (name (binding-name binding)))
+          (if (or (not name) (assq name locals))
+              (loop (cdr bindings) locals)
+              (let ((value (false-if-exception (binding-ref binding))))
+                (loop (cdr bindings) (acons name value locals))))))))
+
+(define (eval-in-frame str frame top-frame?)
+  "Evaluates the expressions in STR with the local variables of FRAME
+in scope.  The variables are copies: assigning to them does not change
+the program.  Definitions are evaluated at the top level instead."
+  (let ((forms (read-all-from-string str))
+        (locals (if frame (frame-locals frame top-frame?) '())))
+    (cond
+     ((null? forms) *unspecified*)
+     ((or (null? locals) (any definition? forms))
+      (eval-forms str))
+     (else
+      (apply (compile `(lambda ,(map car locals) ,@forms)
+                      #:env (current-module))
+             (map cdr locals))))))
+
 (define (eval-and-print str)
-  "Evaluates the expressions in STR and prints the results. Errors are
-reported, but do not change the mode."
-  (call-with-values
-      (lambda ()
-        (print-error-on-exception
-         (lambda () (eval-string str #:compile? #t))))
-    print-return-values))
+  "Evaluates the expressions in STR and prints the results.  While the
+program is paused, the local variables of the selected frame are in
+scope.  Errors are reported, but do not change the mode."
+  (let* ((frames (*pause-frames*))
+         (frame (and (< *selected-frame* (length frames))
+                     (list-ref frames *selected-frame*)))
+         (top? (and (*pause-top-frame?*) (zero? *selected-frame*))))
+    (call-with-values
+        (lambda ()
+          (print-error-on-exception
+           (lambda () (eval-in-frame str frame top?))))
+      print-return-values)))
+
+(define (refresh-modules!)
+  "Sends the module list to the GUI, if it has changed."
+  (let ((modules (gdn-module-list)))
+    (unless (equal? modules *last-module-list*)
+      (set! *last-module-list* modules)
+      (gdn-update-modules! *gdn-module-view* modules))))
 
 (define (refresh-views!)
   "Updates the information pages of the GUI."
   (gdn-update-environments! *gdn-environment-view* (gdn-get-environment))
   (gdn-update-traps! *gdn-trap-view* (list-traps))
-  (gdn-update-threads! *gdn-thread-view*))
+  (gdn-update-threads! *gdn-thread-view*)
+  (refresh-modules!))
 
 (define (enable-trap-hooks!)
   "Guile only checks traps when the VM trace level is positive.
@@ -131,13 +223,71 @@ Keep it positive while a program runs."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; REQUESTS FROM THE GUI
 
+(define (report-new-trap idx)
+  (format #t "~&Trap ~a: ~a~%" idx (trap-name idx)))
+
+(define (lookup-procedure module-name-string symbol-string)
+  "Returns the value of SYMBOL-STRING in the loaded module named by
+MODULE-NAME-STRING, or signals an error."
+  (let* ((name (call-with-input-string module-name-string read))
+         (module (and (list? name)
+                      (resolve-module name #f #f #:ensure #f))))
+    (unless module
+      (error "No such module" module-name-string))
+    (module-ref module (string->symbol symbol-string))))
+
+(define (add-source-trap! file line)
+  "Adds a trap at LINE (1-based) of FILE to the trap list."
+  (let* ((idx #f)
+         (trap (gdn-trap-at-line file line
+                                 (lambda (frame)
+                                   (trap-handler frame idx (trap-name idx)))
+                                 (if (*paused*) (*pause-frames*) '()))))
+    (set! idx (add-trap! trap (format #f "Breakpoint at ~a:~a"
+                                      (basename file) line)))
+    (unless (gdn-loaded-code-at-line? file line)
+      (format #t "~&No code is loaded at ~a:~a yet.  The breakpoint will \
+take effect if some is.~%" (basename file) line))
+    idx))
+
 (define (process-request request)
+  "Handles one request from the GUI.  A request is a list whose first
+element says what it is."
   (print-error-on-exception
    (lambda ()
      (case (car request)
+       ;; (add-proc-trap PROCEDURE)
        ((add-proc-trap)
-        (let ((idx (add-trap-at-procedure-call! (cadr request))))
-          (format #t "Trap ~a: ~a~%" idx (trap-name idx))))
+        (report-new-trap (add-trap-at-procedure-call! (cadr request))))
+       ;; (add-proc-trap-by-name MODULE-NAME SYMBOL), both strings
+       ((add-proc-trap-by-name)
+        (report-new-trap
+         (add-trap-at-procedure-call!
+          (lookup-procedure (cadr request) (caddr request)))))
+       ;; (add-source-trap FILE LINE)
+       ((add-source-trap)
+        (report-new-trap (add-source-trap! (cadr request) (caddr request))))
+       ;; (enable-trap INDEX) (disable-trap INDEX) (delete-trap INDEX)
+       ((enable-trap)
+        (unless (trap-enabled? (cadr request))
+          (enable-trap! (cadr request))))
+       ((disable-trap)
+        (when (trap-enabled? (cadr request))
+          (disable-trap! (cadr request))))
+       ((delete-trap)
+        (delete-trap! (cadr request)))
+       ;; (module-procedures MODULE-NAME)
+       ((module-procedures)
+        (gdn-set-module-procedures! *gdn-module-view* (cadr request)
+                                    (gdn-module-procedures (cadr request))))
+       ;; (select-frame INDEX): the frame for evaluating expressions
+       ((select-frame)
+        (let ((index (cadr request))
+              (frames (*pause-frames*)))
+          (when (and (*paused*) (< -1 index (length frames)))
+            (set! *selected-frame* index)
+            (format #t "~&Expressions are now evaluated in frame ~a, at ~a~%"
+                    index (frame-location (list-ref frames index))))))
        (else
         (format (current-error-port) "Unknown request ~s~%" request))))))
 
@@ -165,12 +315,19 @@ arrive in the meantime.  Returns a list (ACTION DATA)."
 
 (define (gdn-async-poll)
   "The GUI runs this asynchronously in the REPL thread while a program
-is running.  It handles queued requests, and stops the program if the
-operator asked for that."
-  (process-requests!)
-  (when (and (gdn-take-stop-request! *gdn-lisp*)
-             (*in-run*))
-    (abort-to-prompt %stop-tag)))
+is running.  It handles queued requests, and stops or pauses the
+program if the operator asked for that."
+  ;; Asyncs are blocked while handling requests, so that further polls
+  ;; wait their turn instead of running inside this one.
+  (call-with-blocked-asyncs process-requests!)
+  (case (gdn-take-interrupt-request! *gdn-lisp*)
+    ((stop)
+     (when (*in-run*)
+       (abort-to-prompt %stop-tag)))
+    ((pause)
+     (when (and (*in-run*) (not (*paused*)))
+       (pause-here)))
+    (else #t)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; RUN MODE
@@ -203,7 +360,7 @@ aborting to the stop prompt."
   "Runs THUNK in Run mode, with Guidance's error and trap handlers.
 Returns THUNK's values, or no values if it was stopped or raised an
 exception."
-  (gdn-clear-stop-request! *gdn-lisp*)
+  (gdn-clear-interrupt-request! *gdn-lisp*)
   (gdn-set-input-mode! *gdn-application-window* 'run)
   (call-with-prompt %stop-tag
     (lambda ()
@@ -255,8 +412,15 @@ program until they press Stop."
     (error-mode-loop key args)))
 
 (define (error-mode-loop key args)
+  (let ((frames (gdn-error-frames %stack-tag)))
+    (set! *selected-frame* 0)
+    (parameterize ((*pause-frames* frames)
+                   (*pause-top-frame?* #f))
+      (error-mode-interact key args frames))))
+
+(define (error-mode-interact key args frames)
   (print-exception-message (current-error-port) key args)
-  (gdn-update-backtrace! *gdn-backtrace-view* (gdn-error-frames %stack-tag))
+  (gdn-update-backtrace! *gdn-backtrace-view* frames)
   (format #t "~&Entering error mode.  The Backtrace page shows the stack.~%")
   (format #t "When ready, press the Stop button to return to the REPL.~%")
   (gdn-set-input-mode! *gdn-application-window* 'error)
@@ -355,14 +519,21 @@ it returns to.  With INTO?, also in procedures that FRAME calls."
                         (frame-location caller))
                 "step>"))))))
 
-(define (pause frame message prompt)
+(define* (pause frame message prompt #:key (top-frame? #t))
   "Pauses the program at FRAME and lets the operator inspect it, then
-continue, step, or stop."
-  (parameterize ((*paused* #t))
+continue, step, or stop.  TOP-FRAME? says whether FRAME is the frame
+that is executing, as it is when a trap fires."
+  (let ((frames (gdn-frame-frames frame %stack-tag)))
+    (set! *selected-frame* 0)
+    (parameterize ((*paused* #t)
+                   (*pause-frames* frames)
+                   (*pause-top-frame?* top-frame?))
+      (pause-interact frame frames message prompt))))
+
+(define (pause-interact frame frames message prompt)
+  (begin
     (format #t "~&~a~%" message)
-    (gdn-update-backtrace! *gdn-backtrace-view*
-                           (gdn-frame-frames frame %stack-tag)
-                           #t)
+    (gdn-update-backtrace! *gdn-backtrace-view* frames (*pause-top-frame?*))
     (gdn-set-input-mode! *gdn-application-window* 'trap)
     (let loop ()
       (refresh-views!)
@@ -402,6 +573,39 @@ frame of _break_, so pause in its caller."
     (pause caller (format #f "Break at ~a" (frame-location caller))
            "break>")))
 
+(define (pause-here)
+  "Pauses the program where it is, in response to the Pause button.
+This runs asynchronously, so the innermost frames are Guidance's; pause
+in the innermost frame of the program instead."
+  (define (program-frame? frame)
+    (let ((source (frame-source frame)))
+      (and source (source:file source)
+           (not (guile-internal-frame? frame)))))
+  (define (guidance-frame? frame)
+    (memq (frame-procedure-name frame) '(pause-here gdn-async-poll)))
+  ;; Walk outward from here, past Guidance's own frames, to the first
+  ;; frame of the program.  Programs can be deep, so look no further
+  ;; than needed.
+  (let* ((start (let loop ((frame (stack-ref (make-stack #t) 0)))
+                  (cond
+                   ((not frame) #f)
+                   ((guidance-frame? frame) (frame-previous frame))
+                   (else (loop (frame-previous frame))))))
+         (frame (let loop ((frame start) (n 0))
+                  (cond
+                   ((or (not frame) (> n 100)) #f)
+                   ((program-frame? frame) frame)
+                   (else (loop (frame-previous frame) (1+ n)))))))
+    (if (not frame)
+        (format #t "~&The program could not be paused here.~%")
+        ;; Unlike traps, this is not called from a VM hook, so turn
+        ;; off tracing while paused, and restore it afterwards.
+        (let ((saved-level (vm-trace-level)))
+          (set-vm-trace-level! 0)
+          (pause frame (format #f "Paused at ~a" (frame-location frame))
+                 "pause>" #:top-frame? #f)
+          (set-vm-trace-level! saved-level)))))
+
 (define (_break_)
   "Pauses the program in trap mode at the caller of _break_, when the
 program is run by Guidance.  Otherwise, does nothing."
@@ -436,7 +640,7 @@ command arrives.  Returns the exit status."
          (call-with-values
              (lambda ()
                (run-under-debugger
-                (lambda () (eval-string data #:compile? #t))))
+                (lambda () (eval-forms data))))
            print-return-values)
          (loop))
         (else

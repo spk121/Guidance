@@ -14,6 +14,7 @@
             *gdn-source-view*
             *gdn-thread-view*
             *gdn-trap-view*
+            *gdn-module-view*
             *gdn-lisp*))
 
 (define *gdn-application-window* 'application-window)
@@ -22,4 +23,5 @@
 (define *gdn-source-view* 'source-view)
 (define *gdn-thread-view* 'thread-view)
 (define *gdn-trap-view* 'trap-view)
+(define *gdn-module-view* 'module-view)
 (define *gdn-lisp* 'lisp)
