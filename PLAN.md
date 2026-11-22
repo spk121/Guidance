@@ -921,7 +921,7 @@ these" at the end of this phase.
       prompt's module and a program with clashing names, are now
       ordinary tests.
 
-- [ ] **Stepping changes what the program computes, when a
+- [x] **Stepping changes what the program computes, when a
       continuation is called.**  The fix for Step Into dealt with
       exceptions; full continuations still go wrong, and with Step
       Over as well.
@@ -974,6 +974,21 @@ these" at the end of this phase.
       this review; apart from the cases above, and the next item,
       Step Over and Step Into gave the same output as Guile for all of
       it.
+
+      Fixed: the guess about the abort hook was half right.  With Step
+      Over, the step paused from the instruction hook, at the first
+      instruction run after the continuation returned into the stepped
+      frame: in the middle of the expression that receives its value,
+      before it was received.  A step now pauses only at an instruction
+      where a source position begins.  With Step Into, the step paused
+      from the abort hook, in the frame the continuation escaped to.
+      That hook no longer pauses or looks anything up: the frames
+      outside the stepped one are looked up beforehand, while the
+      program is paused, and the hook only aims the step at the one that
+      was landed in, where it pauses at the next source position.  In
+      the GUI, `reenter.scm` is right six times of six with F10 and F11,
+      and the comparison program now matches Guile under Step Into as
+      well.  The GUI test and the two REPL tests are ordinary tests now.
 
 - [x] **Guidance writes its own messages to the program's ports.**
       "Break at ...", "Step to ...", the values of the operator's

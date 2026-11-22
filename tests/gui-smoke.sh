@@ -507,10 +507,6 @@ wait_for "Stopped." 2
 refute "Guile has exited"
 stop_app
 
-################################################################
-# Known failures: faults found by the review recorded in PLAN.md as
-# Phase 6, and not yet fixed.  See known_failure.
-
 # The values that reenter.scm displays: lines that are a number, or
 # an unspecified value where one should be.
 displayed_values () {
@@ -529,19 +525,22 @@ step_to_end () {
     done
 }
 
-# Stepping over a line that calls a continuation again does not change
-# the value it passes.
-step_over_continuation () {
+# Stepping through a line that calls a continuation again does not
+# change the value it passes.
+for step_key in F10 F11; do
     start "$PROGRAMS/reenter.scm"
     key F5
     wait_for "[prompt break>]"
-    step_to_end F10 "done"
+    step_to_end $step_key "done"
     values=$(displayed_values)
     [ "$values" = "1 10 20 " ] || fail "displayed $values, not 1 10 20"
+    echo "ok: 1 10 20 with $step_key"
     stop_app
-}
-known_failure "Phase 6, Stepping changes what the program computes" \
-              step_over_continuation
+done
+
+################################################################
+# Known failures: faults found by the review recorded in PLAN.md as
+# Phase 6, and not yet fixed.  See known_failure.
 
 # Error output of a subprocess started without a shell is shown.
 subprocess_error_output () {

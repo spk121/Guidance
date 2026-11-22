@@ -1284,10 +1284,11 @@ still leaves the value on a line of its own."
                 (equal? stepped straight))))
      '(step step-into step-instruction step-into-instruction))))
 
-;; In this test, with everything in one process, these two faults show
-;; only now and then.  The GUI test has them every time.
-(define-intermittent-failure "compare: a continuation called again, under steps"
-  "Phase 6, Stepping changes what the program computes"
+;; These went wrong when a step paused in the middle of the expression
+;; that receives the continuation's value.  In this test, with
+;; everything in one process, that showed only now and then; the GUI
+;; test has the first of them too, and had it every time.
+(define-test "compare: a continuation called again, under steps"
   (let ((expected '("1" "10" "20")))
     (check "run straight through, it prints 1, 10, 20"
            (equal? (values-when-stepped "reenter.scm" 'continue) expected))
@@ -1301,8 +1302,7 @@ still leaves the value on a line of its own."
                   (equal? stepped expected)))))
      '(step step-into))))
 
-(define-intermittent-failure "compare: leaving a loop by a continuation, under steps"
-  "Phase 6, Stepping changes what the program computes"
+(define-test "compare: leaving a loop by a continuation, under steps"
   (let ((expected '("3")))
     (check "run straight through, it prints 3"
            (equal? (values-when-stepped "escape.scm" 'continue) expected))

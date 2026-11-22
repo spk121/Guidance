@@ -1096,79 +1096,139 @@ whose code starts at START."
         (code-line-ranges start (source:file source) (source:line source))
         '())))
 
+(define (position-starts start)
+  "A table of the addresses at which a source position begins, in the
+procedure whose code starts at START."
+  (let ((table (make-hash-table)))
+    (for-each (lambda (source)
+                (hashv-set! table (source-post-pc source) #t))
+              (if start (find-program-sources start) '()))
+    table))
+
+;; How many of the frames outside the stepped one a step prepares to
+;; land in; see add-step-trap!.
+(define %step-landing-frames 30)
+
 (define (add-step-trap! frame into? expression?)
   "Pauses the program at the next line reached in FRAME, or, with
 EXPRESSION?, at the next source position, line and column.
 
-Steps pause at source positions rather than at machine instructions.
-In the middle of an expression, the VM can be part way through
-building an object: between the instruction that allocates a pair and
-those that fill it in, say.  Showing such an object, as the Backtrace
-page does, can crash Guile.  A new source position starts a new
-expression, whose predecessors are complete.  If FRAME returns, pauses in its
-caller, if that is the program's.  With INTO?, also pauses on entering
-a procedure of the program that FRAME calls, directly or through
-Guile's libraries.  Once the step leaves the program, it pauses at the
-first code of the program that runs again, if any; if the program ends
-first, it just ends.  Code in Guile's own libraries is skipped, unless
-FRAME is in it."
+Steps pause where a source position begins, never at an instruction
+in the middle of one.  In the middle of an expression, the VM can be
+part way through building an object: between the instruction that
+allocates a pair and those that fill it in, say.  Showing such an
+object, as the Backtrace page does, can crash Guile.  And it can be
+part way through delivering values: when a continuation is called,
+the frame it returns into resumes in the middle of an expression,
+with the continuation's values not yet received, and pausing there
+loses them.  Where a source position begins, its predecessors are
+complete.
+
+If FRAME returns, pauses in its caller, if that is the program's.
+With INTO?, also pauses on entering a procedure of the program that
+FRAME calls, directly or through Guile's libraries.  If a continuation
+or an exception takes the program to a frame outside FRAME, the step
+goes on in that frame.  Once the step leaves the program, it pauses at
+the first code of the program that runs again, if any; if the program
+ends first, it just ends.  Code in Guile's own libraries is skipped,
+unless FRAME is in it."
   (let* ((fp (frame-address frame))
          (internal? (guile-internal-frame? frame))
-         (in-frame? #t))
-    (call-with-values (lambda () (frame-code-extent frame))
-      (lambda (start end)
-        (let ((here (if expression?
-                        (current-position-range frame start end)
-                        (current-line-ranges frame start))))
-          (define (moved? ip)
-            (not (ip-in-ranges? ip here)))
-          (define (program? f)
-            (and f (step-frame? f internal?)))
-          (add-ephemeral-trap!
-           (lambda (handler)
-             (combine-traps
-              (list
-               ;; In the stepped frame: addresses only.
-               (trap-matching-instructions
-                (lambda (f)
-                  (and in-frame?
-                       start
-                       (= (frame-address f) fp)
-                       (let ((ip (frame-instruction-pointer f)))
-                         (and (<= start ip) (< ip end) (moved? ip)))))
-                handler)
-               ;; Entering a procedure: one that FRAME calls, with
-               ;; INTO?; one that replaces FRAME, by a tail call; or,
-               ;; once the step has left the program, any.
-               (hook-trap
-                vm-add-apply-hook! vm-remove-apply-hook!
-                (lambda (f)
-                  (when (and (or (not in-frame?)
-                                 (= (frame-address f) fp)
-                                 (and into? (> (frame-address f) fp)))
-                             (program? f))
-                    (handler f))))
-               ;; Returning: from FRAME, to its caller; or, once the
-               ;; step has left the program, from anything to the
-               ;; program.
-               (hook-trap
-                vm-add-return-hook! vm-remove-return-hook!
-                (lambda (f)
-                  (when (or (not in-frame?) (= (frame-address f) fp))
-                    (let ((caller (frame-previous f)))
-                      (if (program? caller)
-                          (handler caller #f)
-                          (set! in-frame? #f))))))
-               ;; An exception caught outside FRAME, or caught anywhere
-               ;; once the step has left the program.
-               (hook-trap
-                vm-add-abort-hook! vm-remove-abort-hook!
-                (lambda (f)
-                  (when (or (not in-frame?) (< (frame-address f) fp))
-                    (if (program? f)
-                        (handler f #f)
-                        (set! in-frame? #f))))))))
-           step-handler))))))
+         (in-frame? #t)
+         (start #f)
+         (end #f)
+         (starts #f)
+         ;; The instruction ranges of where the step began.
+         (here '())
+         ;; The frames outside FRAME that the step can land in, by
+         ;; address: each a vector #(START END STARTS).  They are looked
+         ;; up now, while the program is paused, because the abort hook
+         ;; must do no more than compare addresses.
+         (landings (make-hash-table)))
+    (define (program? f)
+      (and f (step-frame? f internal?)))
+    (define (look-up f)
+      (call-with-values (lambda () (frame-code-extent f))
+        (lambda (start end)
+          (vector start end (position-starts start)))))
+    (define (aim! address info)
+      (set! fp address)
+      (set! start (vector-ref info 0))
+      (set! end (vector-ref info 1))
+      (set! starts (vector-ref info 2)))
+    (aim! fp (look-up frame))
+    (set! here (if expression?
+                   (current-position-range frame start end)
+                   (current-line-ranges frame start)))
+    (let loop ((frames (*pause-frames*)) (n 0))
+      (when (and (pair? frames) (< n %step-landing-frames))
+        (let ((f (car frames)))
+          (cond
+           ((>= (frame-address f) fp)
+            (loop (cdr frames) n))
+           ((program? f)
+            (hashv-set! landings (frame-address f) (look-up f))
+            (loop (cdr frames) (1+ n)))
+           (else
+            (loop (cdr frames) n))))))
+    (add-ephemeral-trap!
+     (lambda (handler)
+       (combine-traps
+        (list
+         ;; In the stepped frame: addresses only.
+         (trap-matching-instructions
+          (lambda (f)
+            (and in-frame?
+                 start
+                 (= (frame-address f) fp)
+                 (let ((ip (frame-instruction-pointer f)))
+                   (and (<= start ip) (< ip end)
+                        (not (ip-in-ranges? ip here))
+                        (hashv-ref starts ip)))))
+          handler)
+         ;; Entering a procedure: one that FRAME calls, with
+         ;; INTO?; one that replaces FRAME, by a tail call; or,
+         ;; once the step has left the program, any.
+         (hook-trap
+          vm-add-apply-hook! vm-remove-apply-hook!
+          (lambda (f)
+            (when (and (or (not in-frame?)
+                           (= (frame-address f) fp)
+                           (and into? (> (frame-address f) fp)))
+                       (program? f))
+              (handler f))))
+         ;; Returning: from FRAME, to its caller; or, once the
+         ;; step has left the program, from anything to the
+         ;; program.
+         (hook-trap
+          vm-add-return-hook! vm-remove-return-hook!
+          (lambda (f)
+            (when (or (not in-frame?) (= (frame-address f) fp))
+              (let ((caller (frame-previous f)))
+                (if (program? caller)
+                    (handler caller #f)
+                    (set! in-frame? #f))))))
+         ;; A continuation called, or an exception caught, that takes
+         ;; the program to a frame outside FRAME.  The values on their
+         ;; way there have not arrived, so this must not pause, nor
+         ;; look anything up.  The step goes on in that frame instead,
+         ;; to the next source position that begins there; or, if the
+         ;; frame is not one that was prepared, until the program is
+         ;; next entered or returned to.
+         (hook-trap
+          vm-add-abort-hook! vm-remove-abort-hook!
+          (lambda (f)
+            (let ((address (frame-address f)))
+              (when (or (not in-frame?) (< address fp))
+                (let ((info (hashv-ref landings address)))
+                  (cond
+                   (info
+                    (aim! address info)
+                    (set! here '())
+                    (set! in-frame? #t))
+                   (else
+                    (set! in-frame? #f)))))))))))
+     step-handler)))
 
 (define (add-line-step-trap! frame into?)
   "Pauses the program at the next line; see add-step-trap!."
