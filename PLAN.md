@@ -58,9 +58,8 @@ sensitivity).  The other views correctly defer to the GTK thread with
 - `po/POTFILES` lists non-existent files.
 - `guidance-module-info.c` is listed twice in `src/meson.build`.
 - ASan/UBSan and `-fanalyzer` are forced on for every GCC build.
-- Flatpak manifest uses the EOL GNOME 40 runtime and a
-  `file:///home/mike/...` source; CI installs GTK 3 and targets
-  `master` only.
+- The CI workflow was out of date: it installed GTK 3, used an
+  end-of-life GNOME runtime, and ran only on `master`.
 
 Decisions (assumed; revisit if needed)
 --------------------------------------
@@ -200,6 +199,10 @@ Phase 3 notes:
 
 ### Phase 4: Packaging
 
-- [ ] Current GNOME runtime and Guile in the Flatpak manifest.
-- [ ] GitHub Actions on the current branch layout.
-- [ ] Refresh the Dockerfile.
+Dropped: Guidance is built from source with Meson.  The old CI
+workflow and its packaging manifests were removed, so there is no CI.
+
+- [ ] Optionally, a GitHub Actions workflow that builds Guidance and
+      runs `meson test`.
+- [ ] The Dockerfile and the README's Docker section: decide whether
+      to keep them.
