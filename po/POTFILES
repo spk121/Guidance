@@ -2,7 +2,5 @@ data/com.lonelycactus.Guidance.desktop.in
 data/com.lonelycactus.Guidance.appdata.xml.in
 data/com.lonelycactus.Guidance.gschema.xml
 src/gtk/guidance-window.ui
-src/main.c
-src/guidance-window.c
-src/scm/backtrace.scm
-
+src/gtk/help-overlay.ui
+src/gtk/menus.ui

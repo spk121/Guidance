@@ -115,7 +115,7 @@ static SCM  scm_get_user_input (SCM s_self);
 ////////////////////////////////////////////////////////////////
 
 static void
-gdn_gui_guile_init (void *user_data)
+gdn_gui_guile_init (G_GNUC_UNUSED void *user_data)
 {
   gdn_lisp_guile_init ();
   gdn_application_window_guile_init ();
@@ -174,7 +174,7 @@ gdn_lisp_class_init (GdnLispClass *klass)
   g_bytes_unref (contents);
 
   /* Provide GUI-related primitives */
-  SCM module = scm_c_define_module ("gdn gui", gdn_gui_guile_init, NULL);
+  scm_c_define_module ("gdn gui", gdn_gui_guile_init, NULL);
 }
 
 static void
@@ -549,7 +549,6 @@ SCM
 gdn_lisp_to_scm (GdnLisp *self)
 {
   SCM ret = scm_make_foreign_object_1 (scm_lisp_type, self);
-  printf ("gdn_lisp_to_scm(%p,%p) -> %p\n", scm_lisp_type, self, ret);
   return ret;
 }
 
@@ -664,7 +663,6 @@ gdn_lisp_guile_init (void)
   name = scm_from_utf8_symbol ("gdn-lisp");
   slots = scm_list_1 (scm_from_utf8_symbol ("data"));
   scm_lisp_type = scm_make_foreign_object_type (name, slots, NULL);
-  printf ("scm_lisp_type %p\n", scm_lisp_type);
 
   step_into_instruction_sym = scm_from_utf8_symbol ("step-into-instruction");
   step_into_sym = scm_from_utf8_symbol ("step-into");

@@ -5,3 +5,8 @@ data/com.lonelycactus.Guidance.desktop
 
 # Temp files
 *~
+
+# Build directories and objects
+/_build/
+/build/
+*.o

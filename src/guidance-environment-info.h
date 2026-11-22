@@ -40,9 +40,7 @@ GdnEnvironmentInfo *gdn_environment_info_new_from_scm (SCM info);
 const char *gdn_environment_info_get_key (GdnEnvironmentInfo *info);
 const char *gdn_environment_info_get_value (GdnEnvironmentInfo *info);
 GListStore *gdn_environment_info_get_child_model (GdnEnvironmentInfo *info);
-gboolean    gdn_environment_info_equal (GdnEnvironmentInfo *a,
-                                        GdnEnvironmentInfo *b);
-gint        gdn_environment_info_compare (GdnEnvironmentInfo *a,
-                                          GdnEnvironmentInfo *b);
+gboolean    gdn_environment_info_equal (gconstpointer a, gconstpointer b);
+gint        gdn_environment_info_compare (gconstpointer a, gconstpointer b);
 
 G_END_DECLS

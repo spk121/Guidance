@@ -240,7 +240,7 @@ get_child_model (GObject *item, G_GNUC_UNUSED gpointer user_data)
 }
 
 static gint
-compare (gconstpointer a, gconstpointer b, gpointer user_data)
+compare (gconstpointer a, gconstpointer b, G_GNUC_UNUSED gpointer user_data)
 {
   return gdn_environment_info_compare (a, b);
 }
@@ -279,7 +279,8 @@ update_store (gpointer user_data)
       if (found)
         {
           g_object_unref (info);
-          info = g_list_model_get_object (self->store, position);
+          info = GDN_ENVIRONMENT_INFO (
+              g_list_model_get_object (G_LIST_MODEL (self->store), position));
         }
       if (scm_is_vector (children))
         {

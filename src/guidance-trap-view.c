@@ -335,15 +335,17 @@ update_store (gpointer user_data)
   GdnTrapInfo **array;
 
   g_mutex_lock (&lock);
-  array = g_ptr_array_steal (self->temp_store, &len);
+  array = (GdnTrapInfo **) g_ptr_array_steal (self->temp_store, &len);
 
-  /* This operation adds a reference to each entry array. */
-  g_list_store_splice (self->store, 0, g_list_model_get_n_items (self->store),
-                       array, len);
+  /* This operation adds a reference to each entry in the array. */
+  g_list_store_splice (self->store, 0,
+                       g_list_model_get_n_items (G_LIST_MODEL (self->store)),
+                       (gpointer *) array, len);
 
-  /* So we can drop the original reference here. */
-  for (guint i = 0; i < len; i++)
-    g_object_unref (g_list_model_get_object (self->store, i));
+  /* So we can drop the temp store's original references here. */
+  for (gsize i = 0; i < len; i++)
+    g_object_unref (array[i]);
+  g_free (array);
   g_mutex_unlock (&lock);
 
   /* We only run this once. */

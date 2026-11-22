@@ -20,6 +20,7 @@
 (define-module (gdn lib)
   #:use-module (ice-9 i18n)
   #:use-module (ice-9 format)
+  #:use-module (srfi srfi-43)
   #:use-module (system vm frame)
   #:use-module (system vm program)
   #:export (gdn-get-backtrace
@@ -166,6 +167,13 @@
      (vector "Host Name" (gethostname))
      )))
 
+;; Lookups that can fail, e.g. in a container with no login session
+;; or when the UID has no passwd entry.  They return #f on failure.
+(define (safe-passwd id) (false-if-exception (getpw id)))
+(define (safe-group id) (false-if-exception (getgr id)))
+(define (passwd-field accessor pw) (if pw (accessor pw) #f))
+(define (group-field accessor gr) (if gr (accessor gr) #f))
+
 (define (get-process-information)
   (vector
    (vector "CWD" (getcwd))
@@ -174,13 +182,13 @@
    (vector "Groups" (format #f "~S" (getgroups)))
    (vector "PPID" (number->string (getppid)))
    (vector "UID" (number->string (getuid)))
-   (vector "UID Name" (passwd:name (getpwuid (getuid))))
+   (vector "UID Name" (passwd-field passwd:name (safe-passwd (getuid))))
    (vector "GID" (number->string (getgid)))
-   (vector "GID Name" (group:name (getgrgid (getgid))))
+   (vector "GID Name" (group-field group:name (safe-group (getgid))))
    (vector "EUID" (number->string (geteuid)))
-   (vector "EUID Name" (passwd:name (getpwuid (geteuid))))
+   (vector "EUID Name" (passwd-field passwd:name (safe-passwd (geteuid))))
    (vector "EGID" (number->string (getegid)))
-   (vector "EGID Name" (group:name (getgrgid (getegid))))
+   (vector "EGID Name" (group-field group:name (safe-group (getegid))))
    (vector "PGRP" (number->string (getpgrp)))
    (vector "Processor Count" (number->string (or (false-if-exception (total-processor-count)) 0)))
    (vector "Processors Used" (number->string (or (false-if-exception (current-processor-count)) 0)))
@@ -228,33 +236,32 @@
                                                   (exact->inexact internal-time-units-per-second)))))))
 
 (define (get-user-information-entries)
-  (let ((uid (getuid))
-        (euid (geteuid))
-        (gid (getgid))
-        (egid (getegid))
-        (login (getlogin)))
-    (let ((uid-pw (getpw uid))
-          (euid-pw (getpw euid))
-          (gid-gr (getgr gid))
-          (egid-gr (getgr egid)))
-      (vector
-       (vector "Login Name" login)
-       (vector "User Name" (passwd:name uid-pw))
-       (vector "User ID" (number->string (passwd:uid uid-pw)))
-       (vector "User Group ID" (number->string (passwd:gid uid-pw)))
-       (vector "User Full Name" (passwd:gecos uid-pw))
-       (vector "User Shell" (passwd:shell uid-pw))
-       (vector "User Home" (passwd:dir uid-pw))
-       (vector "Group Name" (group:name gid-gr))
-       (vector "Group ID" (number->string (group:gid gid-gr)))
-       (vector "Effective User Name" (passwd:name uid-pw))
-       (vector "Effective User ID" (number->string (passwd:uid uid-pw)))
-       (vector "Effective User Group ID" (number->string (passwd:gid uid-pw)))
-       (vector "Effective User Full Name" (passwd:gecos uid-pw))
-       (vector "Effective User Shell" (passwd:shell uid-pw))
-       (vector "Effective User Home" (passwd:dir uid-pw))
-       (vector "Effective Group Name" (group:name egid-gr))
-       (vector "Effective Group ID" (number->string (group:gid egid-gr)))))))
+  (let ((uid-pw (safe-passwd (getuid)))
+        (euid-pw (safe-passwd (geteuid)))
+        (gid-gr (safe-group (getgid)))
+        (egid-gr (safe-group (getegid))))
+    (define (pw-num accessor pw)
+      (and pw (number->string (accessor pw))))
+    (define (gr-num accessor gr)
+      (and gr (number->string (accessor gr))))
+    (vector
+     (vector "Login Name" (false-if-exception (getlogin)))
+     (vector "User Name" (passwd-field passwd:name uid-pw))
+     (vector "User ID" (number->string (getuid)))
+     (vector "User Group ID" (pw-num passwd:gid uid-pw))
+     (vector "User Full Name" (passwd-field passwd:gecos uid-pw))
+     (vector "User Shell" (passwd-field passwd:shell uid-pw))
+     (vector "User Home" (passwd-field passwd:dir uid-pw))
+     (vector "Group Name" (group-field group:name gid-gr))
+     (vector "Group ID" (number->string (getgid)))
+     (vector "Effective User Name" (passwd-field passwd:name euid-pw))
+     (vector "Effective User ID" (number->string (geteuid)))
+     (vector "Effective User Group ID" (pw-num passwd:gid euid-pw))
+     (vector "Effective User Full Name" (passwd-field passwd:gecos euid-pw))
+     (vector "Effective User Shell" (passwd-field passwd:shell euid-pw))
+     (vector "Effective User Home" (passwd-field passwd:dir euid-pw))
+     (vector "Effective Group Name" (group-field group:name egid-gr))
+     (vector "Effective Group ID" (number->string (getegid))))))
 
 (define (get-gc-stats)
   (let ((x (gc-stats)))
@@ -275,17 +282,42 @@
 ;; - entries is a vector. Each entry is a 2-element vector that is #(key val)
 ;;   - key is a string
 ;;   - val is a string
+;;
+;; Every key and value is guaranteed to be a string, since the C side
+;; converts them with scm_to_utf8_string.  Unknown values become "".
+(define (->display-string x)
+  (cond
+   ((string? x) x)
+   ((not x) "")
+   (else (object->string x))))
+
+(define (sanitize-entries entries)
+  (vector-map (lambda (i entry)
+                (vector (->display-string (vector-ref entry 0))
+                        (->display-string (vector-ref entry 1))))
+              entries))
+
+(define (category name thunk)
+  "Builds one environment category. If THUNK throws, the category is
+shown with a single row describing the error."
+  (vector name
+          ""
+          (sanitize-entries
+           (catch #t
+             thunk
+             (lambda (key . args)
+               (vector (vector "error" (format #f "~a ~s" key args))))))))
+
 (define (gdn-get-environment)
   "Lots of info about the current running environment."
   (vector
-   (vector "system" "" (get-system-information))
-   (vector "memory" "" (get-gc-stats))
-   (vector "environment" "" (get-environment-variables))
-   (vector "locale" "" (get-locale-information))
-   (vector "process" "" (get-process-information))
-   (vector "time" "" (get-time-entries))
-   (vector "user" "" (get-user-information-entries))
-   ))
+   (category "system" get-system-information)
+   (category "memory" get-gc-stats)
+   (category "environment" get-environment-variables)
+   (category "locale" get-locale-information)
+   (category "process" get-process-information)
+   (category "time" get-time-entries)
+   (category "user" get-user-information-entries)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 

@@ -233,14 +233,13 @@ entry_bind (GtkListItemFactory *factory,
       GTK_BUTTON (gtk_widget_get_next_sibling (GTK_WIDGET (open_button)));
   gtk_button_set_has_frame (trap_button, FALSE);
 
-  printf ("BLAMMO %s\n", gdn_module_info_get_name (info));
   gtk_label_set_label (GTK_LABEL (label), gdn_module_info_get_name (info));
   gtk_label_set_ellipsize (label, PANGO_ELLIPSIZE_END);
 
   if (gdn_module_info_is_module (info))
     {
-      gtk_widget_show (GTK_WIDGET (open_button));
-      gtk_widget_hide (GTK_WIDGET (trap_button));
+      gtk_widget_set_visible (GTK_WIDGET (open_button), TRUE);
+      gtk_widget_set_visible (GTK_WIDGET (trap_button), FALSE);
       GdnModuleViewAndListItem *mvli = g_new0 (GdnModuleViewAndListItem, 1);
       mvli->view = g_object_ref (self);
       mvli->item = g_object_ref (list_item);
@@ -250,8 +249,8 @@ entry_bind (GtkListItemFactory *factory,
     }
   else if (gdn_module_info_is_procedure (info))
     {
-      gtk_widget_show (GTK_WIDGET (open_button));
-      gtk_widget_show (GTK_WIDGET (trap_button));
+      gtk_widget_set_visible (GTK_WIDGET (open_button), TRUE);
+      gtk_widget_set_visible (GTK_WIDGET (trap_button), TRUE);
       g_signal_connect (open_button, "clicked",
                         G_CALLBACK (procedure_open_activate), info);
       g_signal_connect (trap_button, "clicked",

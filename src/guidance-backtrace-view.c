@@ -594,7 +594,8 @@ create_pair (GdnBacktraceView *view, GtkListItem *item)
   GdnBacktraceViewAndListItem *bvli;
 
   g_assert_cmpuint (G_OBJECT_TYPE (view), ==, GDN_TYPE_BACKTRACE_VIEW);
-  g_assert_cmpuint (G_OBJECT_TYPE (item), ==, GTK_TYPE_LIST_ITEM);
+  /* Since GTK 4.12, column view cells are a GtkListItem subclass. */
+  g_assert (GTK_IS_LIST_ITEM (item));
 
   bvli = g_new0 (GdnBacktraceViewAndListItem, 1);
   bvli->view = g_object_ref (view);
