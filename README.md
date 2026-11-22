@@ -127,8 +127,9 @@ shows which mode it is in.
 Pages
 -----
 
-- **Terminal**: the REPL, and the program's input and output.  Error
-  output is shown in another color; so is text that the program colors
+- **Terminal**: the REPL, and the program's input and output, in a
+  monospace font, with the entries made in bold.  Error output is
+  shown in another color; so is text that the program colors
   red.  Other terminal escape sequences, such as colors and cursor
   movement, are dropped.
 - **Peek**: entries logged by `_pk_`; see below.

@@ -669,8 +669,14 @@ The open one is last in this list.
       - The GUI test runs a program that alternates output and error
         output, and checks the order, and that an escape sequence of
         the program's is not shown.
-- [ ] **Program output is not monospaced.**  Only echoed input and
-      error text get the monospace tag.
+- [x] **Program output is not monospaced.**  Only echoed input and
+      error text get the monospace tag.  Fixed: the whole Terminal is
+      monospaced (the text view's `monospace` property, and GTK's
+      `monospace` style class on the prompt and the entry), so
+      columns line up in output, errors, and what is typed alike.
+      Echoed entries, no longer set apart by their font, are bold.
+      The text has a small margin from the frame.  There is no
+      automatic test of fonts; checked by screenshot.
 - [ ] **Startup warnings.**  On Guile 3.0.9 Guidance prints
       "possibly unbound variable `total-processor-count'" and
       "`current-processor-count'" to its own stderr at every start,
