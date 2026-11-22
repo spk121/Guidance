@@ -877,14 +877,17 @@ since.  Everything below was reproduced in the running application.
 Three problems are blockers.  The first is new since Phase 5, and
 alone is reason not to release 0.2.0 as it is.
 
+Status: all three blockers and all four P1 items have since been
+fixed, one commit each; what is left of each is under "Still open" in
+its item.  The P2 items are open, except the one about line 1.
+
 To be sure that none of this came from stale compiled files,
 `~/.cache/guidance` and `~/.cache/guile` were then both deleted,
 Guidance was built again from nothing, and every blocker and P1 item
 was tried again.  All of them were still there.  The timings below
 are from that second pass.
 
-Each item now has a test, marked as a known failure: see "Tests for
-these" at the end of this phase.
+Each item has a test: see "Tests for these" at the end of this phase.
 
 #### Blockers
 
@@ -1142,54 +1145,50 @@ these" at the end of this phase.
   appears in the Terminal, not where Guidance was started.  A
   sanitizer report in CI would be in the test's transcript, not its
   log, and lost if Guidance died first.
-- Open Program shows the file with line 1 marked as the current
-  line, though nothing is paused there.
+- Fixed with the Source page item: Open Program showed the file with
+  line 1 marked as the current line, though nothing was paused there.
 - The breakpoint mark in the Source page's margin is a thin bar,
   easy to miss.
 
 #### Tests for these
 
-Each blocker and P1 item has a test that fails today.  So that the
-suite still passes, and still says when something else breaks, they
-are marked as known failures: a failing check is reported as XFAIL
-and not counted.  When a fault is fixed, its test passes, which is
-reported as XPASS and does fail the run, so that the test is moved
-among the ordinary ones.  `define-known-failure` in
-`tests/repl-test.scm` and `known_failure` in `tests/gui-smoke.sh` do
-this; each names the item above that it belongs to.
+Each blocker and P1 item got a test that failed before its fix.  They
+were first added as known failures, so that the suite still passed:
+a failing check of such a test is reported as XFAIL and not counted,
+and a test whose checks all pass is reported as XPASS and fails the
+run, so that it is moved among the ordinary tests.
+`define-known-failure` and `define-intermittent-failure` in
+`tests/repl-test.scm`, and `known_failure` in `tests/gui-smoke.sh`,
+do this, and stay for the next fault that is found before it is
+fixed.  None is in use now: each test below became an ordinary test
+in the commit that fixed its fault.
 
 | Item | Test | Where |
 |------|------|-------|
-| Guidance's own module | `prompt_module`, `clashing_names` | GUI |
-| Continuations under steps | `step_over_continuation` | GUI |
-| | "compare: a continuation called again", "compare: leaving a loop by a continuation" | REPL, intermittent |
-| Messages to the program's ports | "ports: a pause while output goes to a string", "ports: a program that changes the output port" | REPL |
+| Guidance's own module | the prompt's module; `clash.scm`, run twice | GUI |
+| Continuations under steps | `reenter.scm` with F10 and with F11 | GUI |
+| | "compare: a continuation called again", "compare: leaving a loop by a continuation" | REPL |
+| Messages to the program's ports | "ports: a pause while output goes to a string", "ports: a program that changes the output port", "ports: an expression at a pause prints to the Terminal" | REPL |
+| | `close-port.scm` | GUI |
 | Slow steps | "speed: Step Into a line that calls Guile's libraries a lot", "speed: Step Over a line that recurses deeply" | REPL |
-| Error output of subprocesses | `subprocess_error_output` | GUI |
-| Source page at startup | `source_at_startup` | GUI |
+| Error output of subprocesses | `subprocess-error.scm`, with `system*` and a pipe | GUI |
+| Source page at startup | F9 before the first run | GUI |
+| | "source: the program is on the Source page before it has run" | REPL |
 | Threads after Stop | "stop: Stop ends the threads the program started" | REPL |
 
 Notes:
 
-- The two REPL tests of continuations are marked intermittent
-  (`define-intermittent-failure`): in one process the fault shows
-  only now and then, so their passing is not news, and they have to
-  be made ordinary tests by hand once it is fixed.  The GUI test has
-  the fault every time.
+- The two REPL tests of continuations showed the fault only now and
+  then while it existed, with everything in one process; the GUI test
+  had it every time.
 - The module fault cannot be tested in the REPL test, which loads
   Guidance's modules from files and so never has it.
-- The two speed tests give a step two seconds, then stop the program,
-  so they cost four seconds while they fail.
-- Not tested: a program that closes its output port, which would take
-  the test's own port with it.
-- Two ordinary tests were added as well, and pass: "compare: stepping
-  does not change what a program prints", which runs
+- Two more ordinary tests were added: "compare: stepping does not
+  change what a program prints", which runs
   `tests/programs/step-compare.scm`, 22 lines from as many features
   of the language, straight through and under each of the four kinds
   of step; and "speed: Step Over a line that calls Guile's libraries
   a lot".
-- The GUI test takes about 85 s now, up from 45 s: each known failure
-  waits up to ten seconds for what does not come.
 
 #### Checked and working in this review
 

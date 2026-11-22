@@ -235,7 +235,8 @@ Known limitations
 - Guidance debugs only the program's main thread: the one that runs
   the program.  An error in another thread that the program starts is
   reported in a few lines, and ends that thread; `_break_` there is
-  reported and ignored.  Stop does not end other threads.
+  reported and ignored.  When a run of the program ends, by itself or
+  with Stop, the threads it started are ended too.
 - Which local variables can be seen at a given point is up to Guile's
   compiler.  For example, a variable may be unavailable just after its
   last use.
