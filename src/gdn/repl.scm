@@ -176,6 +176,12 @@ with KEY and ARGS."
    (else
     (format port "Uncaught exception ~a: ~s~%" key args))))
 
+(define (show-prompt prompt)
+  "Shows PROMPT in the GUI.  Each ends with a newline, so that the GUI
+can tell two prompts that arrive together apart."
+  (display prompt %gdn-prompt-port)
+  (newline %gdn-prompt-port))
+
 (define (print-return-values . return-vals)
   "Prints the return values of an expression, which could be multiple
 values."
@@ -690,7 +696,7 @@ program until they press Stop."
   (format #t "When ready, press the Stop button to return to the REPL.~%")
   (let loop ()
     (refresh-views!)
-    (display "error>" %gdn-prompt-port)
+    (show-prompt "error>")
     (let* ((input (get-user-input))
            (action (car input))
            (data (cadr input)))
@@ -984,7 +990,7 @@ slots hold garbage, and printing one can crash Guile."
                               (*pause-top-frame?*))))
     (let loop ()
       (print-error-on-exception refresh-views!)
-      (display prompt %gdn-prompt-port)
+      (show-prompt prompt)
       (let* ((input (get-user-input))
              (action (car input))
              (data (cadr input)))
@@ -1120,7 +1126,7 @@ command arrives.  Returns the exit status."
   (let loop ()
     (gdn-set-input-mode! *gdn-application-window* 'repl)
     (refresh-views!)
-    (display "repl>" %gdn-prompt-port)
+    (show-prompt "repl>")
     (let* ((input (get-user-input))
            (action (car input))
            (data (cadr input)))

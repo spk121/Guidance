@@ -41,6 +41,8 @@ struct _GdnTerminalView
   GByteArray *   input_pending;
   GByteArray *   prompt_pending;
   GByteArray *   error_pending;
+  /* A prompt read so far, until the newline that ends it. */
+  GString *      prompt_partial;
   GtkTextMark *  end_mark; /* Stays at the end of the text */
   guint          scroll_source;
   /* For the transcript: whether old text has been dropped, whether
@@ -121,6 +123,7 @@ gdn_terminal_view_init (GdnTerminalView *self)
   self->output_fd = STDOUT_FILENO;
   self->input_pending = g_byte_array_new ();
   self->prompt_pending = g_byte_array_new ();
+  self->prompt_partial = g_string_new (NULL);
   self->error_pending = g_byte_array_new ();
   {
     GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->text_view);
@@ -301,35 +304,44 @@ poll_terminal_prompt (gint                       fd,
   drain_stream (self, self->input_fd, self->input_pending, NULL);
   drain_stream (self, self->error_fd, self->error_pending, "error");
 
-  /* Clear out the old label */
-  gtk_label_set_text (self->prompt_label, "");
-
   /* Read from the port */
   buf = read_text (fd, self->prompt_pending);
   if (buf == NULL)
     return G_SOURCE_REMOVE;
 
-  /* How big a prompt should we handle? */
-  glong u8_len;
-  u8_len = g_utf8_strlen (buf, MAX_PROMPT_BYTES);
-  if (u8_len > MAX_PROMPT_CODEPOINTS)
-    {
-      gchar *substr = g_utf8_substring (buf, 0, MAX_PROMPT_CODEPOINTS);
-      gtk_label_set_text (self->prompt_label, substr);
-      g_free (substr);
-    }
-  else if (u8_len > 0)
-    gtk_label_set_text (self->prompt_label, buf);
+  /* The REPL ends each prompt with a newline.  One read can hold more
+   * than one prompt, or part of one: show the last complete one, and
+   * keep what follows until its newline arrives. */
+  g_string_append (self->prompt_partial, buf);
+  g_free (buf);
 
-  if (u8_len > 0)
+  char *newline;
+  while ((newline = strchr (self->prompt_partial->str, '\n')) != NULL)
     {
+      char *prompt = g_strndup (self->prompt_partial->str,
+                                newline - self->prompt_partial->str);
+      /* The pseudoterminal turns the newline into a carriage return
+       * and a newline. */
+      g_strdelimit (prompt, "\r", '\0');
+      g_string_erase (self->prompt_partial, 0,
+                      newline - self->prompt_partial->str + 1);
+
+      /* How big a prompt should we handle? */
+      if (g_utf8_strlen (prompt, MAX_PROMPT_BYTES) > MAX_PROMPT_CODEPOINTS)
+        {
+          gchar *substr = g_utf8_substring (prompt, 0, MAX_PROMPT_CODEPOINTS);
+          g_free (prompt);
+          prompt = substr;
+        }
+      gtk_label_set_text (self->prompt_label, prompt);
+
       /* Prompts are shown in a label, not the text view, so mark them
        * in the transcript. */
-      char *line = g_strdup_printf ("[prompt %s]\n", buf);
+      char *line = g_strdup_printf ("[prompt %s]\n", prompt);
       xgtk_transcribe (line);
       g_free (line);
+      g_free (prompt);
     }
-  g_free (buf);
 
   return G_SOURCE_CONTINUE;
 }

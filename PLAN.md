@@ -333,8 +333,11 @@ The open one is last in this list.
 
       Still open: the terminal always shows the end when something
       is printed, even if the operator has scrolled back to read.
-      The prompt stream can still run two prompts together, as
-      "repl>repl>", seen once.
+
+      Fixed later: the prompt stream could run two prompts together,
+      as "step>repl>", when a run ended just after a pause.  Each
+      prompt now ends with a newline, and the terminal shows the last
+      complete one.
 - [x] **Local variables lose their names.**  Programs were compiled
       at Guile's default optimization level, so a `let` variable `a`
       in a ten-line procedure was listed on the Backtrace page as
