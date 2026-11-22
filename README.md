@@ -7,9 +7,13 @@ It is a version of the Guile REPL with a GUI and some extra features.
 Largely, you call Guidance the way you would call Guile, then press
 Run.
 
-Guidance is under development.  The core debugger works: breakpoints,
-stepping, pausing, and inspecting the stack and variables.  See
-[PLAN.md](PLAN.md) for its status and what remains.
+Guidance 0.2.0 is an alpha release.  The debugger works: breakpoints,
+stepping, pausing, error mode, and inspecting the stack and variables
+of a paused program.  Expect rough edges; see the known limitations
+below, [NEWS](NEWS) for what is new, and [PLAN.md](PLAN.md) for its
+status and what remains.
+
+![The Backtrace page of a paused program](data/screenshots/backtrace.png)
 
 Philosophy
 ----------
@@ -239,3 +243,17 @@ Known limitations
   assigning to them does not change the program.
 - Breakpoints at lines match exact lines.  A line with no code, such
   as a blank line, never pauses the program.
+- Only what Guidance compiles itself is compiled for debugging.
+  Modules that are installed already compiled, or found through `-C`,
+  are used as they are, so their variables may show as `tmp`.
+- With some optimizations off, a program runs a little differently
+  under Guidance than under Guile, and a fault that depends on the
+  optimizer's inlining may not show.
+- While a program runs, Guile's port procedures are its versions
+  written in Scheme, and standard input is non-blocking.  A program
+  that reads file descriptor 0 by other means can see "would block".
+- The Terminal is not a terminal emulator.  It shows text, with error
+  output in another color, and drops escape sequences such as cursor
+  movement.
+- Guidance's cache, `~/.cache/guidance`, is never cleaned, as Guile's
+  own is not.

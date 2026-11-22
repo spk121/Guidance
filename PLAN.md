@@ -753,17 +753,38 @@ The open one is last in this list.
         steps have no keys.  Checked by screenshot; the existing tests
         cover the rest (the REPL test compiles `(gdn lib)` without
         warnings).
-- [ ] **Release housekeeping.**  The AppStream metadata lists release
+- [x] **Release housekeeping.**  The AppStream metadata lists release
       0.1.0 dated 2021-12-09 and has no screenshot.  There is no NEWS
       file.  Update the README's status paragraph and its list of
-      limits to match what is decided above.
+      limits to match what is decided above.  Done:
+      - The version is 0.2.0, an alpha.  The AppStream metadata has a
+        0.2.0 release dated 2026-11-22 (type "development") with a
+        description, a longer description of Guidance, and a
+        screenshot of the Backtrace page,
+        `data/screenshots/backtrace.png`, referred to by its address
+        on the master branch, which exists once this is merged.  It
+        passes `appstream-util validate`, not only the relaxed check
+        that `meson test` runs.
+      - `NEWS` describes 0.2.0.
+      - The README calls it an alpha, shows the screenshot, and points
+        to NEWS.  Its known limitations add those noted below under
+        "Other concerns" that a user would meet: libraries keep their
+        optimized names, code runs a little differently with
+        optimizations off, standard input is non-blocking, the
+        Terminal is not a terminal emulator, and the cache is never
+        cleaned.
+      - The screenshot's program is `tests/programs/inventory.scm`.
+        Taking it showed that Kind called arguments "local"; fixed in
+        its own commit (see the Backtrace page item).
 
 #### Other concerns
 
 Things noticed along the way that the items above do not cover.
 
 - **Sanitizers.**  None of this phase's changes were run locally
-  under ASan and UBSan; the GitHub workflow does that.  The GUI test
+  under ASan and UBSan; the GitHub workflow does that.  (The fixes of
+  the alpha bugs above were each run under both, locally, before they
+  were committed.)  The GUI test
   now has fifteen scenarios and takes 35 to 45 seconds, so its
   time limit, and that of the REPL test, was raised from 120 to 300
   seconds for the sanitizer job.
