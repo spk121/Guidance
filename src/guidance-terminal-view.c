@@ -71,7 +71,8 @@ static gboolean history_step (GdnTerminalView *self, gboolean older);
 static void     recall_activated (GSimpleAction *action,
                                   GVariant *     parameter,
                                   gpointer       user_data);
-static void     add_to_history (GdnTerminalView *self, const char *text);
+static void     add_to_history (GdnTerminalView *self, const char *text,
+                                gboolean continues);
 static void     write_to_program (GdnTerminalView *self,
                                   const char *     text,
                                   size_t           len);
@@ -250,6 +251,11 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
 
   const char *text;
   GdnTerminalView *self = user_data;
+  /* At the continuation prompt, this line goes on with the expression
+   * that the line before it began. */
+  gboolean continues =
+      !self->port_mode
+      && strcmp (gtk_label_get_text (self->prompt_label), "...") == 0;
 
   text = gtk_entry_buffer_get_text (gtk_entry_get_buffer (entry));
 
@@ -275,7 +281,7 @@ activate_terminal_entry (GtkEntry *entry, gpointer user_data)
       g_free (line);
     }
 
-  add_to_history (self, text);
+  add_to_history (self, text, continues);
 
   /* Then clear the entry box. */
   gtk_entry_buffer_set_text (gtk_entry_get_buffer (self->input_entry), "", 0);
@@ -404,7 +410,12 @@ rebuild_history_menu (GdnTerminalView *self)
   g_menu_remove_all (self->history_menu);
   for (int i = 0; item != NULL && i < MAX_HISTORY_MENU; item = item->next, i++)
     {
-      GMenuItem *menu_item = g_menu_item_new (item->data, NULL);
+      /* An entry of several lines is shown on one. */
+      char **    lines = g_strsplit (item->data, "\n", -1);
+      char *     label = g_strjoinv (" ↵ ", lines);
+      GMenuItem *menu_item = g_menu_item_new (label, NULL);
+      g_free (label);
+      g_strfreev (lines);
       g_menu_item_set_action_and_target (menu_item, "terminal.recall", "s",
                                          (const char *) item->data);
       g_menu_append_item (self->history_menu, menu_item);
@@ -416,13 +427,28 @@ rebuild_history_menu (GdnTerminalView *self)
 
 /* Adds TEXT, just entered, to the history, unless it is empty or the
  * same as the newest entry. */
+/* Adds TEXT, which the operator has entered, to the history.  If it
+ * CONTINUES an expression begun on the line before, it is added to
+ * that entry, on a new line, so that Up recalls the whole expression
+ * and not its last line alone, which could not be entered again. */
 static void
-add_to_history (GdnTerminalView *self, const char *text)
+add_to_history (GdnTerminalView *self, const char *text, gboolean continues)
 {
   self->history_cur = NULL;
   g_clear_pointer (&self->history_draft, g_free);
-  if (*text == '\0'
-      || (self->history != NULL && strcmp (text, self->history->data) == 0))
+  if (*text == '\0')
+    return;
+
+  if (continues && self->history != NULL)
+    {
+      char *whole = g_strconcat (self->history->data, "\n", text, NULL);
+      g_free (self->history->data);
+      self->history->data = whole;
+      rebuild_history_menu (self);
+      return;
+    }
+
+  if (self->history != NULL && strcmp (text, self->history->data) == 0)
     return;
 
   self->history = g_list_prepend (self->history, g_strdup (text));

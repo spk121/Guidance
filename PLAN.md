@@ -1146,8 +1146,13 @@ Each item has a test: see "Tests for these" at the end of this phase.
   loaded at spin.scm:3 yet" is printed for a breakpoint set, while
   paused, on a line of a procedure that is loaded, and that then fires
   at once.
-- Up recalls lines, not entries: after an expression entered over
-  two lines, Up gives its second line alone, which is a read error.
+- Fixed: a line entered at the continuation prompt is added to the
+  history entry of the line before, so Up recalls the whole
+  expression, which can be entered again as it is.  The history menu
+  shows such an entry on one line.  The GUI test recalls a two-line
+  expression.  It was: Up recalls lines, not entries: after an
+  expression entered over two lines, Up gives its second line alone,
+  which is a read error.
 - A mistyped name at `repl>` enters Error mode, which then needs
   Stop.  This follows from running expressions as programs, but is
   heavy for a typo.

@@ -422,6 +422,16 @@ wait_for "→ 42" 2
 key Up Up Down
 key Return
 wait_for "→ 42" 3
+# An expression entered over two lines is recalled whole, not as its
+# last line alone, which would be a read error.
+type_line "(list 'recalled"
+wait_for "[prompt ...]" 2
+type_line "      'whole)"
+wait_for "→ (recalled whole)"
+key Up
+key Return
+wait_for "→ (recalled whole)" 2
+refute "unexpected"
 stop_app
 
 # _pk_ logs on the Peek page.
